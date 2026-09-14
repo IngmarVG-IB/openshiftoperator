@@ -1,0 +1,360 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: ipallocationpolicies.uddi.infoblox.com
+spec:
+  group: uddi.infoblox.com
+  names:
+    kind: IPAllocationPolicy
+    listKind: IPAllocationPolicyList
+    plural: ipallocationpolicies
+    shortNames:
+    - uddiipalloc
+    singular: ipallocationpolicy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.allocated
+      name: Allocated
+      type: integer
+    - jsonPath: .status.assigned
+      name: Assigned
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
+          Services and writes them back as a Service annotation or spec.loadBalancerIP.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              IPAllocationPolicySpec selects which Services get a Universal DDI IPAM address
+              allocated and written back. See DESIGN.md section 4.7 for the full pipeline.
+            properties:
+              addressLifecycle:
+                description: AddressLifecycle is copied onto every generated Address's
+                  spec.lifecycle.
+                properties:
+                  adoptExisting:
+                    default: false
+                    description: |-
+                      AdoptExisting allows taking over an existing Universal DDI object that matches the
+                      natural key but does not carry this operator's ownership tags. When false such an
+                      object is reported as a conflict (Ready=False/AlreadyExists).
+                    type: boolean
+                  deletionPolicy:
+                    default: Delete
+                    description: DeletionPolicy decides whether deleting the CR also
+                      deletes the Universal DDI object.
+                    enum:
+                    - Delete
+                    - Orphan
+                    type: string
+                type: object
+              allocateFrom:
+                description: AllocateFrom selects the pool this policy allocates Addresses
+                  from.
+                properties:
+                  addressBlockRef:
+                    description: AddressBlockRef names an AddressBlock CR in this
+                      namespace.
+                    properties:
+                      id:
+                        description: ID is a Universal DDI resource id, for example
+                          "dns/view/2c1a...".
+                        maxLength: 256
+                        type: string
+                      name:
+                        description: Name of an object-layer CR in this namespace.
+                        maxLength: 253
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of name or id must be set
+                      rule: has(self.name) != has(self.id)
+                  rangeRef:
+                    description: RangeRef names a Range CR in this namespace.
+                    properties:
+                      id:
+                        description: ID is a Universal DDI resource id, for example
+                          "dns/view/2c1a...".
+                        maxLength: 256
+                        type: string
+                      name:
+                        description: Name of an object-layer CR in this namespace.
+                        maxLength: 253
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of name or id must be set
+                      rule: has(self.name) != has(self.id)
+                  subnetRef:
+                    description: SubnetRef names a Subnet CR in this namespace.
+                    properties:
+                      id:
+                        description: ID is a Universal DDI resource id, for example
+                          "dns/view/2c1a...".
+                        maxLength: 256
+                        type: string
+                      name:
+                        description: Name of an object-layer CR in this namespace.
+                        maxLength: 253
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of name or id must be set
+                      rule: has(self.name) != has(self.id)
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of subnetRef, rangeRef or addressBlockRef must
+                    be set
+                  rule: '[has(self.subnetRef), has(self.rangeRef), has(self.addressBlockRef)].filter(x,
+                    x).size() == 1'
+                - message: subnetRef must set name
+                  rule: '!has(self.subnetRef) || (has(self.subnetRef.name) && size(self.subnetRef.name)
+                    > 0)'
+                - message: rangeRef must set name
+                  rule: '!has(self.rangeRef) || (has(self.rangeRef.name) && size(self.rangeRef.name)
+                    > 0)'
+                - message: addressBlockRef must set name
+                  rule: '!has(self.addressBlockRef) || (has(self.addressBlockRef.name)
+                    && size(self.addressBlockRef.name) > 0)'
+              assignVia:
+                description: AssignVia selects how the allocated address is written
+                  back onto a Service.
+                properties:
+                  annotation:
+                    default: metallb.io/loadBalancerIPs
+                    description: |-
+                      Annotation is the Service annotation key written in Annotation mode. Defaults
+                      to metallb.io/loadBalancerIPs; other implementations read
+                      io.cilium/lb-ipam-ips, kube-vip.io/loadbalancerIPs or the legacy
+                      metallb.universe.tf/loadBalancerIPs.
+                    maxLength: 317
+                    pattern: ^(([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$
+                    type: string
+                  mode:
+                    default: Annotation
+                    description: |-
+                      Mode selects whether the address is written to Annotation or to
+                      spec.loadBalancerIP.
+                    enum:
+                    - Annotation
+                    - LoadBalancerIP
+                    type: string
+                type: object
+              connectionRef:
+                description: |-
+                  ConnectionRef names the Connection used by every Address this policy
+                  generates. Empty means the Connection called "default" in this namespace.
+                properties:
+                  name:
+                    description: Name of the Connection in this namespace. Defaults
+                      to "default".
+                    maxLength: 253
+                    type: string
+                type: object
+              requireAnnotation:
+                default: true
+                description: |-
+                  RequireAnnotation, when true (the default), only allocates for Services that
+                  carry the uddi.infoblox.com/allocate: "true" annotation. When false, every
+                  selected type: LoadBalancer Service is allocated for unless it opts out with
+                  uddi.infoblox.com/allocate: "false".
+                type: boolean
+              selector:
+                description: |-
+                  Selector selects the Services in this namespace this policy considers. Empty
+                  selects every Service in the namespace.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags are merged into every generated Address's spec.tags.
+                type: object
+            required:
+            - allocateFrom
+            type: object
+          status:
+            description: IPAllocationPolicyStatus reports the observed state of an
+              IPAllocationPolicy.
+            properties:
+              allocated:
+                description: Allocated is the number of Services that have an Address
+                  CR.
+                format: int32
+                type: integer
+              assigned:
+                description: |-
+                  Assigned is, of those, the number whose assignment field carries the Ready
+                  address.
+                format: int32
+                type: integer
+              conditions:
+                description: Conditions hold Ready.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation the status was last computed
+                  from.
+                format: int64
+                type: integer
+              skipped:
+                description: |-
+                  Skipped lists Services not allocated or not assigned, and why. Bounded and
+                  sorted by service then reason.
+                items:
+                  description: |-
+                    SkippedService is one Service that did not get an address, or did not get its
+                    address assigned, and why. See internal/ipalloc.Skip.
+                  properties:
+                    message:
+                      description: Message is a human-readable explanation.
+                      maxLength: 512
+                      type: string
+                    reason:
+                      description: Reason is a short machine-readable skip reason,
+                        for example PoolNotReady.
+                      maxLength: 64
+                      type: string
+                    service:
+                      description: Service is the name of the Service that was skipped.
+                      maxLength: 253
+                      type: string
+                  type: object
+                maxItems: 50
+                type: array
+                x-kubernetes-list-type: atomic
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -13,6 +13,7 @@ resources:
 - bases/uddi.infoblox.com_addresses.yaml
 - bases/uddi.infoblox.com_fixedaddresses.yaml
 - bases/uddi.infoblox.com_dnspublishpolicies.yaml
+- bases/uddi.infoblox.com_ipallocationpolicies.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
