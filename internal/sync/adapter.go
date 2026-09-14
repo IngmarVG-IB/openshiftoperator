@@ -36,6 +36,15 @@ import (
 // requeues instead of failing.
 var ErrDependencyNotReady = errors.New("sync: dependency not ready")
 
+// ErrConflict is returned by Adapter.Find when a matching Universal DDI object exists
+// but must never be adopted, updated or deleted, regardless of lifecycle.adoptExisting.
+// Record uses this for a match whose source is not STATIC (DESIGN.md section 4.3): the
+// normal found-but-unowned path honours adoptExisting, but a non-STATIC record is never
+// eligible for adoption at all. Wrap ErrConflict with a message naming why (for example
+// the object's source); the loop reports Ready=False/AlreadyExists with that message
+// instead of attempting to create, adopt, patch or delete anything.
+var ErrConflict = errors.New("sync: object exists and cannot be adopted")
+
 // Deps maps an adapter-chosen key ("view", "zone", "space", "parent", ...) to the
 // resolved Universal DDI resource id.
 type Deps map[string]string

@@ -475,6 +475,9 @@ func (f *Fake) UpdateAuthZone(ctx context.Context, id string, patch dnsconfig.Au
 	if patch.ExternalPrimaries != nil {
 		obj.ExternalPrimaries = copySlice(patch.ExternalPrimaries)
 	}
+	if patch.ExternalSecondaries != nil {
+		obj.ExternalSecondaries = copySlice(patch.ExternalSecondaries)
+	}
 	if patch.Tags != nil {
 		obj.Tags = copyAnyMap(patch.Tags)
 	}
