@@ -1,0 +1,29 @@
+# Publishes admitted Routes and Ingresses labelled dns: public as Records in
+# apps-zone and corp-zone: Auto mode CNAMEs to the router's canonical hostname for
+# Routes, and A/AAAA or CNAME records from the Ingress's load balancer status for
+# Ingresses.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: public
+spec:
+  connectionRef:
+    name: default
+  sources:
+    - Route
+    - Ingress
+  selector:
+    matchLabels:
+      dns: public
+  zoneRefs:
+    - name: apps-zone
+  target:
+    mode: Auto
+  ttl: 300
+  tags:
+    team: platform
+  recordLifecycle:
+    deletionPolicy: Delete
