@@ -113,7 +113,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		rt := &uddisync.Runtime{
 			Client:      mgr.GetClient(),
 			Scheme:      mgr.GetScheme(),
-			Recorder:    mgr.GetEventRecorderFor("uddi-operator"),
+			Recorder:    mgr.GetEventRecorderFor("uddi-operator"), //nolint:staticcheck // legacy record.EventRecorder API kept until Runtime moves to events.EventRecorder
 			Connections: resolver,
 			ClusterID:   TestClusterID,
 		}
@@ -121,7 +121,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		Expect((&ConnectionReconciler{
 			Client:      mgr.GetClient(),
 			Connections: resolver,
-			Recorder:    mgr.GetEventRecorderFor("uddi-connection"),
+			Recorder:    mgr.GetEventRecorderFor("uddi-connection"), //nolint:staticcheck // legacy record.EventRecorder API kept until Runtime moves to events.EventRecorder
 		}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&ViewReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&AuthZoneReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
