@@ -81,11 +81,17 @@ const (
 )
 
 // Well-known annotation keys load balancer implementations read the requested IP from.
+// See knownkeys.go for the researched value formats, spec.loadBalancerIP support and doc
+// citations behind these constants.
 const (
 	AnnotationMetalLB       = "metallb.io/loadBalancerIPs"
 	AnnotationMetalLBLegacy = "metallb.universe.tf/loadBalancerIPs"
-	AnnotationCilium        = "io.cilium/lb-ipam-ips"
-	AnnotationKubeVIP       = "kube-vip.io/loadbalancerIPs"
+	// AnnotationCilium is Cilium LB-IPAM's current key, "lbipam.cilium.io/ips" (renamed from
+	// the "io.cilium/lb-ipam-ips" used through Cilium 1.14; corrected here 2026-09-14 after
+	// checking docs.cilium.io/en/stable/network/lb-ipam/ against the 1.14 archive — see
+	// knownkeys.go).
+	AnnotationCilium  = "lbipam.cilium.io/ips"
+	AnnotationKubeVIP = "kube-vip.io/loadbalancerIPs"
 	// DefaultAssignAnnotation is used when spec.assignVia.annotation is empty.
 	DefaultAssignAnnotation = AnnotationMetalLB
 )
