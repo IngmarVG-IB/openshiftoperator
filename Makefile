@@ -121,6 +121,14 @@ ENVTEST_K8S_VERSION_FLOOR ?= 1.29.5
 test-floor: manifests generate fmt vet envtest ## Run tests against the Kubernetes 1.29 (OpenShift 4.16) floor.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION_FLOOR) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover-floor.out
 
+.PHONY: vet-integration
+vet-integration: ## Vet the integration test suite (requires the integration build tag).
+	go vet -tags integration ./test/integration/...
+
+.PHONY: test-integration
+test-integration: ## Run the real-tenant integration suite; needs UDDI_API_KEY (see docs/testing.md).
+	go test -tags integration ./test/integration/... -v -count=1 -timeout 20m
+
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
