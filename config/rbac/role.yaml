@@ -16,10 +16,19 @@ rules:
   resources:
   - namespaces
   - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - services
   verbs:
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - config.openshift.io
