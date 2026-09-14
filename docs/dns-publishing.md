@@ -117,8 +117,13 @@ When the Route is admitted (a router accepts it), the policy automatically creat
 
 ```bash
 kubectl get dnspublishpolicy public -n my-team
-# NAME     READY   PUBLISHED   READY
-# public   True    1           1
+# NAME     READY   PUBLISHED   READY-COUNT   AGE
+# public   True    1           1             2m
+
+# Or using the short name:
+oc get uddipublish public -n my-team
+# NAME     READY   PUBLISHED   READY-COUNT   AGE
+# public   True    1           1             2m
 
 kubectl describe dnspublishpolicy public -n my-team
 # Status:

@@ -642,47 +642,81 @@ A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Service
 
 **Purpose:** Create a DNSPublishPolicy CR to automatically publish cluster ingress endpoints as DNS records in Universal DDI. The policy handles hostname-to-zone matching, target extraction (Auto mode selects CNAME for routes and hostnames, A/AAAA for IPs), and Record lifecycle including adoption and deletion.
 
+**Short name:** `uddipublish`
+
+**Print columns:**
+| Column | Type | JSONPath |
+| --- | --- | --- |
+| `Ready` | string | `.status.conditions[?(@.type=="Ready")].status` |
+| `Published` | integer | `.status.published` |
+| `Ready-count` | integer | `.status.ready` |
+| `Age` | date | `.metadata.creationTimestamp` |
+
 ### DNSPublishPolicy Spec
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Record. |
-| `sources` | []string | No | [Route, Ingress, Service] | Source object kinds to watch: any combination of "Route", "Ingress", "Service" (means LoadBalancer Services). Default watches all three. |
+| `sources` | []SourceKind | No | [Route, Ingress, Service] | Source object kinds to watch: any combination of `Route`, `Ingress`, or `Service` (means LoadBalancer Services). MinItems 1. |
 | `selector` | *metav1.LabelSelector | No | — | Label selector to filter source objects in the namespace. Empty selects all. |
-| `zoneRefs` | []ObjectRef | Yes | — | AuthZone CRs in this namespace that define the target zones. The longest FQDN suffix matching each hostname is used. |
-| `target.mode` | string | No | Auto | `Auto` (CNAME for routes and load balancer hostnames, A/AAAA for IPs), `CNAME` (keep only CNAME targets), or `A` (keep only A/AAAA targets). |
-| `target.addresses` | []string | No | — | Static A/AAAA targets (IPv4 or IPv6). Used by mode A and by Auto mode for Routes. |
-| `target.canonicalHostname` | string | No | — | Override the Route's routerCanonicalHostname for Auto and CNAME modes. |
-| `ttl` | *int32 | No | — | Default TTL (seconds) for generated Records. Per-source annotations override. 0–2147483647. |
+| `zoneRefs` | []ObjectRef | Yes | — | AuthZone CRs in this namespace that define the target zones. Only `name` is supported (CEL: every entry must have `name` set and not empty). MinItems 1. |
+| `target` | DNSPublishTarget | No | — | DNS record type selection. |
+| `target.mode` | TargetMode | No | Auto | `Auto` (CNAME for routes and load balancer hostnames, A/AAAA for IPs), `CNAME` (keep only CNAME targets), or `A` (keep only A/AAAA targets). |
+| `target.addresses` | []string | No | — | Static A/AAAA targets (IPv4 or IPv6 literals). Each entry must be a valid IPv4 or IPv6 address. Used by mode A and by Auto mode for Routes. |
+| `target.canonicalHostname` | string | No | — | Override the Route's routerCanonicalHostname for Auto and CNAME modes. Max 256 characters. |
+| `ttl` | *int32 | No | 300 | Default TTL in seconds for generated Records. Minimum 1. Per-source annotations override. |
 | `tags` | map[string]string | No | — | Tags merged into every generated Record's `spec.tags`. |
-| `recordLifecycle` | Lifecycle | No | — | `adoptExisting` and `deletionPolicy` for generated Records (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
+| `recordLifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated Records (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
 
-Source annotations (all prefixed `uddi.infoblox.com/`; override policy settings per source):
-- `publish: "false"` — exclude the source from publication
-- `hostname` — comma-separated hostnames (adds or replaces computed hostnames; required for LoadBalancer Services)
-- `ttl` — integer seconds, overrides policy default
-- `target` — comma-separated addresses and/or canonical names, overrides computed targets
+### SourceKind (enum)
+
+| Value | Meaning |
+| --- | --- |
+| `Route` | OpenShift Route |
+| `Ingress` | Kubernetes Ingress |
+| `Service` | Kubernetes Service of type LoadBalancer |
+
+### TargetMode (enum)
+
+| Value | Meaning |
+| --- | --- |
+| `Auto` | CNAME for Routes and load balancers exposing a hostname; A/AAAA for load balancers exposing IPs or when `target.addresses` is set. |
+| `CNAME` | Keep only CNAME targets. |
+| `A` | Keep only A and AAAA targets. |
 
 ### DNSPublishPolicy Status
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `observedGeneration` | int64 | The `metadata.generation` the status was last computed from. |
+| `conditions` | []metav1.Condition | Conditions: `Ready` (summary). |
 | `published` | int32 | Number of desired Records currently applied. |
 | `ready` | int32 | Of those, how many have `Ready=True`. |
-| `skipped` | []Skip | Sources or hostnames not published (bounded to 50 entries, sorted). One entry per source+hostname. |
-| `skipped[].source` | string | "Kind/name" of the source object. |
-| `skipped[].hostname` | string | The hostname not published (empty if the whole source is skipped). |
-| `skipped[].reason` | string | Reason: `Excluded`, `NoMatchingZone`, `ZoneNotReady`, `NoTarget`, `NoHostname`, `NotAdmitted`, `NotLoadBalancer`, `ApexCNAME`, `Unsupported`, or `InvalidAnnotation`. |
-| `skipped[].message` | string | Additional context. |
-| `conditions` | []metav1.Condition | Conditions: `Ready` (summary). |
+| `skipped` | []SkippedSource | Sources or hostnames not published (bounded to 50 entries, sorted by source then hostname). |
 
-### DNSPublishPolicy Conditions and Reasons
+### SkippedSource
 
-**Ready**
-- `True/Published`: All desired Records are Ready and no `ZonesNotReady` skip remains.
+| Field | Type | Description |
+| --- | --- | --- |
+| `source` | string | Source object, rendered as "Kind/name". Max 256 characters. |
+| `hostname` | string | Hostname that was skipped (empty if the whole source was skipped). Max 256 characters. |
+| `reason` | string | Machine-readable skip reason: `Excluded`, `NoMatchingZone`, `ZoneNotReady`, `NoTarget`, `NoHostname`, `NotAdmitted`, `NotLoadBalancer`, `ApexCNAME`, `Unsupported`, or `InvalidAnnotation`. Max 64 characters. |
+| `message` | string | Human-readable explanation. Max 512 characters. |
+
+### DNSPublishPolicy Conditions
+
+**Ready** (summary condition)
+- `True/Published`: Every desired Record is Ready and no `ZoneNotReady` skip remains.
 - `False/RecordsNotReady`: Some desired Records have `Ready=False` (still being created).
-- `False/ZonesNotReady`: No zoneRef resolves to a CR with `status.id`.
+- `False/ZonesNotReady`: No `zoneRef` resolves to a CR with `status.id`.
+
+### Source Annotations
+
+All annotations are prefixed `uddi.infoblox.com/`. They override policy settings per source:
+- `publish: "false"` — exclude the source from publication.
+- `hostname` — comma-separated hostnames (adds or replaces computed hostnames; required for LoadBalancer Services).
+- `ttl` — integer seconds, overrides policy default TTL.
+- `target` — comma-separated addresses and/or canonical names, overrides computed targets.
 
 ### DNSPublishPolicy Example
 
@@ -697,7 +731,6 @@ spec:
   sources:
     - Route
     - Ingress
-    - Service
   selector:
     matchLabels:
       dns: public
@@ -705,8 +738,6 @@ spec:
     - name: apps-zone
   target:
     mode: Auto
-    addresses:
-      - 192.0.2.10
   ttl: 300
   tags:
     team: platform
@@ -715,4 +746,4 @@ spec:
     deletionPolicy: Delete
 ```
 
-Reference: [DESIGN.md](../DESIGN.md) section 4.7; fields verified against the Go type in milestone 2 wave 2.
+Reference: [DESIGN.md](../DESIGN.md) section 4.7.
