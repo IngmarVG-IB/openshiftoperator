@@ -66,9 +66,12 @@ kubectl get subnet openshift-lb -o jsonpath='{.status.id}'
 
 The operator writes the allocated IP into the Service by patching an annotation (default) or `spec.loadBalancerIP`. Your load balancer implementation must honour the configured key. Tested implementations:
 
-- **MetalLB** (default): reads `metallb.io/loadBalancerIPs` (or the legacy `metallb.universe.tf/loadBalancerIPs`)
-- **Cilium**: reads `lbipam.cilium.io/ips`
-- **kube-vip**: reads `kube-vip.io/loadbalancerIPs`
+| Implementation | Annotation Key | Format | Documentation |
+| --- | --- | --- | --- |
+| **MetalLB** (default) | `metallb.io/loadBalancerIPs` | Single IP or comma-separated list for dual-stack | https://metallb.io/usage/#requesting-specific-ips |
+| **Cilium LB-IPAM** | `lbipam.cilium.io/ips` | Comma-separated list of IPs (single IP is one-element list) | https://docs.cilium.io/en/stable/network/lb-ipam/#requesting-ips |
+| **kube-vip** | `kube-vip.io/loadbalancerIPs` | Single IP, DNS name, or comma-separated pair for dual-stack ("0.0.0.0"/"::") | https://kube-vip.io/docs/usage/kubernetes-services/ |
+| **MetalLB** (legacy) | `metallb.universe.tf/loadBalancerIPs` | Single IP or comma-separated list (deprecated) | https://metallb.io/usage/#requesting-specific-ips |
 
 For other implementations, set `spec.assignVia.annotation` to the key your implementation reads.
 
@@ -128,6 +131,8 @@ The policy watches the Service and automatically creates an Address CR named `lb
 
 ```bash
 kubectl get ipallocationpolicy lb -n my-team
+# or using the short name:
+kubectl get uddiipalloc lb -n my-team
 # NAME   READY   ALLOCATED   ASSIGNED   AGE
 # lb     True    1           1          2m
 

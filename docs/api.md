@@ -756,7 +756,7 @@ An IPAllocationPolicy watches LoadBalancer Services and automatically generates 
 
 **Purpose:** Create an IPAllocationPolicy CR to automatically allocate LoadBalancer Service IPs from Universal DDI, integrating IP management with Kubernetes service discovery.
 
-**Short name:** `uddialloc`
+**Short name:** `uddiipalloc`
 
 **Print columns:**
 | Column | Type | JSONPath |
@@ -772,14 +772,14 @@ An IPAllocationPolicy watches LoadBalancer Services and automatically generates 
 | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Address. |
 | `selector` | *metav1.LabelSelector | No | — | Label selector to filter Services in the namespace. Empty selects all. |
-| `requireAnnotation` | bool | No | true | When true, only Services annotated `uddi.infoblox.com/allocate: "true"` are allocated. When false, all matching Services are allocated by default. |
-| `allocateFrom` | AllocationPool | Yes | — | The pool CR to allocate from: exactly one of `subnetRef`, `rangeRef`, or `addressBlockRef` (CEL: `(has(self.subnetRef) && !has(self.rangeRef) && !has(self.addressBlockRef)) \|\| (!has(self.subnetRef) && has(self.rangeRef) && !has(self.addressBlockRef)) \|\| (!has(self.subnetRef) && !has(self.rangeRef) && has(self.addressBlockRef))`). |
+| `requireAnnotation` | *bool | No | true | When true, only Services annotated `uddi.infoblox.com/allocate: "true"` are allocated. When false, all matching Services are allocated by default. |
+| `allocateFrom` | AllocateFrom | Yes | — | The pool CR to allocate from: exactly one of `subnetRef`, `rangeRef`, or `addressBlockRef` (CEL: exactly one of subnetRef, rangeRef or addressBlockRef must be set). |
 | `allocateFrom.subnetRef` | *ObjectRef | No (one required) | — | Subnet CR or Universal DDI subnet id to allocate from. |
 | `allocateFrom.rangeRef` | *ObjectRef | No (one required) | — | Range CR or Universal DDI range id to allocate from. |
 | `allocateFrom.addressBlockRef` | *ObjectRef | No (one required) | — | AddressBlock CR or Universal DDI address block id to allocate from. |
-| `assignVia` | AssignmentTarget | No | — | How to write the allocated IP into the Service (default: Annotation mode with `metallb.io/loadBalancerIPs`). |
-| `assignVia.mode` | string | No | Annotation | `Annotation` (write to a Service annotation, default) or `LoadBalancerIP` (write to `spec.loadBalancerIP`). |
-| `assignVia.annotation` | string | No | metallb.io/loadBalancerIPs | The annotation key to write when mode is Annotation. Defaults to MetalLB key; also supports `lbipam.cilium.io/ips`, `kube-vip.io/loadbalancerIPs`, and legacy `metallb.universe.tf/loadBalancerIPs`. Max 256 characters. |
+| `assignVia` | AssignVia | No | — | How to write the allocated IP into the Service (default: Annotation mode with `metallb.io/loadBalancerIPs`). |
+| `assignVia.mode` | AssignMode | No | Annotation | `Annotation` (write to a Service annotation, default) or `LoadBalancerIP` (write to `spec.loadBalancerIP`). |
+| `assignVia.annotation` | string | No | metallb.io/loadBalancerIPs | The annotation key to write when mode is Annotation. Defaults to MetalLB key; also supports `lbipam.cilium.io/ips`, `kube-vip.io/loadbalancerIPs`, and legacy `metallb.universe.tf/loadBalancerIPs`. Pattern: valid annotation key format. Max 317 characters. |
 | `tags` | map[string]string | No | — | Tags merged into every generated Address's `spec.tags`. |
 | `addressLifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated Addresses (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
 
@@ -797,7 +797,7 @@ An IPAllocationPolicy watches LoadBalancer Services and automatically generates 
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `service` | string | Service name. Max 256 characters. |
+| `service` | string | Service name. Max 253 characters. |
 | `reason` | string | Machine-readable skip reason: `NotLoadBalancer`, `InvalidAnnotation`, `PoolNotReady`, `ManuallyAssigned`, or `AddressPending`. Max 64 characters. |
 | `message` | string | Human-readable explanation. Max 512 characters. |
 
@@ -843,4 +843,4 @@ spec:
     deletionPolicy: Delete
 ```
 
-Reference: [DESIGN.md](../DESIGN.md) section 4.7; fields verified against the Go type in milestone 3 wave 2.
+Reference: [DESIGN.md](../DESIGN.md) section 4.7.
