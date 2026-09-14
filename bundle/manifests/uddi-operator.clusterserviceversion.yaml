@@ -1,0 +1,548 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "Address",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "svc-web"
+          },
+          "spec": {
+            "names": [
+              {
+                "name": "svc-web.team-a",
+                "type": "user"
+              }
+            ],
+            "nextAvailableFrom": {
+              "rangeRef": {
+                "name": "lb-pool"
+              }
+            },
+            "spaceRef": {
+              "name": "corp"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "AddressBlock",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "block-10"
+          },
+          "spec": {
+            "address": "10.0.0.0",
+            "cidr": 16,
+            "name": "corp-root",
+            "spaceRef": {
+              "name": "corp"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "AuthZone",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "apps-zone"
+          },
+          "spec": {
+            "comment": "Zone for OpenShift Routes",
+            "fqdn": "apps.example.com.",
+            "lifecycle": {
+              "adoptExisting": true,
+              "deletionPolicy": "Orphan"
+            },
+            "primaryType": "cloud",
+            "viewRef": {
+              "name": "view-sample"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "Connection",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "default"
+          },
+          "spec": {
+            "clientName": "uddi-operator",
+            "cspURL": "https://csp.infoblox.com",
+            "defaultTags": {
+              "env": "dev"
+            },
+            "rateLimit": {
+              "burst": 20,
+              "requestsPerSecond": 10
+            },
+            "resyncInterval": "10m",
+            "secretRef": {
+              "key": "apiKey",
+              "name": "uddi-api-key"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "FixedAddress",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "node-1"
+          },
+          "spec": {
+            "address": "10.0.10.50",
+            "hostname": "node-1.example.com",
+            "matchType": "mac",
+            "matchValue": "52:54:00:aa:bb:cc",
+            "name": "node-1",
+            "spaceRef": {
+              "name": "corp"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "IPSpace",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "corp"
+          },
+          "spec": {
+            "comment": "Corporate IP space",
+            "name": "corp"
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "Range",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "lb-pool"
+          },
+          "spec": {
+            "end": "10.0.10.199",
+            "exclusionRanges": [
+              {
+                "comment": "reserved",
+                "end": "10.0.10.159",
+                "start": "10.0.10.150"
+              }
+            ],
+            "name": "lb-pool",
+            "spaceRef": {
+              "name": "corp"
+            },
+            "start": "10.0.10.100"
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "Record",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "www-a"
+          },
+          "spec": {
+            "name": "www",
+            "rdata": {
+              "a": {
+                "address": "192.0.2.10"
+              }
+            },
+            "ttl": 300,
+            "type": "A",
+            "zoneRef": {
+              "name": "apps-zone"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "Subnet",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "openshift-lb"
+          },
+          "spec": {
+            "address": "10.0.10.0",
+            "cidr": 24,
+            "name": "openshift-lb",
+            "spaceRef": {
+              "name": "corp"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "View",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "view-sample"
+          },
+          "spec": {
+            "comment": "DNS view managed by uddi-operator",
+            "connectionRef": {
+              "name": "default"
+            },
+            "lifecycle": {
+              "adoptExisting": false,
+              "deletionPolicy": "Delete"
+            },
+            "name": "openshift",
+            "tags": {
+              "team": "platform"
+            }
+          }
+        }
+      ]
+    capabilities: Basic Install
+    categories: Networking
+    containerImage: quay.io/ingmarvg-ib/uddi-operator:0.1.0
+    createdAt: "2026-09-14T18:48:31Z"
+    olm.skipRange: <0.1.0
+    operators.operatorframework.io/builder: operator-sdk-v1.42.3
+    operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+    repository: https://github.com/IngmarVG-IB/openshiftoperator
+    support: https://github.com/IngmarVG-IB/openshiftoperator/issues
+  name: uddi-operator.v0.1.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: AddressBlock is a Universal DDI address block.
+      displayName: Address Block
+      kind: AddressBlock
+      name: addressblocks.uddi.infoblox.com
+      version: v1alpha1
+    - description: Address is a Universal DDI address reservation.
+      displayName: Address
+      kind: Address
+      name: addresses.uddi.infoblox.com
+      version: v1alpha1
+    - description: AuthZone is a Universal DDI authoritative DNS zone.
+      displayName: Auth Zone
+      kind: AuthZone
+      name: authzones.uddi.infoblox.com
+      version: v1alpha1
+    - description: Connection holds the credentials and client settings for one Universal
+        DDI tenant.
+      displayName: Connection
+      kind: Connection
+      name: connections.uddi.infoblox.com
+      version: v1alpha1
+    - description: FixedAddress is a Universal DDI DHCP fixed address reservation.
+      displayName: Fixed Address
+      kind: FixedAddress
+      name: fixedaddresses.uddi.infoblox.com
+      version: v1alpha1
+    - description: IPSpace is a Universal DDI IP space.
+      displayName: IPSpace
+      kind: IPSpace
+      name: ipspaces.uddi.infoblox.com
+      version: v1alpha1
+    - description: Range is a Universal DDI address range.
+      displayName: Range
+      kind: Range
+      name: ranges.uddi.infoblox.com
+      version: v1alpha1
+    - description: Record is a Universal DDI DNS resource record.
+      displayName: Record
+      kind: Record
+      name: records.uddi.infoblox.com
+      version: v1alpha1
+    - description: Subnet is a Universal DDI subnet.
+      displayName: Subnet
+      kind: Subnet
+      name: subnets.uddi.infoblox.com
+      version: v1alpha1
+    - description: View is a Universal DDI DNS view.
+      displayName: View
+      kind: View
+      name: views.uddi.infoblox.com
+      version: v1alpha1
+  description: |-
+    The Universal DDI Operator shims OpenShift to [Infoblox Universal
+    DDI](https://www.infoblox.com/products/universal-ddi/), the cloud-delivered DNS, DHCP
+    and IPAM platform behind the Infoblox Cloud Services Portal.
+
+    ## Object layer
+
+    Universal DDI objects are modelled one-to-one as namespaced custom resources under the
+    `uddi.infoblox.com` API group, covering DNS (View, AuthZone, Record), IPAM (IPSpace,
+    AddressBlock, Subnet, Range, Address) and DHCP (FixedAddress). Reconciling a custom
+    resource creates, updates, adopts or deletes the matching object in Universal DDI, so a
+    GitOps or `oc apply` workflow drives DNS records, IP allocation and DHCP reservations the
+    same way it drives any other OpenShift object.
+
+    ## Connections and credentials
+
+    Every namespace that owns object-layer resources also owns a `Connection` custom
+    resource, which points at a Secret holding the tenant's Universal DDI API key. This
+    keeps credentials scoped per namespace/tenant rather than cluster-wide, so multiple
+    teams or sandboxes can share a cluster safely.
+
+    ## Ownership and lifecycle
+
+    Objects created or adopted by the operator are tagged with the owning cluster, the
+    owning custom resource and its Kubernetes UID. The operator only ever creates, modifies
+    or deletes objects that carry its own ownership tags: pre-existing objects can be
+    adopted explicitly (`lifecycle.adoptExisting: true`), and each object's
+    `lifecycle.deletionPolicy` (`Delete`, the default, or `Orphan`) controls whether deleting
+    the custom resource also deletes the underlying Universal DDI object.
+  displayName: Universal DDI Operator
+  icon:
+  - base64data: PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjIwIiByPSIxMyIgZmlsbD0iIzI1NjNFQiIvPgogIDxjaXJjbGUgY3g9IjI0IiBjeT0iNjYiIHI9IjEzIiBmaWxsPSIjMEQ5NDg4Ii8+CiAgPGNpcmNsZSBjeD0iNzYiIGN5PSI2NiIgcj0iMTMiIGZpbGw9IiM3QzNBRUQiLz4KICA8cGF0aCBkPSJNNTAgMzMgTDI0IDUzIE01MCAzMyBMNzYgNTMgTTI0IDY2IEw3NiA2NiIgc3Ryb2tlPSIjMUUyOTNCIiBzdHJva2Utd2lkdGg9IjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4K
+    mediatype: image/svg+xml
+  install:
+    spec:
+      clusterPermissions:
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - patch
+        - apiGroups:
+          - ""
+          resources:
+          - namespaces
+          - secrets
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
+          - clusterversions
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - uddi.infoblox.com
+          resources:
+          - addressblocks
+          - addresses
+          - authzones
+          - connections
+          - fixedaddresses
+          - ipspaces
+          - ranges
+          - records
+          - subnets
+          - views
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - uddi.infoblox.com
+          resources:
+          - addressblocks/finalizers
+          - addresses/finalizers
+          - authzones/finalizers
+          - connections/finalizers
+          - fixedaddresses/finalizers
+          - ipspaces/finalizers
+          - ranges/finalizers
+          - records/finalizers
+          - subnets/finalizers
+          - views/finalizers
+          verbs:
+          - update
+        - apiGroups:
+          - uddi.infoblox.com
+          resources:
+          - addressblocks/status
+          - addresses/status
+          - authzones/status
+          - connections/status
+          - fixedaddresses/status
+          - ipspaces/status
+          - ranges/status
+          - records/status
+          - subnets/status
+          - views/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - authentication.k8s.io
+          resources:
+          - tokenreviews
+          verbs:
+          - create
+        - apiGroups:
+          - authorization.k8s.io
+          resources:
+          - subjectaccessreviews
+          verbs:
+          - create
+        serviceAccountName: uddi-operator-controller-manager
+      deployments:
+      - label:
+          app.kubernetes.io/managed-by: kustomize
+          app.kubernetes.io/name: uddi-operator
+          control-plane: controller-manager
+        name: uddi-operator-controller-manager
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: uddi-operator
+              control-plane: controller-manager
+          strategy: {}
+          template:
+            metadata:
+              annotations:
+                kubectl.kubernetes.io/default-container: manager
+              labels:
+                app.kubernetes.io/name: uddi-operator
+                control-plane: controller-manager
+            spec:
+              containers:
+              - args:
+                - --metrics-bind-address=:8443
+                - --leader-elect
+                - --health-probe-bind-address=:8081
+                command:
+                - /manager
+                image: quay.io/ingmarvg-ib/uddi-operator:v0.1.0
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8081
+                  initialDelaySeconds: 15
+                  periodSeconds: 20
+                name: manager
+                readinessProbe:
+                  httpGet:
+                    path: /readyz
+                    port: 8081
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                resources:
+                  limits:
+                    cpu: 500m
+                    memory: 128Mi
+                  requests:
+                    cpu: 10m
+                    memory: 64Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+              securityContext:
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: uddi-operator-controller-manager
+              terminationGracePeriodSeconds: 10
+      permissions:
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
+          - leases
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - patch
+        serviceAccountName: uddi-operator-controller-manager
+    strategy: deployment
+  installModes:
+  - supported: true
+    type: OwnNamespace
+  - supported: true
+    type: SingleNamespace
+  - supported: true
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - infoblox
+  - dns
+  - ipam
+  - dhcp
+  - ddi
+  - universal ddi
+  links:
+  - name: Repository
+    url: https://github.com/IngmarVG-IB/openshiftoperator
+  maintainers:
+  - email: 32110797+IngmarVG-IB@users.noreply.github.com
+    name: Ingmar
+  maturity: alpha
+  minKubeVersion: 1.29.0
+  provider:
+    name: uddi-operator authors
+  version: 0.1.0

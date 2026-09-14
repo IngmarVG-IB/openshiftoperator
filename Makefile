@@ -112,6 +112,15 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+# ENVTEST_K8S_VERSION_FLOOR pins the oldest Kubernetes minor version this operator supports.
+# OpenShift 4.16 ships Kubernetes 1.29, so this is the newest 1.29.x patch that
+# `setup-envtest list` offers (checked 2026-09-14; bump when a newer 1.29.x patch appears).
+ENVTEST_K8S_VERSION_FLOOR ?= 1.29.5
+
+.PHONY: test-floor
+test-floor: manifests generate fmt vet envtest ## Run tests against the Kubernetes 1.29 (OpenShift 4.16) floor.
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION_FLOOR) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover-floor.out
+
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
@@ -310,6 +319,13 @@ bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metada
 	$(OPERATOR_SDK) generate kustomize manifests -q
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
+	# operator-sdk has no flag for the OpenShift-support bundle annotation, so stamp it into
+	# the annotations file and mirror it as a LABEL in bundle.Dockerfile, matching the
+	# `minKubeVersion: 1.29.0` / OpenShift 4.16 floor declared in the CSV.
+	grep -q 'com.redhat.openshift.versions' bundle/metadata/annotations.yaml || \
+		sed -i '/operators.operatorframework.io.bundle.channels.v1/a\  com.redhat.openshift.versions: "v4.16"' bundle/metadata/annotations.yaml
+	grep -q 'com.redhat.openshift.versions' bundle.Dockerfile || \
+		sed -i '/LABEL operators.operatorframework.io.bundle.channels.v1/a\LABEL com.redhat.openshift.versions="v4.16"' bundle.Dockerfile
 	$(OPERATOR_SDK) bundle validate ./bundle
 
 .PHONY: bundle-build
@@ -320,6 +336,9 @@ bundle-build: ## Build the bundle image.
 bundle-push: ## Push the bundle image.
 	$(MAKE) docker-push IMG=$(BUNDLE_IMG)
 
+## Tool Versions
+OPM_VERSION ?= v1.74.0
+
 .PHONY: opm
 OPM = $(LOCALBIN)/opm
 opm: ## Download opm locally if necessary.
@@ -329,7 +348,7 @@ ifeq (,$(shell which opm 2>/dev/null))
 	set -e ;\
 	mkdir -p $(dir $(OPM)) ;\
 	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.55.0/$${OS}-$${ARCH}-opm ;\
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/$(OPM_VERSION)/$${OS}-$${ARCH}-opm ;\
 	chmod +x $(OPM) ;\
 	}
 else
@@ -337,24 +356,46 @@ OPM = $(shell which opm)
 endif
 endif
 
-# A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
-# These images MUST exist in a registry and be pull-able.
+# A space-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS="example.com/operator-bundle:v0.1.0 example.com/operator-bundle:v0.2.0").
+# These images MUST exist in a registry and be pull-able (run bundle-push first).
 BUNDLE_IMGS ?= $(BUNDLE_IMG)
 
 # The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
 CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
 
-# Set CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
-ifneq ($(origin CATALOG_BASE_IMG), undefined)
-FROM_INDEX_OPT := --from-index $(CATALOG_BASE_IMG)
-endif
+# CATALOG_DIR is the file-based catalog (FBC) root; CATALOG_PACKAGE_DIR holds this
+# package's declarative-config blobs.
+CATALOG_DIR ?= catalog
+CATALOG_PACKAGE_DIR ?= $(CATALOG_DIR)/uddi-operator
 
-# Build a catalog image by adding bundle images to an empty catalog using the operator package manager tool, 'opm'.
-# This recipe invokes 'opm' in 'semver' bundle add mode. For more information on add modes, see:
-# https://github.com/operator-framework/community-operators/blob/7f1438c/docs/packaging-operator.md#updating-your-existing-operator
+# Build a file-based catalog. The legacy 'opm index add' sqlite flow is deprecated
+# upstream; this instead renders the (already-pushed) bundle image's declarative config
+# with 'opm render' into $(CATALOG_PACKAGE_DIR), writes the olm.package and olm.channel
+# blobs (single channel: alpha), generates catalog.Dockerfile with 'opm generate
+# dockerfile', and builds the catalog image from it.
 .PHONY: catalog-build
-catalog-build: opm ## Build a catalog image.
-	$(OPM) index add --container-tool $(CONTAINER_TOOL) --mode semver --tag $(CATALOG_IMG) --bundles $(BUNDLE_IMGS) $(FROM_INDEX_OPT)
+catalog-build: opm ## Build a file-based catalog image from the pushed bundle image(s).
+	rm -rf $(CATALOG_PACKAGE_DIR)
+	mkdir -p $(CATALOG_PACKAGE_DIR)
+	{ \
+		echo "---"; \
+		echo "schema: olm.package"; \
+		echo "name: uddi-operator"; \
+		echo "defaultChannel: alpha"; \
+	} > $(CATALOG_PACKAGE_DIR)/package.yaml
+	$(OPM) render $(BUNDLE_IMGS) -o yaml > $(CATALOG_PACKAGE_DIR)/bundle.yaml
+	{ \
+		echo "---"; \
+		echo "schema: olm.channel"; \
+		echo "package: uddi-operator"; \
+		echo "name: alpha"; \
+		echo "entries:"; \
+		echo "  - name: uddi-operator.v$(VERSION)"; \
+	} > $(CATALOG_PACKAGE_DIR)/channel.yaml
+	$(OPM) validate $(CATALOG_PACKAGE_DIR)
+	rm -f $(CATALOG_DIR).Dockerfile
+	$(OPM) generate dockerfile $(CATALOG_DIR)
+	$(CONTAINER_TOOL) build -f $(CATALOG_DIR).Dockerfile -t $(CATALOG_IMG) .
 
 # Push the catalog image.
 .PHONY: catalog-push

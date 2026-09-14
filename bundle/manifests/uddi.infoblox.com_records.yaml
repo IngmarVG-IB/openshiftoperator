@@ -1,0 +1,428 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  creationTimestamp: null
+  name: records.uddi.infoblox.com
+spec:
+  group: uddi.infoblox.com
+  names:
+    kind: Record
+    listKind: RecordList
+    plural: records
+    shortNames:
+    - uddirecord
+    singular: record
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .status.absoluteName
+      name: Name
+      type: string
+    - jsonPath: .status.id
+      name: ID
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Record is a Universal DDI DNS resource record.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              RecordSpec describes a Universal DDI DNS resource record. Universal DDI stores one
+              rdata per record object, so two A records for the same name are two CRs.
+              Natural key for adoption: zone plus name plus type plus rdata.
+            properties:
+              comment:
+                description: Comment stored on the Universal DDI object.
+                maxLength: 1024
+                type: string
+              connectionRef:
+                description: |-
+                  ConnectionRef names the Connection providing credentials. Empty means the
+                  Connection called "default" in this namespace.
+                properties:
+                  name:
+                    description: Name of the Connection in this namespace. Defaults
+                      to "default".
+                    maxLength: 253
+                    type: string
+                type: object
+              createPtr:
+                description: CreatePtr asks the API to create the matching PTR record.
+                  A and AAAA only.
+                type: boolean
+              disabled:
+                description: Disabled turns the record off in Universal DDI.
+                type: boolean
+              lifecycle:
+                description: Lifecycle controls adoption and deletion.
+                properties:
+                  adoptExisting:
+                    default: false
+                    description: |-
+                      AdoptExisting allows taking over an existing Universal DDI object that matches the
+                      natural key but does not carry this operator's ownership tags. When false such an
+                      object is reported as a conflict (Ready=False/AlreadyExists).
+                    type: boolean
+                  deletionPolicy:
+                    default: Delete
+                    description: DeletionPolicy decides whether deleting the CR also
+                      deletes the Universal DDI object.
+                    enum:
+                    - Delete
+                    - Orphan
+                    type: string
+                type: object
+              name:
+                description: |-
+                  Name of the record inside the zone. "@" or the empty string means the apex.
+                  Immutable.
+                maxLength: 256
+                type: string
+                x-kubernetes-validations:
+                - message: name is immutable
+                  optionalOldSelf: true
+                  rule: self == oldSelf.orValue(self)
+              rdata:
+                description: RData holds exactly one block, matching type.
+                properties:
+                  a:
+                    description: A rdata.
+                    properties:
+                      address:
+                        description: Address is an IPv4 address.
+                        maxLength: 45
+                        minLength: 1
+                        type: string
+                    required:
+                    - address
+                    type: object
+                  aaaa:
+                    description: AAAA rdata.
+                    properties:
+                      address:
+                        description: Address is an IPv6 address.
+                        maxLength: 45
+                        minLength: 1
+                        type: string
+                    required:
+                    - address
+                    type: object
+                  caa:
+                    description: CAA rdata.
+                    properties:
+                      flags:
+                        default: 0
+                        description: Flags byte.
+                        format: int32
+                        maximum: 255
+                        minimum: 0
+                        type: integer
+                      tag:
+                        description: Tag, for example "issue", "issuewild" or "iodef".
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                      value:
+                        description: Value for the tag.
+                        maxLength: 1024
+                        minLength: 1
+                        type: string
+                    required:
+                    - tag
+                    - value
+                    type: object
+                  cname:
+                    description: CNAME rdata.
+                    properties:
+                      cname:
+                        description: CNAME is the canonical name, trailing dot included.
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                    required:
+                    - cname
+                    type: object
+                  mx:
+                    description: MX rdata.
+                    properties:
+                      exchange:
+                        description: Exchange host, trailing dot included.
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                      preference:
+                        description: Preference of this exchange.
+                        format: int32
+                        maximum: 65535
+                        minimum: 0
+                        type: integer
+                    required:
+                    - exchange
+                    - preference
+                    type: object
+                  ns:
+                    description: NS rdata.
+                    properties:
+                      dname:
+                        description: DName is the nameserver name, trailing dot included.
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                    required:
+                    - dname
+                    type: object
+                  ptr:
+                    description: PTR rdata.
+                    properties:
+                      dname:
+                        description: DName is the target domain name, trailing dot
+                          included.
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                    required:
+                    - dname
+                    type: object
+                  srv:
+                    description: SRV rdata.
+                    properties:
+                      port:
+                        description: Port on the target host.
+                        format: int32
+                        maximum: 65535
+                        minimum: 0
+                        type: integer
+                      priority:
+                        description: Priority of the target host.
+                        format: int32
+                        maximum: 65535
+                        minimum: 0
+                        type: integer
+                      target:
+                        description: Target host, trailing dot included.
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                      weight:
+                        default: 0
+                        description: Weight for records with the same priority.
+                        format: int32
+                        maximum: 65535
+                        minimum: 0
+                        type: integer
+                    required:
+                    - port
+                    - priority
+                    - target
+                    type: object
+                  txt:
+                    description: TXT rdata.
+                    properties:
+                      text:
+                        description: Text is the character string.
+                        maxLength: 4096
+                        type: string
+                    required:
+                    - text
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one rdata block must be set
+                  rule: '[has(self.a), has(self.aaaa), has(self.cname), has(self.txt),
+                    has(self.ptr), has(self.srv), has(self.mx), has(self.ns), has(self.caa)].filter(x,
+                    x).size() == 1'
+              tags:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Tags merged onto the Universal DDI object. Ownership tags always win, then the
+                  Connection's defaultTags, then these.
+                type: object
+              ttl:
+                description: TTL in seconds. Omitted means inherit from the zone.
+                format: int32
+                maximum: 2147483647
+                minimum: 0
+                type: integer
+              type:
+                description: Type of the resource record. Immutable.
+                enum:
+                - A
+                - AAAA
+                - CNAME
+                - TXT
+                - PTR
+                - SRV
+                - MX
+                - NS
+                - CAA
+                type: string
+                x-kubernetes-validations:
+                - message: type is immutable
+                  rule: self == oldSelf
+              zoneRef:
+                description: ZoneRef names the AuthZone CR or a Universal DDI auth
+                  zone id. Immutable.
+                properties:
+                  id:
+                    description: ID is a Universal DDI resource id, for example "dns/view/2c1a...".
+                    maxLength: 256
+                    type: string
+                  name:
+                    description: Name of an object-layer CR in this namespace.
+                    maxLength: 253
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: zoneRef is immutable
+                  rule: self == oldSelf
+                - message: exactly one of name or id must be set
+                  rule: has(self.name) != has(self.id)
+            required:
+            - rdata
+            - type
+            - zoneRef
+            type: object
+            x-kubernetes-validations:
+            - message: rdata must contain the block matching spec.type
+              rule: (self.type == 'A' && has(self.rdata.a)) || (self.type == 'AAAA'
+                && has(self.rdata.aaaa)) || (self.type == 'CNAME' && has(self.rdata.cname))
+                || (self.type == 'TXT' && has(self.rdata.txt)) || (self.type == 'PTR'
+                && has(self.rdata.ptr)) || (self.type == 'SRV' && has(self.rdata.srv))
+                || (self.type == 'MX' && has(self.rdata.mx)) || (self.type == 'NS'
+                && has(self.rdata.ns)) || (self.type == 'CAA' && has(self.rdata.caa))
+            - message: createPtr is only valid for A and AAAA records
+              rule: '!has(self.createPtr) || !self.createPtr || self.type == ''A''
+                || self.type == ''AAAA'''
+          status:
+            description: RecordStatus reports the observed state of the record.
+            properties:
+              absoluteName:
+                description: AbsoluteName is the fully qualified name observed in
+                  Universal DDI.
+                type: string
+              conditions:
+                description: Conditions hold Ready and Synced.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              id:
+                description: ID is the Universal DDI resource id, for example "ipam/subnet/<uuid>".
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is when the Universal DDI object was last
+                  read or written.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the metadata.generation the status
+                  was last computed from.
+                format: int64
+                type: integer
+              source:
+                description: Source reported by Universal DDI. Only STATIC records
+                  are adopted, updated or deleted.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              zone:
+                description: Zone is the Universal DDI auth zone id the record lives
+                  in.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null
