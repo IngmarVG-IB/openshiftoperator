@@ -1,0 +1,16 @@
+# WAVE 2: the FixedAddress controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: FixedAddress
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: node-1
+spec:
+  spaceRef:
+    name: corp
+  address: 10.0.10.50
+  matchType: mac
+  matchValue: "52:54:00:aa:bb:cc"
+  name: node-1
+  hostname: node-1.example.com

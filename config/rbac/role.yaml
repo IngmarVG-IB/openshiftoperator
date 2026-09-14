@@ -1,0 +1,83 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - config.openshift.io
+  resources:
+  - clusterversions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - uddi.infoblox.com
+  resources:
+  - addressblocks
+  - addresses
+  - authzones
+  - connections
+  - fixedaddresses
+  - ipspaces
+  - ranges
+  - records
+  - subnets
+  - views
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - uddi.infoblox.com
+  resources:
+  - addressblocks/finalizers
+  - addresses/finalizers
+  - authzones/finalizers
+  - connections/finalizers
+  - fixedaddresses/finalizers
+  - ipspaces/finalizers
+  - ranges/finalizers
+  - records/finalizers
+  - subnets/finalizers
+  - views/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - uddi.infoblox.com
+  resources:
+  - addressblocks/status
+  - addresses/status
+  - authzones/status
+  - connections/status
+  - fixedaddresses/status
+  - ipspaces/status
+  - ranges/status
+  - records/status
+  - subnets/status
+  - views/status
+  verbs:
+  - get
+  - patch
+  - update

@@ -1,0 +1,17 @@
+# WAVE 2: the Record controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Record
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: www-a
+spec:
+  zoneRef:
+    name: apps-zone
+  name: www
+  type: A
+  rdata:
+    a:
+      address: 192.0.2.10
+  ttl: 300

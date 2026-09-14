@@ -1,0 +1,11 @@
+# WAVE 2: the IPSpace controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: IPSpace
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: corp
+spec:
+  name: corp
+  comment: Corporate IP space

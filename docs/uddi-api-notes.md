@@ -27,10 +27,9 @@ c := uddi.NewAPIClient(
     option.WithAPIKey(key),
     option.WithClientName("uddi-operator"),
     option.WithDefaultTags(map[string]string{...}), // merged into every taggable body
-    option.WithRateLimit(10, 20),                   // default 25 rps, burst 25, mutating verbs only
-    option.WithRetryDisabled(),                     // see "Retries" below
-    option.WithHTTPClient(httpClient),
+    option.WithHTTPClient(httpClient),              // carries the operator's rate-limiting RoundTripper
 )
+// option.WithRateLimit / WithRetry / WithRetryDisabled are NOT in v0.4.0 (master only).
 c.DNSConfigurationAPI    // *dnsconfig.APIClient
 c.DNSDataAPI             // *dnsdata.APIClient
 c.IPAddressManagementAPI // *ipam.APIClient (IPAM and DHCP)
@@ -86,20 +85,28 @@ Constructors with required args: `dnsconfig.NewView(name)`, `dnsdata.NewRecord(r
 ### View
 
 - `ip_spaces []string`: IP spaces bound to the view (for reverse lookups). Worth exposing.
-- Delete moves the view to the Recycle Bin rather than hard-deleting (**verify** whether
-  this also applies to zones and records, and whether recycled objects show up in List
-  results; the natural-key lookup must ignore them).
+- Delete moves the view to the Recycle Bin rather than hard-deleting. The same is
+  documented for AuthZone, Record and IPSpace, and Infoblox lists Address Block, Subnet,
+  Range, Fixed Address, Option Groups, Hosts and DNS Server Groups as recyclable too.
+  Recycled objects are kept for 30 days (100,000 object limit). Option Codes are hard
+  deleted. Whether recycled objects appear in List results, or block reuse of the same
+  natural key, is undocumented; the SDK has no recycle-bin endpoint. Check both in the
+  integration tests before relying on natural-key lookups after a delete.
 
 ### AuthZone
 
 - `primary_type`: `cloud` (served by Universal DDI DNS hosts) or `external`.
 - `view`: `dns/view/<uuid>`.
-- Nameserver assignment is mid-migration in the API. Legacy fields `nsg`, `nsgs` and
-  `internal_secondaries` / `external_primaries` / `external_secondaries` still exist, but
-  combining an NSG with internal secondaries and multiple NSGs are now rejected. The new
-  "unified nameservers" model uses `nameservers []Nameserver` with `version: v2`. The CRD
-  should expose the unified model as primary and keep the legacy fields for adoption of old
-  zones (**verify** the `Nameserver` struct fields in `dnsconfig/docs/Nameserver.md`).
+- Nameserver assignment is mid-migration in the API. At v0.4.0 the SDK has only the
+  legacy fields: `nsgs []string`, `internal_secondaries []InternalSecondary{host}`,
+  `external_primaries []ExternalPrimary{type: nsg|primary, address, fqdn, nsg,
+  tsig_enabled, tsig_key}` and `external_secondaries`. The API now rejects nested NSGs,
+  dual-role NSGs, more than one NSG on a zone, and an NSG combined with internal
+  secondaries. The "unified nameservers" model (`nameservers []Nameserver{address, fqdn,
+  host, origin: external|nios-x|nios, role: primary|secondary, stealth, tsig_enabled,
+  tsig_key}` plus a read-only `version` of `v1` or `v2`, and a singular `nsg`) was merged
+  to the SDK master branch on 2026-09-10 in PR #18 and is not in any tag yet. The CRD
+  models the legacy fields with CEL guards and gains `nameservers` once a tag ships it.
 - `warnings []Warning` (read-only) after create / update: surface in status.
 - `mapped_subnet` / `mapping` are read-only and only set on reverse zones.
 
@@ -134,8 +141,9 @@ Constructors with required args: `dnsconfig.NewView(name)`, `dnsdata.NewRecord(r
 - Subnet and AddressBlock take `address` plus `cidr` (int64) separately.
 - Range: `start`, `end`, `exclusion_ranges [{start, end, comment}]`, `dhcp_host`; parent
   subnet is derived by the server.
-- Address: `names [{name, type}]`, `hwaddr`, `interface`, `comment`, `tags`; read-only
-  `state`, `usage`, `parent`.
+- Address: `names [{name, type}]` (both fields required; `type` is an open string, `user`
+  is the only confirmed writable value), `hwaddr`, `interface`, `comment`, `tags`;
+  read-only `state`, `usage`, `parent`.
 - `dhcp_host` (`dhcp/host/<uuid>`) on Subnet and Range assigns the object to a DHCP-serving
   host.
 - `dhcp_options []OptionItem`: `{type: "option", option_code: <id>, option_value: s}` or
@@ -160,11 +168,15 @@ Two mechanisms:
    sending `space`, `names`, `comment`, `hwaddr`, `interface` and `tags` in the same body.
    The provider wraps each such create in a per-parent mutex.
 
-The operator uses mechanism 2 because it is atomic with the ownership tags, and
-serialises creates per parent like the provider does. For next-available subnets and
-address blocks the provider presumably uses the analogous `/nextavailablesubnet` and
-`/nextavailableaddressblock` suffixes on `SubnetAPI.Create` / `AddressBlockAPI.Create`
-with `cidr` set (**verify** in `model_ipamsvc_subnet.go` and the integration tests).
+The operator uses mechanism 2 because it is atomic with the ownership tags. The same
+pattern is confirmed for child subnets and blocks: `SubnetAPI.Create` with
+`address = "<address_block id>/nextavailablesubnet"` and `AddressBlockAPI.Create` with
+`address = "<address_block id>/nextavailableaddressblock"`, both with `cidr` set
+(`model_ipamsvc_subnet.go`, `model_ipamsvc_address_block.go`). The provider wraps all
+three in a mutex keyed on the parent id with the comment "This is necessary to prevent
+the same block being returned", so the API does not guarantee uniqueness under
+concurrent next-available requests. The operator serialises these creates per parent id
+the same way.
 
 ### FixedAddress
 
@@ -185,9 +197,13 @@ Go builder methods map to wire query parameters: `Fields` -> `_fields`, `Filter`
 Examples: `fqdn=="apps.example.com."`, `name_in_zone=="www" and type=="A"`,
 `address=="10.0.10.0" and cidr==24`.
 
-`_tfilter` filters on tags with the same shape, e.g. `("uddi_operator_uid"=="<uid>")`
-(**verify** the exact grammar and which operators are supported; also **verify** the
-allowed characters in tag keys before settling on the ownership tag names).
+`_tfilter` filters on tags. Confirmed grammar (from the Terraform provider's
+`flex.ExpandFrameworkMapTagFilterString`): key and value both single-quoted, clauses
+joined with ` and `, e.g. `'uddi_operator_uid'=='<uid>' and 'uddi_operator_managed'=='true'`.
+Tag keys and values may contain arbitrary characters (slashes, spaces, unicode), which is
+why they are always quoted. Whether tag lookups are indexed server-side is undocumented.
+Infoblox docs describe two tag types, freeform (any value, optionally regex-restricted)
+and restricted (fixed value set); the operator uses freeform tags.
 
 Pagination: use `_page_token` from the response when present, otherwise `_offset` /
 `_limit`. Default page sizes are small; always paginate in List helpers.
@@ -201,13 +217,18 @@ Pagination: use `_page_token` from the response when present, otherwise `_offset
   ```go
   if be, ok := err.(interface{ Body() []byte }); ok { body := be.Body() }
   ```
-- Whether duplicates return 409 or 400 is undocumented (**verify**). The reconcile loop
+- Duplicate creates: the OpenAPI spec documents a 409 with body
+  `{"error": {"code", "message", "status"}}` only for Threat Defense (`fw`) objects; the
+  `ipam`, `dnsconfig` and `dnsdata` packages document no conflict response at all, so a
+  duplicate IP space, zone or record may come back as a generic 400. The reconcile loop
   does not depend on it: it looks up by natural key before every create.
-- Built-in rate limiter: token bucket, default 25 rps / burst 25, mutating verbs only.
-- Built-in retry: 3 attempts, 1s to 30s exponential backoff with jitter, on 429, 500, 502,
-  503, 504, honouring `Retry-After`. There is no idempotency key, so a retried POST can
-  double-create. The operator disables SDK retries and relies on controller requeue with
-  backoff plus the natural-key lookup, which makes creates idempotent at reconcile level.
+- Rate limiting and retries: the v0.4.0 tag ships neither. `option.WithRateLimit`,
+  `WithRetry` and `WithRetryDisabled` exist only on the SDK master branch (added after the
+  tag). The operator therefore rate-limits with its own `http.RoundTripper` over
+  `golang.org/x/time/rate`, injected through `option.WithHTTPClient`. When the dependency
+  is bumped to a tag that has the built-in retry, disable it: there is no idempotency key,
+  so a retried POST can double-create. Creates are idempotent at reconcile level anyway
+  because every create is preceded by a natural-key lookup.
 
 ## Examples
 

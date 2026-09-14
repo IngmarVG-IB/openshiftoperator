@@ -1,0 +1,14 @@
+# WAVE 2: the Subnet controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Subnet
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: openshift-lb
+spec:
+  spaceRef:
+    name: corp
+  address: 10.0.10.0
+  cidr: 24
+  name: openshift-lb

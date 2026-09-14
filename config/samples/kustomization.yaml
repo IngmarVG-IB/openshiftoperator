@@ -1,0 +1,13 @@
+## Append samples of your project ##
+resources:
+- uddi_v1alpha1_connection.yaml
+- uddi_v1alpha1_view.yaml
+- uddi_v1alpha1_authzone.yaml
+- uddi_v1alpha1_record.yaml
+- uddi_v1alpha1_ipspace.yaml
+- uddi_v1alpha1_addressblock.yaml
+- uddi_v1alpha1_subnet.yaml
+- uddi_v1alpha1_range.yaml
+- uddi_v1alpha1_address.yaml
+- uddi_v1alpha1_fixedaddress.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

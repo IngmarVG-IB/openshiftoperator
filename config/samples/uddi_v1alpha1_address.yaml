@@ -1,0 +1,18 @@
+# Next-available allocation: omit spec.address and name a parent instead.
+# WAVE 2: the Address controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Address
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: svc-web
+spec:
+  spaceRef:
+    name: corp
+  nextAvailableFrom:
+    rangeRef:
+      name: lb-pool
+  names:
+    - name: svc-web.team-a
+      type: user

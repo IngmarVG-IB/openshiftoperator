@@ -1,0 +1,22 @@
+# The Connection every object-layer CR in this namespace uses by default.
+# Create the Secret first, for example:
+#   kubectl create secret generic uddi-api-key --from-literal=apiKey=<your key>
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Connection
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+spec:
+  cspURL: https://csp.infoblox.com
+  secretRef:
+    name: uddi-api-key
+    key: apiKey
+  clientName: uddi-operator
+  defaultTags:
+    env: dev
+  resyncInterval: 10m
+  rateLimit:
+    requestsPerSecond: 10
+    burst: 20

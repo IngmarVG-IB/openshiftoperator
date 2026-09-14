@@ -1,0 +1,55 @@
+resources:
+# All RBAC will be applied under this service account in
+# the deployment namespace. You may comment out this resource
+# if your manager will use a service account that exists at
+# runtime. Be sure to update RoleBinding and ClusterRoleBinding
+# subjects if changing service account names.
+- service_account.yaml
+- role.yaml
+- role_binding.yaml
+- leader_election_role.yaml
+- leader_election_role_binding.yaml
+# The following RBAC configurations are used to protect
+# the metrics endpoint with authn/authz. These configurations
+# ensure that only authorized users and service accounts
+# can access the metrics endpoint. Comment the following
+# permissions if you want to disable this protection.
+# More info: https://book.kubebuilder.io/reference/metrics.html
+- metrics_auth_role.yaml
+- metrics_auth_role_binding.yaml
+- metrics_reader_role.yaml
+# For each CRD, "Admin", "Editor" and "Viewer" roles are scaffolded by
+# default, aiding admins in cluster management. Those roles are
+# not used by the uddi-operator itself. You can comment the following lines
+# if you do not want those helpers be installed with your Project.
+- fixedaddress_admin_role.yaml
+- fixedaddress_editor_role.yaml
+- fixedaddress_viewer_role.yaml
+- address_admin_role.yaml
+- address_editor_role.yaml
+- address_viewer_role.yaml
+- range_admin_role.yaml
+- range_editor_role.yaml
+- range_viewer_role.yaml
+- subnet_admin_role.yaml
+- subnet_editor_role.yaml
+- subnet_viewer_role.yaml
+- addressblock_admin_role.yaml
+- addressblock_editor_role.yaml
+- addressblock_viewer_role.yaml
+- ipspace_admin_role.yaml
+- ipspace_editor_role.yaml
+- ipspace_viewer_role.yaml
+- record_admin_role.yaml
+- record_editor_role.yaml
+- record_viewer_role.yaml
+- authzone_admin_role.yaml
+- authzone_editor_role.yaml
+- authzone_viewer_role.yaml
+- view_admin_role.yaml
+- view_editor_role.yaml
+- view_viewer_role.yaml
+- connection_admin_role.yaml
+- connection_editor_role.yaml
+- connection_viewer_role.yaml
+

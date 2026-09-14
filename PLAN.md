@@ -24,23 +24,31 @@ Delivered by subagents in two waves.
 
 ### Wave 1 (one agent, sequential): scaffold and framework
 
-1. `operator-sdk init --domain infoblox.com --repo github.com/IngmarVG-IB/openshiftoperator --project-name uddi-operator --plugins go/v4`
-2. `operator-sdk create api --group uddi --version v1alpha1 --kind <K> --resource --controller`
-   for Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address,
-   FixedAddress.
-3. `api/v1alpha1/common_types.go`: ConnectionRef, ObjectRef, Lifecycle, DeletionPolicy,
-   ObjectStatus, DHCPOption, condition helpers. Fill in every kind's Spec / Status exactly as
-   in DESIGN.md section 4, with kubebuilder validation markers and CEL immutability rules.
-4. `internal/uddi`: per-domain interfaces, in-memory fake with natural-key uniqueness, real
-   adapter over the Infoblox Go client (construction, auth, tag filter, pagination, error
-   wrapping).
-5. `internal/connection`: Secret resolution, client cache keyed by Secret resourceVersion,
-   Connection controller with verification call and `Ready` condition.
-6. `internal/sync`: the generic reconcile loop from DESIGN.md section 5 with the Adapter
-   interface, finalizer handling, ownership tags, adoption, deletion policies.
-7. `internal/clusterid`, `internal/tags`.
-8. envtest suite for Connection and for the generic loop using a dummy adapter.
-9. Makefile works under WSL; `make manifests generate build test` green; commit.
+- [x] 1. `operator-sdk init --domain infoblox.com --repo github.com/IngmarVG-IB/openshiftoperator --project-name uddi-operator --plugins go/v4`
+- [x] 2. `operator-sdk create api --group uddi --version v1alpha1 --kind <K> --resource --controller`
+      for Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address,
+      FixedAddress. (`Range` collides with the Go keyword in the scaffolded controller-test
+      template, so its controller, `PROJECT` entry and `cmd/main.go` registration were written
+      by hand; everything else the scaffolder produced for it is intact.)
+- [x] 3. `api/v1alpha1/common_types.go`: ConnectionRef, ObjectRef, Lifecycle, DeletionPolicy,
+      ObjectStatus, DHCPOption, condition helpers. Every kind's Spec / Status as in DESIGN.md
+      section 4, with kubebuilder validation markers and CEL immutability rules.
+- [x] 4. `internal/uddi`: per-domain interfaces, in-memory fake with natural-key uniqueness,
+      real adapter over the Infoblox Go client (construction, auth, tag filter, error
+      wrapping, keyed mutex for next-available creates).
+- [x] 5. `internal/connection`: Secret resolution, client cache keyed by Secret
+      resourceVersion plus a spec hash, Connection controller with verification call and
+      `Ready` condition.
+- [x] 6. `internal/sync`: the generic reconcile loop from DESIGN.md section 5 with the
+      Adapter interface, finalizer handling, ownership tags, adoption, deletion policies.
+- [x] 7. `internal/clusterid`, `internal/tags`.
+- [x] 8. envtest suite for Connection and for the generic loop, driven through the real View
+      adapter rather than a dummy one.
+- [x] 9. Makefile works under WSL; `make manifests generate fmt vet build test` green.
+
+Wave 1 also lands the View kind end to end (adapter, controller, field indexes, sample) as
+the reference the wave 2 kinds copy. The other eight controllers are registered and
+reconcile to a no-op; each carries a `WAVE 2 PLACEHOLDER` comment naming what is missing.
 
 ### Wave 2 (four agents in parallel): kinds, CI, docs
 

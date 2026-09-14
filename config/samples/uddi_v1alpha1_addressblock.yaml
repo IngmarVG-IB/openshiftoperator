@@ -1,0 +1,14 @@
+# WAVE 2: the AddressBlock controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: AddressBlock
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: block-10
+spec:
+  spaceRef:
+    name: corp
+  address: 10.0.0.0
+  cidr: 16
+  name: corp-root

@@ -1,0 +1,18 @@
+# WAVE 2: the Range controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Range
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: lb-pool
+spec:
+  spaceRef:
+    name: corp
+  start: 10.0.10.100
+  end: 10.0.10.199
+  name: lb-pool
+  exclusionRanges:
+    - start: 10.0.10.150
+      end: 10.0.10.159
+      comment: reserved

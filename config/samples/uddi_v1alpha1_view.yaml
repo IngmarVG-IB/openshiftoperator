@@ -1,0 +1,19 @@
+# A Universal DDI DNS view. Natural key for adoption: spec.name, which defaults to
+# metadata.name.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: View
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: view-sample
+spec:
+  connectionRef:
+    name: default
+  name: openshift
+  comment: DNS view managed by uddi-operator
+  tags:
+    team: platform
+  lifecycle:
+    adoptExisting: false
+    deletionPolicy: Delete

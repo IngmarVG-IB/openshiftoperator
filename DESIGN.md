@@ -140,9 +140,9 @@ status:
 ```
 
 Behaviour: the controller reads the Secret, builds an SDK client (`option.WithAPIKey`,
-`WithCSPUrl`, `WithClientName`, `WithDefaultTags`, `WithRateLimit`, `WithRetryDisabled`),
-and verifies it with a cheap read call (`ViewAPI.List` with `_limit=1`; **verify** that
-every API key role may list views). Clients are cached per Connection keyed by Secret
+`WithCSPUrl`, `WithClientName`, `WithDefaultTags`, and `WithHTTPClient` carrying the
+operator's rate-limiting transport), and verifies it with a cheap read call
+(`ViewAPI.List` with `_limit=1`; **verify** that every API key role may list views). Clients are cached per Connection keyed by Secret
 resourceVersion, so key rotation is picked up on the next reconcile. Object CRs whose `connectionRef` is empty use the Connection named
 `default` in their namespace. The Secret is never logged; API errors are redacted before
 they reach conditions or events.
@@ -173,10 +173,10 @@ spec:
   fqdn: apps.example.com.        # immutable
   viewRef: { name: default }     # or { id: dns/view/<uuid> }; immutable
   primaryType: cloud             # cloud | external; immutable
-  nameservers: [ ... ]           # unified nameserver model (API "version: v2"); preferred
-  nsgs: [ dns/auth_nsg/<uuid> ]  # legacy nameserver groups, kept for adopting old zones
-  internalSecondaries: [ { host: dns/host/<uuid> } ]     # legacy; DNS service hosts (cloud type)
+  nsgs: [ dns/auth_nsg/<uuid> ]  # at most one nameserver group; the API now rejects several
+  internalSecondaries: [ { host: dns/host/<uuid> } ]     # DNS service hosts (cloud type); not combinable with nsgs
   externalPrimaries: [ { type: primary, address: 10.0.0.53, fqdn: ns1.corp. } ]  # external type
+  externalSecondaries: []
   comment: ""
   disabled: false
   tags: {}
@@ -185,9 +185,13 @@ status: { id: dns/auth_zone/<uuid>, warnings: [...], ... }
 ```
 
 Natural key for adoption: `fqdn` + view. Zones usually pre-exist in Universal DDI, so the
-sample uses adopt + orphan. The API is mid-migration from NSGs to a unified `nameservers`
-list and rejects some legacy combinations; the CRD exposes the unified model as primary
-(**verify** the `Nameserver` struct fields) and mirrors the API's `warnings` into status.
+sample uses adopt + orphan. The API is mid-migration from nameserver groups to a "unified
+nameservers" model (`nameservers` list plus a read-only `version` of `v1` or `v2`), but
+that model only exists on the SDK's untagged master branch (merged 2026-09-10, after the
+v0.4.0 tag). v1alpha1 therefore models the legacy fields only, with CEL rules for the
+combinations the API now rejects (more than one NSG; NSG together with internal
+secondaries). `nameservers` is added when a tagged SDK ships it. The API's read-only
+`warnings` are mirrored into status.
 
 **Record**
 
@@ -440,8 +444,9 @@ admission time rather than a permanently unready object.
 
 ## 6. Ownership tags and cluster identity
 
-Every object created or adopted by the operator carries these tags (**verify** the allowed
-tag key characters; underscores are used to be safe):
+Every object created or adopted by the operator carries these tags (tag keys may contain
+arbitrary characters; underscores are used for readability and safe quoting in
+`_tfilter` expressions, whose grammar is `'key'=='value' and 'key2'=='value2'`):
 
 | Tag | Value |
 | --- | --- |
@@ -479,11 +484,12 @@ pagination, errors and retry behaviour are documented in
 [docs/uddi-api-notes.md](docs/uddi-api-notes.md).
 
 Two SDK behaviours shape the design. Updates are PATCH and the client only serialises
-fields that were set, so adapters build partial structs. The SDK retries POSTs on 5xx and
-429 with no idempotency key, which can double-create, so the operator disables SDK retries
-and relies on controller requeue plus a natural-key lookup before every create. Rate
-limiting uses the SDK's token bucket, configured per Connection. API errors are wrapped
-with the domain, method and HTTP status, with the API key never included.
+fields that were set, so adapters build partial structs. The v0.4.0 tag has no built-in
+retry or rate limiter (both exist only on the SDK's master branch), so the operator
+rate-limits with its own `http.RoundTripper` per Connection and relies on controller
+requeue plus a natural-key lookup before every create; when a later SDK tag brings the
+built-in retry, it stays disabled because there is no idempotency key. API errors are
+wrapped with the domain, method and HTTP status, with the API key never included.
 
 ## 9. Observability
 
@@ -564,25 +570,31 @@ Integration tests never touch objects that lack the run's tags.
 
 ## 14. Open questions
 
-1. **quay.io organisation** for images, bundle and catalog.
-2. **Tag key charset** in Universal DDI, the exact `_tfilter` grammar, and whether tag
-   lookups are indexed well enough for adoption by uid tag.
-3. **Next-available subnets and blocks**: confirm the `<parent id>/nextavailablesubnet`
-   and `/nextavailableaddressblock` address forms on `SubnetAPI.Create` and
-   `AddressBlockAPI.Create` mirror the address form, and whether the API itself guards
-   against concurrent allocations or only the client-side mutex does.
-4. **MAC discovery for host registration**: rely on the NMState operator, a node annotation
+1. **Tag lookup performance**: whether `_tfilter` lookups are indexed well enough for
+   adoption by uid tag at scale. Only measurable against the tenant.
+2. **MAC discovery for host registration**: rely on the NMState operator, a node annotation
    set by another agent, or drop MAC matching in favour of named `Address` objects.
-5. **AuthZone unified nameservers**: exact `Nameserver` fields and which legacy
-   combinations the API still accepts.
-6. **DHCP option codes by name**: worth a lookup cache in v1alpha1 or defer.
-7. **Wildcard router record**: reconcile the ingress operator's `DNSRecord` CRs, or document
+3. **Unified nameservers**: watch for the SDK tag that ships the `nameservers` /
+   `version` fields (master has them since 2026-09-10) and add them to AuthZone, including
+   adoption of `v2` zones.
+4. **DHCP option codes by name**: worth a lookup cache in v1alpha1 or defer.
+5. **Wildcard router record**: reconcile the ingress operator's `DNSRecord` CRs, or document
    a hand-written `Record` CR of type CNAME / A for `*.apps`.
-8. **Recycle bin semantics**: which deletes are soft, and whether recycled objects appear
-   in List results.
-9. **Duplicate create status code** (409 vs 400); the design does not depend on it.
+6. **Recycle bin visibility**: deletes of every kind we manage are soft (30 days, recycle
+   bin); whether recycled objects appear in List results or block reuse of a natural key
+   is undocumented and must be checked in the integration tests.
+7. **Duplicate create status code**: documented as 409 only for Threat Defense objects;
+   undocumented for IPAM and DNS. The design does not depend on it.
+8. **Option code id prefix** (`dhcp/option_code/<uuid>`) is inferred from convention, not
+   documented; the CRD treats it as an opaque id.
 
-Resolved: MetalLB uses `metallb.io/loadBalancerIPs` (plus `metallb.io/address-pool`).
+Resolved: quay.io organisation is `quay.io/ingmarvg-ib`. MetalLB uses
+`metallb.io/loadBalancerIPs` (plus `metallb.io/address-pool`). Next-available creates use
+`<parent id>/nextavailableip|nextavailablesubnet|nextavailableaddressblock` in the
+`address` field (with `cidr` for the block forms) and need a per-parent mutex on the
+client side because the API can hand the same result to concurrent callers. Tag keys may
+contain arbitrary characters. Address `names[].type` is an open string; `user` is the
+confirmed writable value.
 
 ## 15. Non-goals for now
 

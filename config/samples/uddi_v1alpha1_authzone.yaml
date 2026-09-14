@@ -1,0 +1,18 @@
+# Zones usually pre-exist in Universal DDI, so the sample adopts and orphans.
+# WAVE 2: the AuthZone controller is a no-op until its adapter lands.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: AuthZone
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: apps-zone
+spec:
+  fqdn: apps.example.com.
+  viewRef:
+    name: view-sample
+  primaryType: cloud
+  comment: Zone for OpenShift Routes
+  lifecycle:
+    adoptExisting: true
+    deletionPolicy: Orphan
