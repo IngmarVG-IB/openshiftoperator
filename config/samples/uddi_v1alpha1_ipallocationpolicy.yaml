@@ -1,0 +1,28 @@
+# Allocates a Universal DDI address from the "lb-pool" Range for every LoadBalancer
+# Service in this namespace labelled lb: uddi that also carries the
+# uddi.infoblox.com/allocate: "true" annotation, and writes the result into MetalLB's
+# metallb.io/loadBalancerIPs annotation.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: IPAllocationPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: lb
+spec:
+  connectionRef:
+    name: default
+  selector:
+    matchLabels:
+      lb: uddi
+  requireAnnotation: true
+  allocateFrom:
+    rangeRef:
+      name: lb-pool
+  assignVia:
+    mode: Annotation
+    annotation: metallb.io/loadBalancerIPs
+  tags:
+    team: platform
+  addressLifecycle:
+    deletionPolicy: Delete

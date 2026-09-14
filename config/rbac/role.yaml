@@ -54,6 +54,7 @@ rules:
   - connections
   - dnspublishpolicies
   - fixedaddresses
+  - ipallocationpolicies
   - ipspaces
   - ranges
   - records
@@ -76,6 +77,7 @@ rules:
   - connections/finalizers
   - dnspublishpolicies/finalizers
   - fixedaddresses/finalizers
+  - ipallocationpolicies/finalizers
   - ipspaces/finalizers
   - ranges/finalizers
   - records/finalizers
@@ -92,6 +94,7 @@ rules:
   - connections/status
   - dnspublishpolicies/status
   - fixedaddresses/status
+  - ipallocationpolicies/status
   - ipspaces/status
   - ranges/status
   - records/status

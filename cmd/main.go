@@ -339,6 +339,15 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "DNSPublishPolicy")
 		os.Exit(1)
 	}
+	// Milestone 3 wave 1 placeholder: registered so the manager wires up cleanly;
+	// Reconcile is a no-op until milestone 3 wave 2 implements the pipeline.
+	if err := (&controller.IPAllocationPolicyReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "IPAllocationPolicy")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
