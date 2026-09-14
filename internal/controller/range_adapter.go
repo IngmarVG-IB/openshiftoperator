@@ -176,15 +176,6 @@ func optStr(s string) *string {
 	return &s
 }
 
-// i64Ptr dereferences an *int64, treating nil as zero. Shared with the FixedAddress and
-// Address adapters wherever a read-only SDK counter needs to land in an int64 status field.
-func i64Ptr(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
 // toUtilization converts the SDK's read-only utilisation block into the CRD's mirror
 // type, field for field. It returns nil when Universal DDI reports none.
 func toUtilization(in *ipam.Utilization) *uddiv1alpha1.Utilization {
