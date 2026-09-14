@@ -106,6 +106,11 @@ Owned by the second wave 3 agent:
 - **Events use the legacy recorder API.** controller-runtime v0.24 deprecates
   `GetEventRecorderFor`; the object layer and its tests still use `record.EventRecorder`,
   so the three call sites carry a nolint until the Runtime moves to `events.EventRecorder`.
+- **A missing AuthZone in `zoneRefs` is only logged.** DNSPublishPolicy treats it as a
+  zone that is not Ready; the `ZonesNotReady` condition appears only when no zoneRef is
+  Ready, so a typo among several zoneRefs shows up as `NoMatchingZone` skips and a log line.
+- **Generated Records use the deprecated `client.Apply` patch.** controller-runtime v0.24
+  deprecates it in favour of the apply-configuration API; the call site carries a nolint.
 - **Record apex spelling is immutable per form.** The CRD's immutability rule compares
   `spec.name` literally, so switching an existing apex record between an omitted name and
   `"@"` is rejected even though the adapter treats both as the apex. Delete and recreate
@@ -123,13 +128,13 @@ Owned by the second wave 3 agent:
 
 DNSPublishPolicy controller (DESIGN.md section 4.7): automatically publish Routes, Ingresses, and LoadBalancer Services as DNS records.
 
-- [ ] **Type and planner:** `internal/publish/model.go` (SourceKind, Endpoint, Skip, TargetMode, SkipReason constants), `internal/publish/planner.go` (pure functions: sources to endpoints, zone matching, desired Records, apply/prune logic).
-- [ ] **Source extractors:** `internal/publish/route.go`, `internal/publish/ingress.go`, `internal/publish/service.go`. Each extracts hostname(s) and target(s) from its source kind, respects annotation overrides, returns Endpoint or Skip.
-- [ ] **Route API:** Register `route.openshift.io/v1` at startup with discovery fallback (Route API missing on plain Kubernetes is logged, not an error).
-- [ ] **Controller:** `internal/controller/dnspublishpolicy_controller.go`. Watches policy, owned Records, Routes, Ingresses, Services; field indexes on zoneRef names and source names; server-side apply with `uddi-operator/dnspublishpolicy` field manager; status with `published`, `ready`, `skipped`, conditions `Ready`, `RecordsNotReady`, `ZonesNotReady`.
-- [ ] **envtest suite:** `internal/controller/dnspublishpolicy_controller_test.go` covering: Auto/CNAME/A modes, zone matching, annotation overrides, Record ownership and garbage collection, skip reasons, status conditions, pruning when sources are deleted.
-- [ ] **Route CRD in envtest:** Register the openshift-api Route CRD in the test environment so the controller can reconcile routes.
-- [ ] **Documentation:** `docs/dns-publishing.md` (task guide: what it does, prerequisites, examples, target selection per mode and source kind, annotations, Record naming, skip reasons, deletion behavior, limitations).
+- [x] **Type and planner:** `internal/publish/model.go` (SourceKind, Endpoint, Skip, TargetMode, SkipReason constants), `internal/publish/planner.go` (pure functions: sources to endpoints, zone matching, desired Records, apply/prune logic).
+- [x] **Source extractors:** `internal/publish/route.go`, `internal/publish/ingress.go`, `internal/publish/service.go`. Each extracts hostname(s) and target(s) from its source kind, respects annotation overrides, returns Endpoint or Skip.
+- [x] **Route API:** Register `route.openshift.io/v1` at startup with discovery fallback (Route API missing on plain Kubernetes is logged, not an error).
+- [x] **Controller:** `internal/controller/dnspublishpolicy_controller.go`. Watches policy, owned Records, Routes, Ingresses, Services; field indexes on zoneRef names and source names; server-side apply with `uddi-operator/dnspublishpolicy` field manager; status with `published`, `ready`, `skipped`, conditions `Ready`, `RecordsNotReady`, `ZonesNotReady`.
+- [x] **envtest suite:** `internal/controller/dnspublishpolicy_controller_test.go` covering: Auto/CNAME/A modes, zone matching, annotation overrides, Record ownership and garbage collection, skip reasons, status conditions, pruning when sources are deleted.
+- [x] **Route CRD in envtest:** Register the openshift-api Route CRD in the test environment so the controller can reconcile routes.
+- [x] **Documentation:** `docs/dns-publishing.md` (task guide: what it does, prerequisites, examples, target selection per mode and source kind, annotations, Record naming, skip reasons, deletion behavior, limitations).
 
 ## Milestone 3: IP allocation
 

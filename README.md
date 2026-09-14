@@ -4,7 +4,7 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 
 ## Status
 
-Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is in progress.
+Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records.
 
 ## Features
 
