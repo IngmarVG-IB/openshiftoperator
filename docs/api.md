@@ -62,7 +62,7 @@ All object-layer kinds report these conditions:
 - `False/DependencyNotReady`: A referenced object-layer CR has no `status.id` yet.
 - `False/AlreadyExists`: An untagged object exists under the natural key and `lifecycle.adoptExisting=false`.
 - `False/Creating`: The Universal DDI object is being created.
-- `False/Adopted`: An existing Universal DDI object was taken over (informational, Ready is still True).
+- Adoption of an existing Universal DDI object is reported through an `Adopted` event; the condition then reads `True/Synced` like a created object.
 - `False/APIError`: A Universal DDI API call failed.
 - `False/Deleting`: Deletion is in progress or blocked (e.g., by dependent objects in Universal DDI).
 

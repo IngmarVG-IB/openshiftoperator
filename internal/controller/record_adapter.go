@@ -284,13 +284,13 @@ func (recordAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*dnsd
 // builds a partial patch. type, zone and name are immutable (enforced by CEL on the CRD)
 // and are never diffed; options is create-only and is never re-sent on update.
 func (recordAdapter) Diff(spec *uddiv1alpha1.RecordSpec, deps uddisync.Deps, t map[string]string, current *dnsdata.Record) (*dnsdata.Record, bool) {
-	patch := &dnsdata.Record{}
-	changed := false
+	// The SDK serialises rdata unconditionally (no omitempty), so a patch that left it nil
+	// would send "rdata": null and clobber the record data. The desired rdata therefore
+	// rides along on every patch, whether or not it is what changed.
+	want := rdataOf(spec)
+	patch := &dnsdata.Record{Rdata: want}
+	changed := !rdataEqual(current.Rdata, want)
 
-	if want := rdataOf(spec); !rdataEqual(current.Rdata, want) {
-		patch.Rdata = want
-		changed = true
-	}
 	if spec.TTL != nil {
 		wantTTL := int64(*spec.TTL)
 		if current.Ttl == nil || *current.Ttl != wantTTL {

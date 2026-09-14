@@ -48,8 +48,6 @@ const (
 	ReasonAlreadyExists = "AlreadyExists"
 	// ReasonCreating means the Universal DDI object is being created.
 	ReasonCreating = "Creating"
-	// ReasonAdopted means an existing Universal DDI object was taken over.
-	ReasonAdopted = "Adopted"
 	// ReasonSynced means the Universal DDI object matches spec.
 	ReasonSynced = "Synced"
 	// ReasonAPIError means a Universal DDI API call failed.

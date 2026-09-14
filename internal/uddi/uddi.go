@@ -230,9 +230,14 @@ func TagFilter(tags map[string]string) string {
 	return strings.Join(clauses, " and ")
 }
 
-// quoteTag escapes the only character that can terminate a single-quoted literal.
+// tagEscaper escapes the backslash first, so a trailing backslash in a value cannot
+// neutralise the escape on the closing quote, then the single quote that would otherwise
+// terminate the literal.
+var tagEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+
+// quoteTag escapes the characters that could break out of a single-quoted _tfilter literal.
 func quoteTag(s string) string {
-	return strings.ReplaceAll(s, "'", "\\'")
+	return tagEscaper.Replace(s)
 }
 
 // ToAPITags converts a string map into the map[string]interface{} the SDK models use.

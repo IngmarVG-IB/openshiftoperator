@@ -113,7 +113,7 @@ spec:
     deletionPolicy: Orphan
 ```
 
-The operator finds the zone by its FQDN and view, adds its ownership tags, and reports `Ready=True/Adopted` as the reason.
+The operator finds the zone by its FQDN and view, adds its ownership tags, emits an `Adopted` event and reports `Ready=True` with reason `Synced`.
 
 ### Create a New AuthZone
 
@@ -721,7 +721,6 @@ Check the Ready condition reason:
 | `DependencyNotReady` | A referenced object (e.g., viewRef, spaceRef) has no `status.id` yet. | `kubectl get <kind> <name> -o jsonpath='{.status.id}'` on the referenced object. Reconciles are triggered when dependencies get an id; wait or re-apply the parent. |
 | `AlreadyExists` | An untagged Universal DDI object exists under the natural key and `lifecycle.adoptExisting=false`. | Set `lifecycle.adoptExisting: true` to adopt the object, or delete it from Universal DDI if it is unmanaged. |
 | `Creating` | The Universal DDI object is being created. | Wait; the operator retries on backoff. |
-| `Adopted` | (Informational) An existing object was adopted. | Normal; Ready is True. |
 | `APIError` | A Universal DDI API call failed. | Check the condition message for details; usually a network or permission issue. Check the Connection Secret and API key. |
 | `Deleting` | Deletion is blocked, e.g., by dependent objects in Universal DDI. | The message says what blocks it. Delete the blocking object first (e.g., records in a zone before deleting the zone). |
 | `ConnectionMissing` | Not a condition but a Warning event: the CR was deleted while the Connection it names no longer existed, so Universal DDI could not be reached. The operator orphaned the object and removed the finalizer instead of blocking forever. | The Universal DDI object is still there with its ownership tags. Delete it by hand, or re-create the Connection and a CR with the same natural key to re-adopt it. Deleting a Connection before the objects that use it is what causes this. |

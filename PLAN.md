@@ -103,6 +103,10 @@ Owned by the second wave 3 agent:
   The finalizer is removed so the CR can go away, a `ConnectionMissing` Warning event
   says what happened, and the object stays behind with its ownership tags. Delete
   Connections after the objects that use them, or re-adopt with a new CR.
+- **Record apex spelling is immutable per form.** The CRD's immutability rule compares
+  `spec.name` literally, so switching an existing apex record between an omitted name and
+  `"@"` is rejected even though the adapter treats both as the apex. Delete and recreate
+  the CR, or keep the spelling you started with.
 - **Unified nameservers are not modelled.** AuthZone carries the legacy `nsgs` /
   `internalSecondaries` / `externalPrimaries` fields only. The API's `nameservers` model
   exists only on the SDK's untagged master branch, so `spec.nameservers` waits for a

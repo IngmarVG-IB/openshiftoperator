@@ -85,7 +85,7 @@ func TestMetricsTransportRecordsSuccessAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST address: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if got := testutil.ToFloat64(apiRequestsTotal.WithLabelValues(connLabel, "ipam", "POST address", "201")); got != 1 {
 		t.Fatalf("apiRequestsTotal{code=201} = %v, want 1", got)
@@ -99,7 +99,7 @@ func TestMetricsTransportRecordsSuccessAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST address_block: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if got := testutil.ToFloat64(apiRequestsTotal.WithLabelValues(connLabel, "ipam", "POST address_block", "409")); got != 1 {
 		t.Fatalf("apiRequestsTotal{code=409} = %v, want 1", got)
@@ -135,7 +135,7 @@ func TestMetricsTransportDefaultsToDefaultTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RoundTrip: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
