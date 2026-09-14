@@ -49,6 +49,13 @@ spec:
       kind: FixedAddress
       name: fixedaddresses.uddi.infoblox.com
       version: v1alpha1
+    - description: |-
+        IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
+        Services and writes them back as a Service annotation or spec.loadBalancerIP.
+      displayName: IPAllocation Policy
+      kind: IPAllocationPolicy
+      name: ipallocationpolicies.uddi.infoblox.com
+      version: v1alpha1
     - description: IPSpace is a Universal DDI IP space.
       displayName: IPSpace
       kind: IPSpace

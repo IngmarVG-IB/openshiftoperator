@@ -4,7 +4,7 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 
 ## Status
 
-Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records. Milestone 3 (IP allocation) is in progress: an IPAllocationPolicy allocates IPs to LoadBalancer Services from Universal DDI pools.
+Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records. Milestone 3 (IP allocation) is complete: an IPAllocationPolicy allocates IPs to LoadBalancer Services from Universal DDI pools and writes them into the load balancer annotation.
 
 ## Features
 

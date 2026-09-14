@@ -194,6 +194,43 @@ metadata:
         },
         {
           "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "IPAllocationPolicy",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "lb"
+          },
+          "spec": {
+            "addressLifecycle": {
+              "deletionPolicy": "Delete"
+            },
+            "allocateFrom": {
+              "rangeRef": {
+                "name": "lb-pool"
+              }
+            },
+            "assignVia": {
+              "annotation": "metallb.io/loadBalancerIPs",
+              "mode": "Annotation"
+            },
+            "connectionRef": {
+              "name": "default"
+            },
+            "requireAnnotation": true,
+            "selector": {
+              "matchLabels": {
+                "lb": "uddi"
+              }
+            },
+            "tags": {
+              "team": "platform"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
           "kind": "IPSpace",
           "metadata": {
             "labels": {
@@ -349,7 +386,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: quay.io/ingmarvg-ib/uddi-operator:0.1.0
-    createdAt: "2026-09-14T20:48:35Z"
+    createdAt: "2026-09-14T21:39:13Z"
     olm.skipRange: <0.1.0
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -393,6 +430,13 @@ spec:
       displayName: Fixed Address
       kind: FixedAddress
       name: fixedaddresses.uddi.infoblox.com
+      version: v1alpha1
+    - description: |-
+        IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
+        Services and writes them back as a Service annotation or spec.loadBalancerIP.
+      displayName: IPAllocation Policy
+      kind: IPAllocationPolicy
+      name: ipallocationpolicies.uddi.infoblox.com
       version: v1alpha1
     - description: IPSpace is a Universal DDI IP space.
       displayName: IPSpace
@@ -468,10 +512,19 @@ spec:
           resources:
           - namespaces
           - secrets
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - ""
+          resources:
           - services
           verbs:
           - get
           - list
+          - patch
+          - update
           - watch
         - apiGroups:
           - config.openshift.io
@@ -506,6 +559,7 @@ spec:
           - connections
           - dnspublishpolicies
           - fixedaddresses
+          - ipallocationpolicies
           - ipspaces
           - ranges
           - records
@@ -528,6 +582,7 @@ spec:
           - connections/finalizers
           - dnspublishpolicies/finalizers
           - fixedaddresses/finalizers
+          - ipallocationpolicies/finalizers
           - ipspaces/finalizers
           - ranges/finalizers
           - records/finalizers
@@ -544,6 +599,7 @@ spec:
           - connections/status
           - dnspublishpolicies/status
           - fixedaddresses/status
+          - ipallocationpolicies/status
           - ipspaces/status
           - ranges/status
           - records/status
