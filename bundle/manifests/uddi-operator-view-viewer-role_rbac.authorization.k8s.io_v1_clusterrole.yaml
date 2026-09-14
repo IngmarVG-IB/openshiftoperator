@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: uddi-operator
+  name: uddi-operator-view-viewer-role
+rules:
+- apiGroups:
+  - uddi.infoblox.com
+  resources:
+  - views
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - uddi.infoblox.com
+  resources:
+  - views/status
+  verbs:
+  - get

@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: uddi-operator
+  name: uddi-operator-connection-admin-role
+rules:
+- apiGroups:
+  - uddi.infoblox.com
+  resources:
+  - connections
+  verbs:
+  - '*'
+- apiGroups:
+  - uddi.infoblox.com
+  resources:
+  - connections/status
+  verbs:
+  - get

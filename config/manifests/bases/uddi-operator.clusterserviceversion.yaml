@@ -1,0 +1,133 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+    categories: Networking
+    containerImage: quay.io/ingmarvg-ib/uddi-operator:0.1.0
+    createdAt: "2026-09-14T00:00:00Z"
+    olm.skipRange: <0.1.0
+    repository: https://github.com/IngmarVG-IB/openshiftoperator
+    support: https://github.com/IngmarVG-IB/openshiftoperator/issues
+  name: uddi-operator.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: AddressBlock is a Universal DDI address block.
+      displayName: Address Block
+      kind: AddressBlock
+      name: addressblocks.uddi.infoblox.com
+      version: v1alpha1
+    - description: Address is a Universal DDI address reservation.
+      displayName: Address
+      kind: Address
+      name: addresses.uddi.infoblox.com
+      version: v1alpha1
+    - description: AuthZone is a Universal DDI authoritative DNS zone.
+      displayName: Auth Zone
+      kind: AuthZone
+      name: authzones.uddi.infoblox.com
+      version: v1alpha1
+    - description: Connection holds the credentials and client settings for one Universal
+        DDI tenant.
+      displayName: Connection
+      kind: Connection
+      name: connections.uddi.infoblox.com
+      version: v1alpha1
+    - description: FixedAddress is a Universal DDI DHCP fixed address reservation.
+      displayName: Fixed Address
+      kind: FixedAddress
+      name: fixedaddresses.uddi.infoblox.com
+      version: v1alpha1
+    - description: IPSpace is a Universal DDI IP space.
+      displayName: IPSpace
+      kind: IPSpace
+      name: ipspaces.uddi.infoblox.com
+      version: v1alpha1
+    - description: Range is a Universal DDI address range.
+      displayName: Range
+      kind: Range
+      name: ranges.uddi.infoblox.com
+      version: v1alpha1
+    - description: Record is a Universal DDI DNS resource record.
+      displayName: Record
+      kind: Record
+      name: records.uddi.infoblox.com
+      version: v1alpha1
+    - description: Subnet is a Universal DDI subnet.
+      displayName: Subnet
+      kind: Subnet
+      name: subnets.uddi.infoblox.com
+      version: v1alpha1
+    - description: View is a Universal DDI DNS view.
+      displayName: View
+      kind: View
+      name: views.uddi.infoblox.com
+      version: v1alpha1
+  description: |-
+    The Universal DDI Operator shims OpenShift to [Infoblox Universal
+    DDI](https://www.infoblox.com/products/universal-ddi/), the cloud-delivered DNS, DHCP
+    and IPAM platform behind the Infoblox Cloud Services Portal.
+
+    ## Object layer
+
+    Universal DDI objects are modelled one-to-one as namespaced custom resources under the
+    `uddi.infoblox.com` API group, covering DNS (View, AuthZone, Record), IPAM (IPSpace,
+    AddressBlock, Subnet, Range, Address) and DHCP (FixedAddress). Reconciling a custom
+    resource creates, updates, adopts or deletes the matching object in Universal DDI, so a
+    GitOps or `oc apply` workflow drives DNS records, IP allocation and DHCP reservations the
+    same way it drives any other OpenShift object.
+
+    ## Connections and credentials
+
+    Every namespace that owns object-layer resources also owns a `Connection` custom
+    resource, which points at a Secret holding the tenant's Universal DDI API key. This
+    keeps credentials scoped per namespace/tenant rather than cluster-wide, so multiple
+    teams or sandboxes can share a cluster safely.
+
+    ## Ownership and lifecycle
+
+    Objects created or adopted by the operator are tagged with the owning cluster, the
+    owning custom resource and its Kubernetes UID. The operator only ever creates, modifies
+    or deletes objects that carry its own ownership tags: pre-existing objects can be
+    adopted explicitly (`lifecycle.adoptExisting: true`), and each object's
+    `lifecycle.deletionPolicy` (`Delete`, the default, or `Orphan`) controls whether deleting
+    the custom resource also deletes the underlying Universal DDI object.
+  displayName: Universal DDI Operator
+  icon:
+  - base64data: PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjIwIiByPSIxMyIgZmlsbD0iIzI1NjNFQiIvPgogIDxjaXJjbGUgY3g9IjI0IiBjeT0iNjYiIHI9IjEzIiBmaWxsPSIjMEQ5NDg4Ii8+CiAgPGNpcmNsZSBjeD0iNzYiIGN5PSI2NiIgcj0iMTMiIGZpbGw9IiM3QzNBRUQiLz4KICA8cGF0aCBkPSJNNTAgMzMgTDI0IDUzIE01MCAzMyBMNzYgNTMgTTI0IDY2IEw3NiA2NiIgc3Ryb2tlPSIjMUUyOTNCIiBzdHJva2Utd2lkdGg9IjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4K
+    mediatype: image/svg+xml
+  install:
+    spec:
+      deployments: null
+    strategy: ""
+  installModes:
+  - supported: true
+    type: OwnNamespace
+  - supported: true
+    type: SingleNamespace
+  - supported: true
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - infoblox
+  - dns
+  - ipam
+  - dhcp
+  - ddi
+  - universal ddi
+  links:
+  - name: Repository
+    url: https://github.com/IngmarVG-IB/openshiftoperator
+  maintainers:
+  - email: 32110797+IngmarVG-IB@users.noreply.github.com
+    name: Ingmar
+  maturity: alpha
+  minKubeVersion: 1.29.0
+  provider:
+    name: uddi-operator authors
+  version: 0.0.0

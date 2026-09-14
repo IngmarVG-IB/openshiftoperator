@@ -1,0 +1,351 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  creationTimestamp: null
+  name: authzones.uddi.infoblox.com
+spec:
+  group: uddi.infoblox.com
+  names:
+    kind: AuthZone
+    listKind: AuthZoneList
+    plural: authzones
+    shortNames:
+    - uddizone
+    singular: authzone
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.fqdn
+      name: FQDN
+      type: string
+    - jsonPath: .status.id
+      name: ID
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AuthZone is a Universal DDI authoritative DNS zone.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              AuthZoneSpec describes a Universal DDI authoritative zone.
+              Natural key for adoption: fqdn plus view.
+
+              Nameserver assignment is mid-migration in the API. The unified "nameservers" model
+              (API version v2) does not exist in universal-ddi-go-client v0.4.0, so v1alpha1
+              exposes only the legacy fields the SDK actually carries. The API rejects an NSG
+              combined with internal secondaries, and rejects more than one NSG on a zone, so both
+              are enforced here.
+            properties:
+              comment:
+                description: Comment stored on the Universal DDI object.
+                maxLength: 1024
+                type: string
+              connectionRef:
+                description: |-
+                  ConnectionRef names the Connection providing credentials. Empty means the
+                  Connection called "default" in this namespace.
+                properties:
+                  name:
+                    description: Name of the Connection in this namespace. Defaults
+                      to "default".
+                    maxLength: 253
+                    type: string
+                type: object
+              disabled:
+                description: Disabled turns the zone off in Universal DDI.
+                type: boolean
+              externalPrimaries:
+                description: ExternalPrimaries are nameservers outside Universal DDI
+                  (primaryType external).
+                items:
+                  description: |-
+                    ExternalPrimary is a nameserver outside Universal DDI. TSIG key material is not
+                    modelled in v1alpha1; only the tsigEnabled flag is carried through.
+                  properties:
+                    address:
+                      description: Address of the nameserver.
+                      maxLength: 64
+                      type: string
+                    fqdn:
+                      description: FQDN of the nameserver, trailing dot included.
+                      maxLength: 256
+                      type: string
+                    nsg:
+                      description: |-
+                        NSG is a nameserver group id this primary belongs to. Only meaningful when type
+                        is "nsg".
+                      maxLength: 256
+                      type: string
+                    tsigEnabled:
+                      description: TSIGEnabled turns on TSIG for transfers from this
+                        primary.
+                      type: boolean
+                    type:
+                      default: primary
+                      description: Type of the external primary.
+                      enum:
+                      - primary
+                      - nsg
+                      type: string
+                  required:
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              externalSecondaries:
+                description: ExternalSecondaries are secondary nameservers outside
+                  Universal DDI.
+                items:
+                  description: |-
+                    ExternalSecondary is a secondary nameserver outside Universal DDI. TSIG key material
+                    is not modelled in v1alpha1.
+                  properties:
+                    address:
+                      description: Address of the nameserver.
+                      maxLength: 64
+                      minLength: 1
+                      type: string
+                    fqdn:
+                      description: FQDN of the nameserver, trailing dot included.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    stealth:
+                      description: Stealth keeps the secondary out of the zone's NS
+                        records.
+                      type: boolean
+                    tsigEnabled:
+                      description: TSIGEnabled turns on TSIG for transfers to this
+                        secondary.
+                      type: boolean
+                  required:
+                  - address
+                  - fqdn
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              fqdn:
+                description: FQDN of the zone, trailing dot included. Immutable.
+                maxLength: 256
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: fqdn is immutable
+                  rule: self == oldSelf
+              internalSecondaries:
+                description: InternalSecondaries are Universal DDI DNS hosts serving
+                  the zone (primaryType cloud).
+                items:
+                  description: InternalSecondary is a Universal DDI DNS host acting
+                    as an internal secondary.
+                  properties:
+                    host:
+                      description: Host is a Universal DDI DNS host id, for example
+                        "dns/host/<uuid>".
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                  required:
+                  - host
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              lifecycle:
+                description: Lifecycle controls adoption and deletion.
+                properties:
+                  adoptExisting:
+                    default: false
+                    description: |-
+                      AdoptExisting allows taking over an existing Universal DDI object that matches the
+                      natural key but does not carry this operator's ownership tags. When false such an
+                      object is reported as a conflict (Ready=False/AlreadyExists).
+                    type: boolean
+                  deletionPolicy:
+                    default: Delete
+                    description: DeletionPolicy decides whether deleting the CR also
+                      deletes the Universal DDI object.
+                    enum:
+                    - Delete
+                    - Orphan
+                    type: string
+                type: object
+              nsgs:
+                description: NSGs are nameserver group ids. The API rejects more than
+                  one NSG per zone.
+                items:
+                  type: string
+                maxItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+              primaryType:
+                default: cloud
+                description: PrimaryType selects who serves the zone. Immutable.
+                enum:
+                - cloud
+                - external
+                type: string
+                x-kubernetes-validations:
+                - message: primaryType is immutable
+                  rule: self == oldSelf
+              tags:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Tags merged onto the Universal DDI object. Ownership tags always win, then the
+                  Connection's defaultTags, then these.
+                type: object
+              viewRef:
+                description: ViewRef names the View CR or a Universal DDI view id.
+                  Immutable.
+                properties:
+                  id:
+                    description: ID is a Universal DDI resource id, for example "dns/view/2c1a...".
+                    maxLength: 256
+                    type: string
+                  name:
+                    description: Name of an object-layer CR in this namespace.
+                    maxLength: 253
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: viewRef is immutable
+                  rule: self == oldSelf
+                - message: exactly one of name or id must be set
+                  rule: has(self.name) != has(self.id)
+            required:
+            - fqdn
+            - primaryType
+            - viewRef
+            type: object
+            x-kubernetes-validations:
+            - message: nsgs and internalSecondaries cannot both be set
+              rule: '!(has(self.nsgs) && size(self.nsgs) > 0 && has(self.internalSecondaries)
+                && size(self.internalSecondaries) > 0)'
+          status:
+            description: AuthZoneStatus reports the observed state of the zone.
+            properties:
+              conditions:
+                description: Conditions hold Ready and Synced.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              fqdn:
+                description: FQDN observed in Universal DDI, in protocol form.
+                type: string
+              id:
+                description: ID is the Universal DDI resource id, for example "ipam/subnet/<uuid>".
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is when the Universal DDI object was last
+                  read or written.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the metadata.generation the status
+                  was last computed from.
+                format: int64
+                type: integer
+              view:
+                description: View is the Universal DDI view id the zone lives in.
+                type: string
+              warnings:
+                description: |-
+                  Warnings reported by the API on the last create or update, as "<name>: <message>"
+                  lines.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null

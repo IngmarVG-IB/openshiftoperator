@@ -1,3 +1,30 @@
 # More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
 # Ignore build and test binaries.
 bin/
+testbin/
+dist/
+cover.out
+cover-floor.out
+*.cover
+
+# VCS, CI and editor/agent state not needed in the image.
+.git/
+.github/
+.devcontainer/
+.claude/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Docs and design artifacts.
+docs/
+DESIGN.md
+PLAN.md
+README.md
+
+# OLM bundle / catalog outputs are not part of the manager image build context.
+bundle/
+bundle.Dockerfile
+catalog/
+catalog.Dockerfile
