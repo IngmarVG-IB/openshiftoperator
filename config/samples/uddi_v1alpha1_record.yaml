@@ -1,4 +1,5 @@
-# WAVE 2: the Record controller is a no-op until its adapter lands.
+# Natural key for adoption: zone plus name plus type plus rdata. "@" or an empty name
+# means the zone apex.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: Record
 metadata:
@@ -7,6 +8,8 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: www-a
 spec:
+  connectionRef:
+    name: default
   zoneRef:
     name: apps-zone
   name: www
@@ -15,3 +18,6 @@ spec:
     a:
       address: 192.0.2.10
   ttl: 300
+  comment: Managed by uddi-operator
+  tags:
+    team: platform

@@ -208,6 +208,19 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 		// Natural-key lookup, for adoption and to keep creates idempotent.
 		found, ferr := ad.Find(ctx, uc, spec, deps)
 		if ferr != nil {
+			if errors.Is(ferr, ErrConflict) {
+				// The adapter found a match that can never be adopted, regardless of
+				// lifecycle.adoptExisting (for example a non-STATIC Record). Report the
+				// conflict with the adapter's message and stop: no create, no adopt, no
+				// patch, no delete.
+				msg := ferr.Error()
+				rt.event(obj, corev1.EventTypeWarning, EventConflict, "%s", msg)
+				setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,
+					uddiv1alpha1.ReasonAlreadyExists, msg, obj.GetGeneration())
+				setCondition(status, uddiv1alpha1.ConditionSynced, metav1.ConditionFalse,
+					uddiv1alpha1.ReasonAlreadyExists, msg, obj.GetGeneration())
+				return ctrl.Result{RequeueAfter: conn.ResyncInterval}, true, nil
+			}
 			return apiFailure(rt, obj, status, ferr)
 		}
 		switch {
