@@ -779,7 +779,7 @@ An IPAllocationPolicy watches LoadBalancer Services and automatically generates 
 | `allocateFrom.addressBlockRef` | *ObjectRef | No (one required) | — | AddressBlock CR or Universal DDI address block id to allocate from. |
 | `assignVia` | AssignmentTarget | No | — | How to write the allocated IP into the Service (default: Annotation mode with `metallb.io/loadBalancerIPs`). |
 | `assignVia.mode` | string | No | Annotation | `Annotation` (write to a Service annotation, default) or `LoadBalancerIP` (write to `spec.loadBalancerIP`). |
-| `assignVia.annotation` | string | No | metallb.io/loadBalancerIPs | The annotation key to write when mode is Annotation. Defaults to MetalLB key; also supports `io.cilium/lb-ipam-ips`, `kube-vip.io/loadbalancerIPs`, and legacy `metallb.universe.tf/loadBalancerIPs`. Max 256 characters. |
+| `assignVia.annotation` | string | No | metallb.io/loadBalancerIPs | The annotation key to write when mode is Annotation. Defaults to MetalLB key; also supports `lbipam.cilium.io/ips`, `kube-vip.io/loadbalancerIPs`, and legacy `metallb.universe.tf/loadBalancerIPs`. Max 256 characters. |
 | `tags` | map[string]string | No | — | Tags merged into every generated Address's `spec.tags`. |
 | `addressLifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated Addresses (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
 

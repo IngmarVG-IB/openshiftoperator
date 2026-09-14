@@ -67,7 +67,7 @@ kubectl get subnet openshift-lb -o jsonpath='{.status.id}'
 The operator writes the allocated IP into the Service by patching an annotation (default) or `spec.loadBalancerIP`. Your load balancer implementation must honour the configured key. Tested implementations:
 
 - **MetalLB** (default): reads `metallb.io/loadBalancerIPs` (or the legacy `metallb.universe.tf/loadBalancerIPs`)
-- **Cilium**: reads `io.cilium/lb-ipam-ips`
+- **Cilium**: reads `lbipam.cilium.io/ips`
 - **kube-vip**: reads `kube-vip.io/loadbalancerIPs`
 
 For other implementations, set `spec.assignVia.annotation` to the key your implementation reads.

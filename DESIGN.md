@@ -448,7 +448,7 @@ spec:
     rangeRef: { name: lb-pool }             # or subnetRef / addressBlockRef
   assignVia:
     mode: Annotation                        # Annotation | LoadBalancerIP
-    annotation: metallb.io/loadBalancerIPs  # default (MetalLB, verified 2026-09-14); also io.cilium/lb-ipam-ips,
+    annotation: metallb.io/loadBalancerIPs  # default (MetalLB, verified 2026-09-14); also lbipam.cilium.io/ips (formerly io.cilium/lb-ipam-ips),
                                             # kube-vip.io/loadbalancerIPs, legacy metallb.universe.tf/loadBalancerIPs
   tags: { team: a }                         # merged into every generated Address's spec.tags
   addressLifecycle: { deletionPolicy: Delete }   # copied to generated Addresses
