@@ -29,11 +29,16 @@ type AddressName struct {
 	// +kubebuilder:validation:MaxLength=256
 	Name string `json:"name"`
 
-	// Type of the name, for example "user".
+	// Type of the name, for example "user". Defaults to "user" when omitted; note that
+	// this default only takes effect when the field is left out of the submitted object
+	// entirely (for example a YAML manifest with no type: key) and not when a client
+	// marshals an explicit empty string, since only a genuinely absent field is filled in
+	// by CRD defaulting.
 	// +kubebuilder:default=user
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
-	Type string `json:"type"`
+	// +optional
+	Type string `json:"type,omitempty"`
 }
 
 // NextAvailableFrom selects the parent the address is allocated from. Exactly one ref

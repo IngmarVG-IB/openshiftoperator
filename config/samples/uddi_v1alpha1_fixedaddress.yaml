@@ -1,4 +1,6 @@
-# WAVE 2: the FixedAddress controller is a no-op until its adapter lands.
+# A Universal DDI DHCP fixed address (static reservation). Natural key for adoption:
+# address plus ip space. matchType (mac | client_text | client_hex | relay_text |
+# relay_hex | duid) and address are immutable once created.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: FixedAddress
 metadata:
@@ -7,6 +9,8 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: node-1
 spec:
+  connectionRef:
+    name: default
   spaceRef:
     name: corp
   address: 10.0.10.50
@@ -14,3 +18,6 @@ spec:
   matchValue: "52:54:00:aa:bb:cc"
   name: node-1
   hostname: node-1.example.com
+  comment: Managed by uddi-operator
+  tags:
+    team: platform

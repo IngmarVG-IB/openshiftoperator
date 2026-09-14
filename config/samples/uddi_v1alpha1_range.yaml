@@ -1,4 +1,5 @@
-# WAVE 2: the Range controller is a no-op until its adapter lands.
+# A Universal DDI address range. Natural key for adoption: start plus end plus space.
+# The parent subnet is derived by Universal DDI from start and end.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: Range
 metadata:
@@ -7,12 +8,17 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: lb-pool
 spec:
+  connectionRef:
+    name: default
   spaceRef:
     name: corp
   start: 10.0.10.100
   end: 10.0.10.199
   name: lb-pool
+  comment: LoadBalancer IP pool managed by uddi-operator
   exclusionRanges:
     - start: 10.0.10.150
       end: 10.0.10.159
       comment: reserved
+  tags:
+    team: platform

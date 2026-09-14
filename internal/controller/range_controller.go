@@ -19,52 +19,81 @@ package controller
 import (
 	"context"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 )
 
-// RangeReconciler reconciles a Range object.
-//
-// WAVE 2 PLACEHOLDER. The generic object-layer loop, the Connection resolver, the
-// ownership tags and the field-index helpers are all in place; what is missing is the
-// sync.Adapter[uddiv1alpha1.RangeSpec, <SDK type>] that maps this kind onto its
-// Universal DDI counterpart. Follow view_adapter.go and view_controller.go: implement
-// the adapter, then replace the body of Reconcile below with
-//
-//	obj := &uddiv1alpha1.Range{}
-//	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
-//		return ctrl.Result{}, client.IgnoreNotFound(err)
-//	}
-//	return uddisync.Reconcile(ctx, r.Runtime, obj, rangeAdapter{})
-//
-// and register the Connection and dependency indexes in SetupWithManager.
-//
-// Until then this controller intentionally does nothing: it never sets a finalizer and
-// never touches Universal DDI, so a Range CR can be created and deleted freely.
+// RangeReconciler reconciles a Range object through the generic object-layer loop in
+// internal/sync. See view_controller.go for the reference wiring.
 type RangeReconciler struct {
 	client.Client
-	// Runtime is shared with every other object-layer controller.
+	// Runtime carries the Kubernetes client, event recorder, Connection resolver and
+	// cluster id shared by every object-layer controller.
 	Runtime *uddisync.Runtime
 }
 
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=ranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=ranges/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=ranges/finalizers,verbs=update
+// +kubebuilder:rbac:groups=uddi.infoblox.com,resources=ipspaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups=uddi.infoblox.com,resources=connections,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
-// Reconcile is a no-op until the wave 2 adapter lands.
+// Reconcile brings one Range CR and its Universal DDI counterpart into agreement.
 func (r *RangeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = ctx
-	_ = req
-	return ctrl.Result{}, nil
+	obj := &uddiv1alpha1.Range{}
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	res, err := uddisync.Reconcile(ctx, r.Runtime, obj, rangeAdapter{})
+	if apierrors.IsConflict(err) {
+		// Another writer won the race. The next pass sees the fresh object.
+		logf.FromContext(ctx).V(1).Info("conflict while writing the Range, requeueing")
+		return ctrl.Result{Requeue: true}, nil
+	}
+	if apierrors.IsNotFound(err) {
+		// The CR went away mid-reconcile; there is nothing left to do.
+		return ctrl.Result{}, nil
+	}
+	return res, err
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// SetupWithManager registers the controller, its field indexes and the watches that
+// requeue a Range when the Connection or IPSpace it uses changes.
 func (r *RangeReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	ctx := context.Background()
+
+	if err := RegisterConnectionIndex(ctx, mgr, &uddiv1alpha1.Range{}, func(o client.Object) string {
+		return o.(*uddiv1alpha1.Range).Spec.ConnectionRef.Name
+	}); err != nil {
+		return err
+	}
+	if err := RegisterDependencyIndex(ctx, mgr, &uddiv1alpha1.Range{}, func(o client.Object) []string {
+		rg := o.(*uddiv1alpha1.Range)
+		return RefNames(&rg.Spec.SpaceRef)
+	}); err != nil {
+		return err
+	}
+
+	newRangeList := func() client.ObjectList { return &uddiv1alpha1.RangeList{} }
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uddiv1alpha1.Range{}).
+		Watches(
+			&uddiv1alpha1.Connection{},
+			handler.EnqueueRequestsFromMapFunc(EnqueueForIndex(mgr.GetClient(), IndexConnectionRef, newRangeList)),
+		).
+		Watches(
+			&uddiv1alpha1.IPSpace{},
+			handler.EnqueueRequestsFromMapFunc(EnqueueForIndex(mgr.GetClient(), IndexDependencyRefs, newRangeList)),
+		).
 		Named("range").
 		Complete(r)
 }
