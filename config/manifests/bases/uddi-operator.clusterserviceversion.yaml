@@ -37,6 +37,13 @@ spec:
       kind: Connection
       name: connections.uddi.infoblox.com
       version: v1alpha1
+    - description: |-
+        DNSPublishPolicy turns OpenShift Routes, Ingresses and LoadBalancer Services into
+        Universal DDI DNS Records.
+      displayName: DNSPublish Policy
+      kind: DNSPublishPolicy
+      name: dnspublishpolicies.uddi.infoblox.com
+      version: v1alpha1
     - description: FixedAddress is a Universal DDI DHCP fixed address reservation.
       displayName: Fixed Address
       kind: FixedAddress

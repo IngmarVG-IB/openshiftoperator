@@ -126,6 +126,46 @@ metadata:
         },
         {
           "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "DNSPublishPolicy",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "public"
+          },
+          "spec": {
+            "connectionRef": {
+              "name": "default"
+            },
+            "recordLifecycle": {
+              "deletionPolicy": "Delete"
+            },
+            "selector": {
+              "matchLabels": {
+                "dns": "public"
+              }
+            },
+            "sources": [
+              "Route",
+              "Ingress"
+            ],
+            "tags": {
+              "team": "platform"
+            },
+            "target": {
+              "mode": "Auto"
+            },
+            "ttl": 300,
+            "zoneRefs": [
+              {
+                "name": "apps-zone"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
           "kind": "FixedAddress",
           "metadata": {
             "labels": {
@@ -309,7 +349,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: quay.io/ingmarvg-ib/uddi-operator:0.1.0
-    createdAt: "2026-09-14T19:27:50Z"
+    createdAt: "2026-09-14T20:48:35Z"
     olm.skipRange: <0.1.0
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -341,6 +381,13 @@ spec:
       displayName: Connection
       kind: Connection
       name: connections.uddi.infoblox.com
+      version: v1alpha1
+    - description: |-
+        DNSPublishPolicy turns OpenShift Routes, Ingresses and LoadBalancer Services into
+        Universal DDI DNS Records.
+      displayName: DNSPublish Policy
+      kind: DNSPublishPolicy
+      name: dnspublishpolicies.uddi.infoblox.com
       version: v1alpha1
     - description: FixedAddress is a Universal DDI DHCP fixed address reservation.
       displayName: Fixed Address
@@ -421,6 +468,7 @@ spec:
           resources:
           - namespaces
           - secrets
+          - services
           verbs:
           - get
           - list
@@ -434,12 +482,29 @@ spec:
           - list
           - watch
         - apiGroups:
+          - networking.k8s.io
+          resources:
+          - ingresses
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - route.openshift.io
+          resources:
+          - routes
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
           - uddi.infoblox.com
           resources:
           - addressblocks
           - addresses
           - authzones
           - connections
+          - dnspublishpolicies
           - fixedaddresses
           - ipspaces
           - ranges
@@ -461,6 +526,7 @@ spec:
           - addresses/finalizers
           - authzones/finalizers
           - connections/finalizers
+          - dnspublishpolicies/finalizers
           - fixedaddresses/finalizers
           - ipspaces/finalizers
           - ranges/finalizers
@@ -476,6 +542,7 @@ spec:
           - addresses/status
           - authzones/status
           - connections/status
+          - dnspublishpolicies/status
           - fixedaddresses/status
           - ipspaces/status
           - ranges/status
