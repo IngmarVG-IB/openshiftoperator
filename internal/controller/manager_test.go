@@ -35,6 +35,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/ipalloc"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/publish"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
@@ -135,6 +136,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		Expect((&AddressReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&FixedAddressReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&DNSPublishPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, RoutesAvailable: true}).SetupWithManager(mgr)).To(Succeed())
+		Expect((&IPAllocationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 
 		var mgrCtx context.Context
 		mgrCtx, mgrCancel = context.WithCancel(ctx)
@@ -291,6 +293,59 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			var list uddiv1alpha1.RecordList
 			if err := k8sClient.List(ctx, &list, client.InNamespace(mgrNS),
 				client.MatchingLabels{publish.LabelPolicy: policy.Name}); err != nil {
+				return -1
+			}
+			return len(list.Items)
+		}).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
+	})
+
+	It("creates an Address for a Service created after the IPAllocationPolicy exists, purely through the watch", func() {
+		space := &uddiv1alpha1.IPSpace{
+			ObjectMeta: metav1.ObjectMeta{Name: "alloc-space", Namespace: mgrNS},
+			Spec:       uddiv1alpha1.IPSpaceSpec{Name: "alloc-space"},
+		}
+		Expect(k8sClient.Create(ctx, space)).To(Succeed())
+		Eventually(readyCondition(space, func() []metav1.Condition { return space.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		rg := &uddiv1alpha1.Range{
+			ObjectMeta: metav1.ObjectMeta{Name: "alloc-range", Namespace: mgrNS},
+			Spec: uddiv1alpha1.RangeSpec{
+				SpaceRef: uddiv1alpha1.ObjectRef{Name: space.Name},
+				Start:    "10.0.60.10",
+				End:      "10.0.60.20",
+			},
+		}
+		Expect(k8sClient.Create(ctx, rg)).To(Succeed())
+		Eventually(readyCondition(rg, func() []metav1.Condition { return rg.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		policy := &uddiv1alpha1.IPAllocationPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "watch-alloc-policy", Namespace: mgrNS},
+			Spec: uddiv1alpha1.IPAllocationPolicySpec{
+				AllocateFrom: uddiv1alpha1.AllocateFrom{RangeRef: &uddiv1alpha1.ObjectRef{Name: rg.Name}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        "watched-service",
+				Namespace:   mgrNS,
+				Annotations: map[string]string{"uddi.infoblox.com/allocate": "true"},
+			},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, Ports: []corev1.ServicePort{{Port: 80}}},
+		}
+		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+
+		// No direct Reconcile call on IPAllocationPolicyReconciler: the Service watch
+		// wakes it and it creates the Address on its own.
+		Eventually(func() int {
+			var list uddiv1alpha1.AddressList
+			if err := k8sClient.List(ctx, &list, client.InNamespace(mgrNS),
+				client.MatchingLabels{ipalloc.LabelPolicy: policy.Name}); err != nil {
 				return -1
 			}
 			return len(list.Items)
