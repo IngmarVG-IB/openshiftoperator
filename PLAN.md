@@ -139,8 +139,13 @@ DNSPublishPolicy controller (DESIGN.md section 4.7): automatically publish Route
 ## Milestone 3: IP allocation
 
 IPAllocationPolicy controller: Address CR per selected Service, assignment via a
-configurable annotation (MetalLB by default), release on Service deletion. Resolve the
-MetalLB annotation key (open question 5).
+configurable annotation (MetalLB by default), release on Service deletion.
+
+- [ ] **Type and planner:** `internal/ipalloc/model.go` (ServiceRef, PoolRef, AssignMode, SkipReason constants, ServiceView, PoolState, AddressState, DesiredAddress, Assignment, Release, Plan), `internal/ipalloc/planner.go` (pure functions: Service selection, annotation parsing, pool resolution, desired Addresses, apply/assign/release logic).
+- [ ] **Service view and assignment helpers:** `internal/ipalloc/service.go`. Extract hostname(s) and allocation settings from a Service, validate annotations, return ServiceView or InvalidAnnotation error.
+- [ ] **Controller:** `internal/controller/ipallocationpolicy_controller.go`. Watches policy, selected Services, generated Addresses; field indexes on pool names; server-side apply with `uddi-operator/ipallocationpolicy` field manager; status with `allocated`, `assigned`, `skipped`, conditions `Ready`, `AddressesPending`, `PoolNotReady`.
+- [ ] **envtest suite:** `internal/controller/ipallocationpolicy_controller_test.go` covering: pool selection (subnet/range/addressblock), annotation overrides (`allocate-from`, `address`, `hostname`), assignment via annotation and spec.loadBalancerIP, ManuallyAssigned skip, AddressPending handling, Service deletion garbage collection, release on opt-out, skip reasons, status conditions.
+- [ ] **Documentation:** `docs/ip-allocation.md` (task guide: what it does, prerequisites, load balancer support, complete example, Service annotations, Address naming and labeling, how assignment works, status fields, skip reasons, release and deletion behaviour, combining with DNSPublishPolicy, limitations).
 
 ## Milestone 4: host and DHCP registration
 
