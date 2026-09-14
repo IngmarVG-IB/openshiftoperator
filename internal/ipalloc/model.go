@@ -166,7 +166,7 @@ type ServiceView struct {
 // PoolState is a pool CR as the planner sees it.
 type PoolState struct {
 	Ref      PoolRef
-	Ready    bool                 // the CR exists and has a status.id
+	Ready    bool                   // the CR exists and has a status.id
 	SpaceRef uddiv1alpha1.ObjectRef // the pool's spec.spaceRef, copied to generated Addresses
 }
 
