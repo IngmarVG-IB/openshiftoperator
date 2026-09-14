@@ -20,6 +20,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// DHCPUtilization mirrors the read-only Universal DDI DHCP utilisation block, which is
+// reported separately from the general address Utilization on kinds that serve DHCP
+// (Subnet, Range).
+type DHCPUtilization struct {
+	// DHCPFree is the free address count within the DHCP ranges.
+	// +optional
+	DHCPFree string `json:"dhcpFree,omitempty"`
+	// DHCPTotal is the total address count within the DHCP ranges.
+	// +optional
+	DHCPTotal string `json:"dhcpTotal,omitempty"`
+	// DHCPUsed is the used address count within the DHCP ranges.
+	// +optional
+	DHCPUsed string `json:"dhcpUsed,omitempty"`
+	// DHCPUtilization is the utilization percentage within the DHCP ranges.
+	// +optional
+	DHCPUtilization int64 `json:"dhcpUtilization,omitempty"`
+}
+
 // SubnetSpec describes a Universal DDI subnet.
 // Natural key for adoption: address plus cidr plus space.
 // +kubebuilder:validation:XValidation:rule="has(self.address) || has(self.parentRef)",message="parentRef is required when address is omitted"
@@ -93,6 +111,10 @@ type SubnetStatus struct {
 	// Utilization reported by Universal DDI.
 	// +optional
 	Utilization *Utilization `json:"utilization,omitempty"`
+
+	// DHCPUtilization reported by Universal DDI for the DHCP ranges within this subnet.
+	// +optional
+	DHCPUtilization *DHCPUtilization `json:"dhcpUtilization,omitempty"`
 }
 
 // +kubebuilder:object:root=true

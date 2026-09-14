@@ -1,4 +1,7 @@
-# WAVE 2: the AddressBlock controller is a no-op until its adapter lands.
+# A Universal DDI address block carved out of the "corp" IP space. Natural key for
+# adoption: address plus cidr plus space. address plus cidr are set explicitly here, so
+# the block is found by that key rather than allocated; see uddi_v1alpha1_subnet.yaml for
+# a next-available example that allocates a child prefix from a block like this one.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: AddressBlock
 metadata:
@@ -7,8 +10,16 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: block-10
 spec:
+  connectionRef:
+    name: default
   spaceRef:
     name: corp
   address: 10.0.0.0
   cidr: 16
   name: corp-root
+  comment: Root address block for the corp IP space
+  tags:
+    team: platform
+  lifecycle:
+    adoptExisting: false
+    deletionPolicy: Delete

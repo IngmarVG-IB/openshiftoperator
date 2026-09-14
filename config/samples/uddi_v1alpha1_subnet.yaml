@@ -1,4 +1,10 @@
-# WAVE 2: the Subnet controller is a no-op until its adapter lands.
+# A Universal DDI subnet allocated as the next available /24 out of the "block-10"
+# address block (see uddi_v1alpha1_addressblock.yaml). spec.address is omitted, so
+# Universal DDI picks the network address atomically with the ownership tags; the
+# allocated address becomes visible in status.address once the subnet is Ready. Natural
+# key for adoption when address is set explicitly: address plus cidr plus space; a
+# next-available subnet like this one is instead recovered by its ownership uid tag if a
+# status write is ever lost after allocation.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: Subnet
 metadata:
@@ -7,8 +13,21 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: openshift-lb
 spec:
+  connectionRef:
+    name: default
   spaceRef:
     name: corp
-  address: 10.0.10.0
+  parentRef:
+    name: block-10
   cidr: 24
   name: openshift-lb
+  comment: Load balancer subnet, next-available from the corp root block
+  dhcpOptions:
+    - type: option
+      optionCode: dhcp/option_code/03
+      optionValue: "10.0.0.1"
+  tags:
+    team: platform
+  lifecycle:
+    adoptExisting: false
+    deletionPolicy: Delete

@@ -283,6 +283,28 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dhcpUtilization:
+                description: DHCPUtilization reported by Universal DDI for the DHCP
+                  ranges within this subnet.
+                properties:
+                  dhcpFree:
+                    description: DHCPFree is the free address count within the DHCP
+                      ranges.
+                    type: string
+                  dhcpTotal:
+                    description: DHCPTotal is the total address count within the DHCP
+                      ranges.
+                    type: string
+                  dhcpUsed:
+                    description: DHCPUsed is the used address count within the DHCP
+                      ranges.
+                    type: string
+                  dhcpUtilization:
+                    description: DHCPUtilization is the utilization percentage within
+                      the DHCP ranges.
+                    format: int64
+                    type: integer
+                type: object
               id:
                 description: ID is the Universal DDI resource id, for example "ipam/subnet/<uuid>".
                 type: string
