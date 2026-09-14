@@ -353,32 +353,86 @@ These are designed now so the object layer has the right hooks, and scaffolded l
 **DNSPublishPolicy** (milestone 2)
 
 ```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata: { name: public, namespace: team-a }
 spec:
-  connectionRef: { name: default }
-  sources: [ Route, Ingress, Service ]      # Service means type LoadBalancer
-  selector: { matchLabels: { dns: public } } # empty selects everything in the namespace
-  zoneRefs: [ { name: apps-zone }, { name: corp-zone } ]  # hostname matched to the longest zone suffix
+  connectionRef: { name: default }          # used by every generated Record
+  sources: [ Route, Ingress, Service ]      # default all three; Service means type LoadBalancer
+  selector: { matchLabels: { dns: public } } # label selector on the source objects; empty selects all
+  zoneRefs: [ { name: apps-zone }, { name: corp-zone } ]  # AuthZone CRs in this namespace
   target:
-    mode: CNAME              # CNAME: Route -> routerCanonicalHostname, Ingress/Service -> LB hostname
-                             # A: Ingress/Service LB IPs, or static addresses below
-    addresses: []            # static A targets, for Routes on clusters where the router IP is fixed
-  ttl: 300
-  tags: {}
+    mode: Auto                              # Auto | CNAME | A
+    addresses: [ 192.0.2.10 ]               # static A/AAAA targets; used by mode A, and by Auto for Routes
+    canonicalHostname: ""                   # overrides the Route's routerCanonicalHostname
+  ttl: 300                                  # default TTL of generated records
+  tags: { team: a }                         # merged into every generated Record's spec.tags
+  recordLifecycle: { adoptExisting: false, deletionPolicy: Delete }   # copied to generated Records
 status:
-  conditions: [...]
-  published: 12
-  skipped: [ { source: route/team-a/legacy, reason: NoMatchingZone } ]
+  observedGeneration: 3
+  conditions: [ { type: Ready, ... } ]
+  published: 12                             # desired Records currently applied
+  ready: 11                                 # of those, Ready=True
+  skipped:                                  # bounded (50), sorted, one entry per source+hostname
+    - { source: "Route/legacy", hostname: legacy.old.example.com, reason: NoMatchingZone, message: "no zoneRef is a suffix of the hostname" }
 ```
 
-Behaviour: computes the desired set of `Record` CRs in its namespace, names them
-deterministically, sets an ownerReference to the policy (so deleting the policy prunes the
-records) and a label pointing at the source object, applies with server-side apply, and
-prunes stale ones. Per-object annotations on the source override the policy:
-`uddi.infoblox.com/publish: "false"`, `uddi.infoblox.com/hostname`, `uddi.infoblox.com/ttl`,
-`uddi.infoblox.com/target`. Hostnames that match no zone are reported in `status.skipped`
-and as events, never guessed. The cluster base domain and router wildcard come from the
-cluster-scoped `ingresses.config.openshift.io/cluster` object and the default
-`IngressController`; a later option covers the ingress operator's wildcard `DNSRecord` CRs.
+Pipeline per reconcile, implemented as pure functions in `internal/publish` plus a thin
+controller:
+
+1. **Sources to endpoints.** Each selected source object yields `Endpoint{Source,
+   Hostname, Targets, TTL}` values or `Skip{Source, Hostname, Reason, Message}` entries.
+   - Route: hostname is `spec.host` (a Route with `spec.subdomain` and no host is
+     `Unsupported`). The Route must be admitted (`status.ingress[].conditions` Admitted
+     True), else `NotAdmitted`. Auto target: CNAME to the admitted ingress's
+     `routerCanonicalHostname`, or `target.canonicalHostname` when set; when
+     `target.addresses` is set, A/AAAA records to those addresses instead.
+   - Ingress: hostnames are `spec.rules[].host` (empty hosts skipped). Targets from
+     `status.loadBalancer.ingress[]`: any IPs give A/AAAA records (one Record per IP); no
+     IPs but a hostname gives one CNAME; nothing gives `NoTarget`.
+   - Service: only `type: LoadBalancer` (`NotLoadBalancer` otherwise, unless a target
+     annotation is present). Hostnames come only from the `uddi.infoblox.com/hostname`
+     annotation (`NoHostname` when absent). Targets as for Ingress.
+   - `mode: CNAME` keeps only CNAME targets, `mode: A` only address targets; an endpoint left
+     without targets is `NoTarget`.
+   - Source annotations, prefix `uddi.infoblox.com/`: `publish: "false"` (`Excluded`),
+     `hostname` (comma separated; adds hostnames for Route and Ingress, required for
+     Service), `ttl` (integer seconds), `target` (comma separated; IPs become A/AAAA, names
+     become CNAME, and replace the computed targets). A malformed value is
+     `InvalidAnnotation` for that source.
+2. **Zone matching.** Hostnames are lower-cased and given a trailing dot. Among the
+   `zoneRefs` whose AuthZone CR has a `status.id`, the longest `spec.fqdn` that equals the
+   hostname or is a label-boundary suffix of it wins; the name in zone is the remainder,
+   `@` for the apex. A zone without `status.id` gives `ZoneNotReady` (retried), no match
+   gives `NoMatchingZone`. An apex can never be a CNAME: `ApexCNAME` unless address targets
+   exist.
+3. **Desired Records.** One `Record` per (hostname, target). Name
+   `<policy>-<10 hex of sha256(kind|source|hostname|type|target)>`. Labels
+   `uddi.infoblox.com/policy`, `uddi.infoblox.com/source-kind`,
+   `uddi.infoblox.com/source-name`; annotations `uddi.infoblox.com/hostname` and
+   `uddi.infoblox.com/target`. Spec: the policy's connectionRef, `zoneRef` to the matched
+   AuthZone CR, name, type, rdata, TTL (annotation, else policy), comment "Published by
+   DNSPublishPolicy <ns>/<policy> from <Kind> <name>", tags = policy tags plus
+   `uddi_operator_source: <Kind>/<ns>/<name>`, lifecycle = `recordLifecycle`. A controller
+   ownerReference to the policy makes Kubernetes garbage-collect the Records when the
+   policy goes, and the Records' own finalizers then remove the DNS records.
+4. **Apply and prune.** Server-side apply with field manager
+   `uddi-operator/dnspublishpolicy` and force ownership; every Record in the namespace
+   carrying the policy label but not in the desired set is deleted.
+5. **Status.** `published`, `ready` (desired Records with `Ready=True`), `skipped`,
+   `observedGeneration`. `Ready=True/Published` when every desired Record is Ready and no
+   `ZoneNotReady` skip remains; `Ready=False/RecordsNotReady` while some are pending;
+   `Ready=False/ZonesNotReady` when no zoneRef resolves. Events: one Warning `Skipped` per
+   reason per reconcile (with a count) and Normal `Published` when the desired set changes.
+
+Watches: the policy itself, owned Records (status changes feed `ready`), Routes, Ingresses
+and Services mapped to every policy in the object's namespace, and AuthZones mapped through
+a field index on `zoneRefs[].name`. The Route API is registered from
+`github.com/openshift/api/route/v1` and its presence is checked once with discovery at
+startup, so on a cluster without Routes (kind) the Route source is inert and logged.
+
+Not in milestone 2: the default router wildcard (`*.apps.<cluster>`) and the ingress
+operator's `DNSRecord` CRs; a hand-written wildcard `Record` covers it for now.
 
 **IPAllocationPolicy** (milestone 3)
 
