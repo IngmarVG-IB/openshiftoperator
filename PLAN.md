@@ -118,10 +118,15 @@ Owned by the second wave 3 agent:
 
 ## Milestone 2: DNS publishing
 
-DNSPublishPolicy controller (DESIGN.md 4.7): source watches for Routes, Ingresses,
-LoadBalancer Services; zone matching by longest suffix; Record CR generation with
-ownerReferences and pruning; annotation overrides; status with skipped sources. Decide the
-wildcard router record approach (open question 7).
+DNSPublishPolicy controller (DESIGN.md section 4.7): automatically publish Routes, Ingresses, and LoadBalancer Services as DNS records.
+
+- [ ] **Type and planner:** `internal/publish/model.go` (SourceKind, Endpoint, Skip, TargetMode, SkipReason constants), `internal/publish/planner.go` (pure functions: sources to endpoints, zone matching, desired Records, apply/prune logic).
+- [ ] **Source extractors:** `internal/publish/route.go`, `internal/publish/ingress.go`, `internal/publish/service.go`. Each extracts hostname(s) and target(s) from its source kind, respects annotation overrides, returns Endpoint or Skip.
+- [ ] **Route API:** Register `route.openshift.io/v1` at startup with discovery fallback (Route API missing on plain Kubernetes is logged, not an error).
+- [ ] **Controller:** `internal/controller/dnspublishpolicy_controller.go`. Watches policy, owned Records, Routes, Ingresses, Services; field indexes on zoneRef names and source names; server-side apply with `uddi-operator/dnspublishpolicy` field manager; status with `published`, `ready`, `skipped`, conditions `Ready`, `RecordsNotReady`, `ZonesNotReady`.
+- [ ] **envtest suite:** `internal/controller/dnspublishpolicy_controller_test.go` covering: Auto/CNAME/A modes, zone matching, annotation overrides, Record ownership and garbage collection, skip reasons, status conditions, pruning when sources are deleted.
+- [ ] **Route CRD in envtest:** Register the openshift-api Route CRD in the test environment so the controller can reconcile routes.
+- [ ] **Documentation:** `docs/dns-publishing.md` (task guide: what it does, prerequisites, examples, target selection per mode and source kind, annotations, Record naming, skip reasons, deletion behavior, limitations).
 
 ## Milestone 3: IP allocation
 

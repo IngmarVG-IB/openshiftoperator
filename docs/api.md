@@ -633,3 +633,86 @@ spec:
   matchValue: "52:54:00:aa:bb:cc"
   hostname: node-1.example.com
 ```
+
+---
+
+## DNSPublishPolicy
+
+A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Services and automatically generates Record CRs that publish them in Universal DDI. The policy selects source objects by namespace and label, matches hostnames to zones, extracts targets (addresses or canonical names), and generates Records owned by the policy. Generated Records are garbage-collected when the policy is deleted.
+
+**Purpose:** Create a DNSPublishPolicy CR to automatically publish cluster ingress endpoints as DNS records in Universal DDI. The policy handles hostname-to-zone matching, target extraction (Auto mode selects CNAME for routes and hostnames, A/AAAA for IPs), and Record lifecycle including adoption and deletion.
+
+### DNSPublishPolicy Spec
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Record. |
+| `sources` | []string | No | [Route, Ingress, Service] | Source object kinds to watch: any combination of "Route", "Ingress", "Service" (means LoadBalancer Services). Default watches all three. |
+| `selector` | *metav1.LabelSelector | No | — | Label selector to filter source objects in the namespace. Empty selects all. |
+| `zoneRefs` | []ObjectRef | Yes | — | AuthZone CRs in this namespace that define the target zones. The longest FQDN suffix matching each hostname is used. |
+| `target.mode` | string | No | Auto | `Auto` (CNAME for routes and load balancer hostnames, A/AAAA for IPs), `CNAME` (keep only CNAME targets), or `A` (keep only A/AAAA targets). |
+| `target.addresses` | []string | No | — | Static A/AAAA targets (IPv4 or IPv6). Used by mode A and by Auto mode for Routes. |
+| `target.canonicalHostname` | string | No | — | Override the Route's routerCanonicalHostname for Auto and CNAME modes. |
+| `ttl` | *int32 | No | — | Default TTL (seconds) for generated Records. Per-source annotations override. 0–2147483647. |
+| `tags` | map[string]string | No | — | Tags merged into every generated Record's `spec.tags`. |
+| `recordLifecycle` | Lifecycle | No | — | `adoptExisting` and `deletionPolicy` for generated Records (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
+
+Source annotations (all prefixed `uddi.infoblox.com/`; override policy settings per source):
+- `publish: "false"` — exclude the source from publication
+- `hostname` — comma-separated hostnames (adds or replaces computed hostnames; required for LoadBalancer Services)
+- `ttl` — integer seconds, overrides policy default
+- `target` — comma-separated addresses and/or canonical names, overrides computed targets
+
+### DNSPublishPolicy Status
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `observedGeneration` | int64 | The `metadata.generation` the status was last computed from. |
+| `published` | int32 | Number of desired Records currently applied. |
+| `ready` | int32 | Of those, how many have `Ready=True`. |
+| `skipped` | []Skip | Sources or hostnames not published (bounded to 50 entries, sorted). One entry per source+hostname. |
+| `skipped[].source` | string | "Kind/name" of the source object. |
+| `skipped[].hostname` | string | The hostname not published (empty if the whole source is skipped). |
+| `skipped[].reason` | string | Reason: `Excluded`, `NoMatchingZone`, `ZoneNotReady`, `NoTarget`, `NoHostname`, `NotAdmitted`, `NotLoadBalancer`, `ApexCNAME`, `Unsupported`, or `InvalidAnnotation`. |
+| `skipped[].message` | string | Additional context. |
+| `conditions` | []metav1.Condition | Conditions: `Ready` (summary). |
+
+### DNSPublishPolicy Conditions and Reasons
+
+**Ready**
+- `True/Published`: All desired Records are Ready and no `ZonesNotReady` skip remains.
+- `False/RecordsNotReady`: Some desired Records have `Ready=False` (still being created).
+- `False/ZonesNotReady`: No zoneRef resolves to a CR with `status.id`.
+
+### DNSPublishPolicy Example
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata:
+  name: public
+spec:
+  connectionRef:
+    name: default
+  sources:
+    - Route
+    - Ingress
+    - Service
+  selector:
+    matchLabels:
+      dns: public
+  zoneRefs:
+    - name: apps-zone
+  target:
+    mode: Auto
+    addresses:
+      - 192.0.2.10
+  ttl: 300
+  tags:
+    team: platform
+  recordLifecycle:
+    adoptExisting: false
+    deletionPolicy: Delete
+```
+
+Reference: [DESIGN.md](../DESIGN.md) section 4.7; fields verified against the Go type in milestone 2 wave 2.

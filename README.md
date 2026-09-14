@@ -4,11 +4,12 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 
 ## Status
 
-Pre-alpha. Milestone 1 is in: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. The integration layer (DNSPublishPolicy, IPAllocationPolicy, HostRegistrationPolicy) is next.
+Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is in progress.
 
 ## Features
 
 - **DNS management:** Define Views and AuthZones, create and manage A/AAAA/CNAME/TXT/MX/NS/CAA/SRV/PTR records.
+- **DNS publishing:** Automatically publish OpenShift Routes, Ingresses, and LoadBalancer Services as DNS records via DNSPublishPolicy.
 - **IPAM management:** Create and allocate from IP spaces, address blocks, subnets, and ranges. Reserve explicit addresses or allocate the next available IP.
 - **DHCP management:** Create fixed address reservations matched by MAC address or DUID. Assign DHCP options at space, subnet, range, or fixed address level.
 - **Adoption:** Take over existing Universal DDI objects with `lifecycle.adoptExisting=true`.
@@ -101,7 +102,8 @@ See [docs/usage.md](docs/usage.md) for complete task-oriented documentation.
 
 - **[docs/install.md](docs/install.md)** — Installation and setup (operator deployment, RBAC, OLM bundle).
 - **[docs/usage.md](docs/usage.md)** — Task-oriented guide: DNS, IPAM, DHCP, ownership tags, deletion, status and troubleshooting.
-- **[docs/api.md](docs/api.md)** — Full API reference for all ten kinds and shared types.
+- **[docs/dns-publishing.md](docs/dns-publishing.md)** — DNS Publishing: automatic publication of Routes, Ingresses, and LoadBalancer Services as DNS records.
+- **[docs/api.md](docs/api.md)** — Full API reference for all kinds and shared types.
 - **[DESIGN.md](DESIGN.md)** — Architecture, decisions and implementation notes.
 - **[PLAN.md](PLAN.md)** — Implementation roadmap.
 - **[docs/uddi-api-notes.md](docs/uddi-api-notes.md)** — Background on the Universal DDI REST API and Go SDK.
