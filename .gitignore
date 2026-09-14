@@ -36,3 +36,6 @@ Thumbs.db
 *.key
 *.pem
 kubeconfig*
+
+# Agent worktrees
+.claude/worktrees/
