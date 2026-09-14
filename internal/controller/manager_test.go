@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -34,6 +35,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/publish"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
@@ -132,6 +134,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		Expect((&RangeReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&AddressReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&FixedAddressReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
+		Expect((&DNSPublishPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, RoutesAvailable: true}).SetupWithManager(mgr)).To(Succeed())
 
 		var mgrCtx context.Context
 		mgrCtx, mgrCancel = context.WithCancel(ctx)
@@ -235,5 +238,62 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			WithTimeout(settle).WithPolling(poll).
 			Should(HaveField("Status", metav1.ConditionTrue))
 		Expect(v.Status.ID).To(HavePrefix(uddi.PrefixView + "/"))
+	})
+
+	It("publishes a Record for an Ingress created after the policy, purely through the watch", func() {
+		view := &uddiv1alpha1.View{
+			ObjectMeta: metav1.ObjectMeta{Name: "publish-view", Namespace: mgrNS},
+			Spec:       uddiv1alpha1.ViewSpec{Name: "publish-view"},
+		}
+		Expect(k8sClient.Create(ctx, view)).To(Succeed())
+		Eventually(readyCondition(view, func() []metav1.Condition { return view.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		zone := &uddiv1alpha1.AuthZone{
+			ObjectMeta: metav1.ObjectMeta{Name: "publish-zone", Namespace: mgrNS},
+			Spec: uddiv1alpha1.AuthZoneSpec{
+				FQDN:        "apps.publish.example.com.",
+				ViewRef:     uddiv1alpha1.ObjectRef{Name: view.Name},
+				PrimaryType: uddiv1alpha1.AuthZonePrimaryCloud,
+			},
+		}
+		Expect(k8sClient.Create(ctx, zone)).To(Succeed())
+		Eventually(func() string {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(zone), zone); err != nil {
+				return ""
+			}
+			return zone.Status.ID
+		}).WithTimeout(settle).WithPolling(poll).ShouldNot(BeEmpty())
+
+		policy := &uddiv1alpha1.DNSPublishPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "watch-policy", Namespace: mgrNS},
+			Spec: uddiv1alpha1.DNSPublishPolicySpec{
+				Sources:  []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindIngress},
+				ZoneRefs: []uddiv1alpha1.ObjectRef{{Name: zone.Name}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		ingress := &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{Name: "watched-ingress", Namespace: mgrNS},
+			Spec: networkingv1.IngressSpec{
+				Rules: []networkingv1.IngressRule{{Host: "www.apps.publish.example.com"}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, ingress)).To(Succeed())
+		ingress.Status.LoadBalancer.Ingress = []networkingv1.IngressLoadBalancerIngress{{IP: "192.0.2.50"}}
+		Expect(k8sClient.Status().Update(ctx, ingress)).To(Succeed())
+
+		// No direct Reconcile call on DNSPublishPolicyReconciler: the Ingress watch
+		// wakes it and it creates the Record on its own.
+		Eventually(func() int {
+			var list uddiv1alpha1.RecordList
+			if err := k8sClient.List(ctx, &list, client.InNamespace(mgrNS),
+				client.MatchingLabels{publish.LabelPolicy: policy.Name}); err != nil {
+				return -1
+			}
+			return len(list.Items)
+		}).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
 	})
 })
