@@ -1,0 +1,38 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go
+vendor/
+go.work
+go.work.sum
+
+# Kubebuilder / operator-sdk
+testbin/
+cover.out
+*.cover
+/bundle_tmp*/
+/catalog/tmp/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Secrets and local config (never commit UDDI API keys)
+*.env
+.env.*
+/hack/local/
+/config/local/
+*.key
+*.pem
+kubeconfig*
