@@ -437,21 +437,76 @@ operator's `DNSRecord` CRs; a hand-written wildcard `Record` covers it for now.
 **IPAllocationPolicy** (milestone 3)
 
 ```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: IPAllocationPolicy
+metadata: { name: lb, namespace: team-a }
 spec:
-  connectionRef: { name: default }
-  selector: {}                              # Services of type LoadBalancer in the namespace
-  requireAnnotation: true                   # only Services annotated uddi.infoblox.com/allocate: "true"
-  allocateFrom: { rangeRef: { name: lb-pool } }   # or subnetRef
+  connectionRef: { name: default }          # used by every generated Address
+  selector: { matchLabels: { lb: uddi } }   # label selector on Services; empty selects all in the namespace
+  requireAnnotation: true                   # default true: only Services annotated uddi.infoblox.com/allocate: "true"
+  allocateFrom:                             # exactly one; the pool CR lives in this namespace
+    rangeRef: { name: lb-pool }             # or subnetRef / addressBlockRef
   assignVia:
-    annotation: metallb.io/loadBalancerIPs  # current MetalLB key (verified 2026-09-14)
-    # alternatives: spec.loadBalancerIP (still honoured, deprecated upstream), io.cilium/lb-ipam-ips
-status: { conditions: [...], allocated: 3 }
+    mode: Annotation                        # Annotation | LoadBalancerIP
+    annotation: metallb.io/loadBalancerIPs  # default (MetalLB, verified 2026-09-14); also io.cilium/lb-ipam-ips,
+                                            # kube-vip.io/loadbalancerIPs, legacy metallb.universe.tf/loadBalancerIPs
+  tags: { team: a }                         # merged into every generated Address's spec.tags
+  addressLifecycle: { deletionPolicy: Delete }   # copied to generated Addresses
+status:
+  observedGeneration: 2
+  conditions: [ { type: Ready, ... } ]
+  allocated: 3                              # Services that have an Address CR
+  assigned: 3                               # of those, whose assignment field carries the Ready address
+  skipped:                                  # bounded (50), sorted by service
+    - { service: web, reason: ManuallyAssigned, message: "metallb.io/loadBalancerIPs is already 10.0.10.9" }
 ```
 
-Behaviour: for each selected Service without an assignment, create an `Address` CR
-(next-available from the pool) owned by the Service, wait for `Ready`, then patch the
-Service with the assignment. Deleting the Service garbage-collects the Address, whose
-finalizer releases the IP in Universal DDI.
+Pipeline per reconcile, pure functions in `internal/ipalloc` plus a thin controller:
+
+1. **Selection.** Services in the policy namespace matching `selector`. Only
+   `type: LoadBalancer` Services take part; another type carrying the allocate annotation
+   is `NotLoadBalancer`, without it it is ignored. With `requireAnnotation` a Service must
+   carry `uddi.infoblox.com/allocate: "true"`; `"false"` always opts out, and an opted-out
+   Service that still has an Address is released.
+2. **Service annotations**, prefix `uddi.infoblox.com/`: `allocate`, `allocate-from`
+   (`subnet/<name>`, `range/<name>` or `addressblock/<name>`, overriding the policy pool),
+   `address` (a specific IP instead of next-available), `hostname` (the name registered on
+   the Address; default `<service>.<namespace>`). A malformed value is `InvalidAnnotation`.
+3. **Pool.** The referenced Subnet, Range or AddressBlock CR; its `spec.spaceRef` becomes
+   the Address's `spaceRef`. A pool that is missing or has no `status.id` is
+   `PoolNotReady` (retried), and no Address is created for it yet.
+4. **Desired Address** per wanted Service: name `<policy>-<service>` (hash-truncated only
+   if it would exceed 253 characters), labels `uddi.infoblox.com/policy` and
+   `uddi.infoblox.com/service`, a controller ownerReference to the **Service**, spec with the
+   policy's connectionRef, the pool's spaceRef, `nextAvailableFrom` for the pool (or
+   `address` when annotated), `names: [{name: <hostname>, type: user}]`, comment
+   "Allocated by IPAllocationPolicy <ns>/<policy> for Service <name>", tags = policy tags
+   plus `uddi_operator_source: Service/<ns>/<name>`, lifecycle = `addressLifecycle`.
+   Applied with server-side apply, field manager `uddi-operator/ipallocationpolicy`.
+5. **Assignment.** Once the Address is Ready with `status.address`, the Service is patched:
+   `Annotation` mode sets `<annotation>: <ip>`, `LoadBalancerIP` mode sets
+   `spec.loadBalancerIP`. A Service whose assignment field already holds a different
+   value that no Address of this policy produced is `ManuallyAssigned`: nothing is
+   allocated and nothing is touched. An Address that is not Ready yet counts as allocated
+   but not assigned and is reported as `AddressPending` with the Address's Ready message,
+   so allocation failures (conflicts, API errors) are visible on the policy.
+6. **Release.** When a Service stops wanting an address (annotation `"false"`, no longer
+   selected, no longer LoadBalancer), the assignment field is cleared if it still equals
+   the Address's address, then the Address CR is deleted and its finalizer releases the IP.
+   Deleting the Service garbage-collects the Address through the ownerReference. Deleting
+   the policy leaves Addresses and assignments in place so running Services keep their IPs.
+7. **Status.** `allocated`, `assigned`, `skipped`, `observedGeneration`.
+   `Ready=True/Assigned` when `assigned == allocated` and no `PoolNotReady` or
+   `AddressPending` skip remains; `Ready=False/AddressesPending` while some are pending;
+   `Ready=False/PoolNotReady` when the policy pool itself is not ready. Events: Warning
+   `Skipped` per reason with a count, Normal `Allocated`, `Assigned` and `Released` per
+   Service.
+
+Watches: the policy, Services mapped to every policy in the namespace, Addresses carrying
+the policy label mapped back to their policy, and the pool kinds through a field index on
+`allocateFrom`. One address per Service in this milestone (no dual-stack). Changing
+`allocateFrom` does not move already allocated Services; release and re-opt-in to move
+one.
 
 **HostRegistrationPolicy** (milestone 4, open design)
 
