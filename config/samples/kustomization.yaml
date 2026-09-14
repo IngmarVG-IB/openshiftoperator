@@ -10,4 +10,5 @@ resources:
 - uddi_v1alpha1_range.yaml
 - uddi_v1alpha1_address.yaml
 - uddi_v1alpha1_fixedaddress.yaml
+- uddi_v1alpha1_dnspublishpolicy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

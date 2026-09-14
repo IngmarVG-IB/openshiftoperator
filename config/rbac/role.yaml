@@ -35,6 +35,7 @@ rules:
   - addresses
   - authzones
   - connections
+  - dnspublishpolicies
   - fixedaddresses
   - ipspaces
   - ranges
@@ -56,6 +57,7 @@ rules:
   - addresses/finalizers
   - authzones/finalizers
   - connections/finalizers
+  - dnspublishpolicies/finalizers
   - fixedaddresses/finalizers
   - ipspaces/finalizers
   - ranges/finalizers
@@ -71,6 +73,7 @@ rules:
   - addresses/status
   - authzones/status
   - connections/status
+  - dnspublishpolicies/status
   - fixedaddresses/status
   - ipspaces/status
   - ranges/status

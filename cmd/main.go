@@ -318,6 +318,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "FixedAddress")
 		os.Exit(1)
 	}
+	// DNSPublishPolicy is scaffolded but not yet implemented: its controller is a
+	// no-op placeholder until milestone 2 wave 2 builds the publish pipeline on top
+	// of internal/publish.
+	if err := (&controller.DNSPublishPolicyReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DNSPublishPolicy")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
