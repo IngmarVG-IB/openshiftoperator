@@ -1,4 +1,5 @@
-# WAVE 2: the IPSpace controller is a no-op until its adapter lands.
+# A Universal DDI IP space. Natural key for adoption: spec.name, which defaults to
+# metadata.name.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: IPSpace
 metadata:
@@ -7,5 +8,12 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: corp
 spec:
+  connectionRef:
+    name: default
   name: corp
-  comment: Corporate IP space
+  comment: Corporate IP space managed by uddi-operator
+  tags:
+    team: platform
+  lifecycle:
+    adoptExisting: false
+    deletionPolicy: Delete
