@@ -1,37 +1,120 @@
 # uddi-operator
 
-An OpenShift operator that provides a shim between OpenShift and
-[Infoblox Universal DDI](https://www.infoblox.com/products/universal-ddi/).
-
-It models Universal DDI objects (DNS views, zones, records; IPAM spaces,
-address blocks, subnets, ranges, addresses; DHCP fixed addresses and options)
-as Kubernetes custom resources under the `uddi.infoblox.com` API group, and
-builds higher-level integrations on top of them: DNS record sync for Routes,
-Ingresses and LoadBalancer Services, IP allocation from Universal DDI, and
-host / DHCP registration.
-
-See [DESIGN.md](DESIGN.md) for the architecture and decisions, and
-[PLAN.md](PLAN.md) for the implementation plan.
+An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://www.infoblox.com/products/universal-ddi/). The operator models Universal DDI objects (DNS views, zones, records, IP spaces, subnets, ranges, addresses, and DHCP reservations) as namespaced Kubernetes custom resources under the `uddi.infoblox.com` API group, allowing you to manage Infoblox infrastructure declaratively from OpenShift.
 
 ## Status
 
-Pre-alpha. Milestone 1 wave 1 is in: the CRDs for all ten kinds, the Universal DDI
-client layer with an in-memory fake, the generic object-layer reconcile loop, the
-Connection controller and the View controller as the reference kind. The other eight
-controllers are registered but reconcile to a no-op until their wave 2 adapters land.
+Pre-alpha. Milestone 1 wave 1 is in: the CRDs for all ten kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress), the Universal DDI client layer with an in-memory fake, the generic object-layer reconcile loop, the Connection controller and the View controller as the reference kind. The other eight controllers are registered but reconcile to a no-op until their wave 2 adapters land.
+
+## Features
+
+- **DNS management:** Define Views and AuthZones, create and manage A/AAAA/CNAME/TXT/MX/NS/CAA/SRV/PTR records.
+- **IPAM management:** Create and allocate from IP spaces, address blocks, subnets, and ranges. Reserve explicit addresses or allocate the next available IP.
+- **DHCP management:** Create fixed address reservations matched by MAC address or DUID. Assign DHCP options at space, subnet, range, or fixed address level.
+- **Adoption:** Take over existing Universal DDI objects with `lifecycle.adoptExisting=true`.
+- **Deletion control:** Use `lifecycle.deletionPolicy: Delete` (default) or `Orphan` to control cleanup.
+- **Ownership tracking:** Automatic tags track which cluster and CR owns each Universal DDI object; deletion is guarded by uid tags.
+- **Multi-tenancy:** Multiple Connections per namespace support sandboxing or multi-tenant setups.
+- **Drift detection:** Automatic re-sync at the Connection's `resyncInterval` (default 10m) corrects out-of-band changes.
+- **API key rotation:** The operator detects Secret changes and rebuilds the client.
+
+## How It Works
+
+The operator has two layers. The **object layer** models Universal DDI objects one-to-one as namespaced CRs and provides a generic reconcile loop: every kind uses the same steps to create, adopt, diff, update and delete in Universal DDI. The loop is parameterised by a small adapter interface, so behaviour is consistent across all kinds. The **integration layer** (forthcoming) watches native OpenShift objects (Routes, Ingresses, LoadBalancer Services, Nodes) and expresses the desired Universal DDI state as object-layer CRs—DNS record publishing, IP allocation and host registration all inherit ownership tracking, drift correction and cleanup from the object layer.
+
+## Quick Start
+
+Ensure a Secret with an API key exists in your namespace:
+
+```bash
+kubectl create secret generic uddi-api-key --from-literal=apiKey=<your-api-key>
+```
+
+Create a Connection to establish access:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Connection
+metadata:
+  name: default
+spec:
+  secretRef:
+    name: uddi-api-key
+```
+
+Create a View:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: View
+metadata:
+  name: default
+spec:
+  name: default
+```
+
+Create an AuthZone, adopting an existing zone:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: AuthZone
+metadata:
+  name: apps-zone
+spec:
+  fqdn: apps.example.com.
+  viewRef:
+    name: default
+  primaryType: cloud
+  lifecycle:
+    adoptExisting: true
+    deletionPolicy: Orphan
+```
+
+Create an A record:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Record
+metadata:
+  name: www
+spec:
+  zoneRef:
+    name: apps-zone
+  name: www
+  type: A
+  rdata:
+    a:
+      address: 192.0.2.10
+  ttl: 300
+```
+
+Check status:
+
+```bash
+kubectl get authzone apps-zone
+kubectl describe record www
+```
+
+See [docs/usage.md](docs/usage.md) for complete task-oriented documentation.
+
+## Documentation
+
+- **[docs/install.md](docs/install.md)** — Installation and setup (operator deployment, RBAC, OLM bundle).
+- **[docs/usage.md](docs/usage.md)** — Task-oriented guide: DNS, IPAM, DHCP, ownership tags, deletion, status and troubleshooting.
+- **[docs/api.md](docs/api.md)** — Full API reference for all ten kinds and shared types.
+- **[DESIGN.md](DESIGN.md)** — Architecture, decisions and implementation notes.
+- **[PLAN.md](PLAN.md)** — Implementation roadmap.
+- **[docs/uddi-api-notes.md](docs/uddi-api-notes.md)** — Background on the Universal DDI REST API and Go SDK.
 
 ## Development
 
-Neither operator-sdk nor kubebuilder ships Windows binaries and the generated Makefile
-assumes a Linux toolchain, so every Go, `make` and `operator-sdk` command runs in WSL.
-On this machine the toolchain is not on the login-shell PATH, so use:
+Neither operator-sdk nor kubebuilder ships Windows binaries and the generated Makefile assumes a Linux toolchain, so every Go, `make` and `operator-sdk` command runs in WSL. On this machine the toolchain is not on the login-shell PATH, so use:
 
 ```sh
-wsl -e bash -lc 'export PATH=/home/ingmar/goroot/go/bin:/home/ingmar/go/bin:$PATH;   cd /mnt/c/Users/Ingmar/src/openshiftoperator && <command>'
+wsl -e bash -lc 'export PATH=/home/ingmar/goroot/go/bin:/home/ingmar/go/bin:$PATH; cd /mnt/c/Users/Ingmar/src/openshiftoperator && <command>'
 ```
 
-Builds on `/mnt/c` go through the 9p filesystem and are slow; allow several minutes for
-`make test` and `go mod tidy`.
+Builds on `/mnt/c` go through the 9p filesystem and are slow; allow several minutes for `make test` and `go mod tidy`.
 
 | Target | What it does |
 | --- | --- |
@@ -45,10 +128,7 @@ Builds on `/mnt/c` go through the 9p filesystem and are slow; allow several minu
 | `make install` / `make uninstall` | applies or removes the CRDs |
 | `make docker-build`, `make bundle-build`, `make catalog-build` | need a container runtime, which this WSL install does not have |
 
-Tests never reach Universal DDI. `internal/uddi.Fake` is an in-memory implementation of
-the same interfaces the SDK client satisfies, with the same natural-key uniqueness rules,
-`_filter` and `_tfilter` evaluation and next-available allocation, and the controllers
-pick it up through the client factory hook on `internal/connection.Resolver`.
+Tests never reach Universal DDI. `internal/uddi.Fake` is an in-memory implementation of the same interfaces the SDK client satisfies, with the same natural-key uniqueness rules, `_filter` and `_tfilter` evaluation and next-available allocation, and the controllers pick it up through the client factory hook on `internal/connection.Resolver`.
 
 Environment variables the manager honours:
 
