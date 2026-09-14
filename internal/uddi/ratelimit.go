@@ -47,12 +47,20 @@ func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, err
 }
 
 // newRateLimitedClient returns an http.Client that admits at most rps requests per
-// second with the given burst. A non-positive rps disables limiting.
-func newRateLimitedClient(base *http.Client, rps float64, burst int) *http.Client {
+// second with the given burst, and records the uddi_operator_api_requests_total /
+// uddi_operator_api_request_duration_seconds metrics (metrics.go) for every request
+// under the connLabel connection label. A non-positive rps disables the rate limiter;
+// metrics are recorded either way.
+//
+// The metrics transport sits inside the rate limiter (closest to the network), so
+// apiRequestDuration measures the actual API round trip and never counts time a request
+// spent waiting for a rate-limit token.
+func newRateLimitedClient(base *http.Client, rps float64, burst int, connLabel string) *http.Client {
 	out := &http.Client{}
 	if base != nil {
 		*out = *base
 	}
+	out.Transport = &metricsTransport{base: out.Transport, connection: connLabel}
 	if rps <= 0 {
 		return out
 	}

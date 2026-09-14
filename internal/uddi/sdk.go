@@ -41,6 +41,12 @@ type Config struct {
 	APIKey string
 	// ClientName is reported to the API and shows up in the audit log.
 	ClientName string
+	// ConnectionLabel is the "connection" label value stamped on every
+	// uddi_operator_api_requests_total / uddi_operator_api_request_duration_seconds
+	// sample this client produces (metrics.go). Empty by default, which keeps this a
+	// purely additive field: callers such as internal/connection that never set it get
+	// an empty "connection" label and nothing else changes.
+	ConnectionLabel string
 	// DefaultTags are merged by the SDK into every taggable request body.
 	DefaultTags map[string]string
 	// RateLimitRPS is the client-side sustained request rate. Zero disables limiting.
@@ -88,7 +94,7 @@ func NewSDKClient(cfg Config) (*Client, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	httpClient := newRateLimitedClient(&http.Client{Timeout: timeout}, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	httpClient := newRateLimitedClient(&http.Client{Timeout: timeout}, cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.ConnectionLabel)
 
 	opts := []option.ClientOption{
 		option.WithAPIKey(cfg.APIKey),

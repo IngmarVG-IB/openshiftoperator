@@ -1,0 +1,42 @@
+name: Integration Tests
+
+# Runs only on demand: this suite creates and deletes real objects in a Universal DDI
+# tenant (see docs/testing.md), so it must never run automatically on push or PR.
+# UDDI_API_KEY must point at a sandbox tenant, never production. Without that secret
+# configured, the suite still runs but every test skips cleanly (see
+# test/integration/integration_test.go's requireAPIKey).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-integration:
+    name: Run against a sandbox tenant
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run the integration suite
+        env:
+          UDDI_API_KEY: ${{ secrets.UDDI_API_KEY }}
+          UDDI_CSP_URL: ${{ secrets.UDDI_CSP_URL }}
+        run: |
+          set -o pipefail
+          make test-integration 2>&1 | tee integration-test.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-log
+          path: integration-test.log
+          retention-days: 14
