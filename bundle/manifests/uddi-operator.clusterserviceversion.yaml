@@ -15,6 +15,10 @@ metadata:
             "name": "svc-web"
           },
           "spec": {
+            "comment": "Managed by uddi-operator",
+            "connectionRef": {
+              "name": "default"
+            },
             "names": [
               {
                 "name": "svc-web.team-a",
@@ -28,6 +32,9 @@ metadata:
             },
             "spaceRef": {
               "name": "corp"
+            },
+            "tags": {
+              "team": "platform"
             }
           }
         },
@@ -44,9 +51,20 @@ metadata:
           "spec": {
             "address": "10.0.0.0",
             "cidr": 16,
+            "comment": "Root address block for the corp IP space",
+            "connectionRef": {
+              "name": "default"
+            },
+            "lifecycle": {
+              "adoptExisting": false,
+              "deletionPolicy": "Delete"
+            },
             "name": "corp-root",
             "spaceRef": {
               "name": "corp"
+            },
+            "tags": {
+              "team": "platform"
             }
           }
         },
@@ -62,12 +80,18 @@ metadata:
           },
           "spec": {
             "comment": "Zone for OpenShift Routes",
+            "connectionRef": {
+              "name": "default"
+            },
             "fqdn": "apps.example.com.",
             "lifecycle": {
               "adoptExisting": true,
               "deletionPolicy": "Orphan"
             },
             "primaryType": "cloud",
+            "tags": {
+              "team": "platform"
+            },
             "viewRef": {
               "name": "view-sample"
             }
@@ -112,12 +136,19 @@ metadata:
           },
           "spec": {
             "address": "10.0.10.50",
+            "comment": "Managed by uddi-operator",
+            "connectionRef": {
+              "name": "default"
+            },
             "hostname": "node-1.example.com",
             "matchType": "mac",
             "matchValue": "52:54:00:aa:bb:cc",
             "name": "node-1",
             "spaceRef": {
               "name": "corp"
+            },
+            "tags": {
+              "team": "platform"
             }
           }
         },
@@ -132,8 +163,18 @@ metadata:
             "name": "corp"
           },
           "spec": {
-            "comment": "Corporate IP space",
-            "name": "corp"
+            "comment": "Corporate IP space managed by uddi-operator",
+            "connectionRef": {
+              "name": "default"
+            },
+            "lifecycle": {
+              "adoptExisting": false,
+              "deletionPolicy": "Delete"
+            },
+            "name": "corp",
+            "tags": {
+              "team": "platform"
+            }
           }
         },
         {
@@ -147,6 +188,10 @@ metadata:
             "name": "lb-pool"
           },
           "spec": {
+            "comment": "LoadBalancer IP pool managed by uddi-operator",
+            "connectionRef": {
+              "name": "default"
+            },
             "end": "10.0.10.199",
             "exclusionRanges": [
               {
@@ -159,7 +204,10 @@ metadata:
             "spaceRef": {
               "name": "corp"
             },
-            "start": "10.0.10.100"
+            "start": "10.0.10.100",
+            "tags": {
+              "team": "platform"
+            }
           }
         },
         {
@@ -173,11 +221,18 @@ metadata:
             "name": "www-a"
           },
           "spec": {
+            "comment": "Managed by uddi-operator",
+            "connectionRef": {
+              "name": "default"
+            },
             "name": "www",
             "rdata": {
               "a": {
                 "address": "192.0.2.10"
               }
+            },
+            "tags": {
+              "team": "platform"
             },
             "ttl": 300,
             "type": "A",
@@ -197,11 +252,31 @@ metadata:
             "name": "openshift-lb"
           },
           "spec": {
-            "address": "10.0.10.0",
             "cidr": 24,
+            "comment": "Load balancer subnet, next-available from the corp root block",
+            "connectionRef": {
+              "name": "default"
+            },
+            "dhcpOptions": [
+              {
+                "optionCode": "dhcp/option_code/03",
+                "optionValue": "10.0.0.1",
+                "type": "option"
+              }
+            ],
+            "lifecycle": {
+              "adoptExisting": false,
+              "deletionPolicy": "Delete"
+            },
             "name": "openshift-lb",
+            "parentRef": {
+              "name": "block-10"
+            },
             "spaceRef": {
               "name": "corp"
+            },
+            "tags": {
+              "team": "platform"
             }
           }
         },
@@ -234,7 +309,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: quay.io/ingmarvg-ib/uddi-operator:0.1.0
-    createdAt: "2026-09-14T18:48:31Z"
+    createdAt: "2026-09-14T19:27:50Z"
     olm.skipRange: <0.1.0
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4

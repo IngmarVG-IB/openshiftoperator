@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/infobloxopen/universal-ddi-go-client/ipam"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -89,7 +90,7 @@ var _ = Describe("Address controller through the generic object-layer loop", fun
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 
@@ -116,7 +117,7 @@ var _ = Describe("Address controller through the generic object-layer loop", fun
 		})
 
 		It("allocates the next available address from a Subnet, and a second Address from the same Subnet gets a different one", func() {
-			subnet := newSubnetWithID(ns, "sub-1", "10.0.41.0", 24, testIPSpaceID)
+			subnet := newSubnetWithID(ns, "sub-1", "10.0.41.0")
 
 			a := makeAddress("from-subnet-1", func(a *uddiv1alpha1.Address) {
 				a.Spec.NextAvailableFrom = &uddiv1alpha1.NextAvailableFrom{
@@ -169,7 +170,7 @@ var _ = Describe("Address controller through the generic object-layer loop", fun
 		})
 
 		It("recovers a previously allocated address after a lost status write instead of allocating again", func() {
-			subnet := newSubnetWithID(ns, "sub-recover", "10.0.44.0", 24, testIPSpaceID)
+			subnet := newSubnetWithID(ns, "sub-recover", "10.0.44.0")
 
 			a := makeAddress("recover-me", func(a *uddiv1alpha1.Address) {
 				a.Spec.NextAvailableFrom = &uddiv1alpha1.NextAvailableFrom{
@@ -240,6 +241,57 @@ var _ = Describe("Address controller through the generic object-layer loop", fun
 			_, err = testFake.GetAddress(ctx, id)
 			Expect(uddi.IsNotFound(err)).To(BeTrue())
 			Expect(collectEvents()).To(ContainElement(ContainSubstring("Deleted")))
+		})
+
+		// The immutability rules are spec-level so they work on the Kubernetes 1.29
+		// floor, where oldSelf.orValue() does not exist. Both lanes have to hold: a
+		// field that started empty for next-available allocation must stay empty, and a
+		// field that was set must stay equal.
+		It("rejects adding, removing or changing address and nextAvailableFrom via CEL", func() {
+			subnet := newSubnetWithID(ns, "sub-cel", "10.0.47.0")
+			other := newSubnetWithID(ns, "sub-cel-other", "10.0.48.0")
+
+			// Lane 1: allocated from a parent, so spec.address must stay empty.
+			allocated := makeAddress("cel-next-available", func(a *uddiv1alpha1.Address) {
+				a.Spec.NextAvailableFrom = &uddiv1alpha1.NextAvailableFrom{
+					SubnetRef: &uddiv1alpha1.ObjectRef{Name: subnet.Name},
+				}
+			})
+			Expect(reconcileAddress(allocated)).To(Succeed())
+			Expect(allocated.Status.Address).NotTo(BeEmpty())
+
+			allocated.Spec.Address = allocated.Status.Address
+			err := k8sClient.Update(ctx, allocated)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("address is immutable"))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(allocated), allocated)).To(Succeed())
+			allocated.Spec.NextAvailableFrom = &uddiv1alpha1.NextAvailableFrom{
+				SubnetRef: &uddiv1alpha1.ObjectRef{Name: other.Name},
+			}
+			err = k8sClient.Update(ctx, allocated)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("nextAvailableFrom is immutable"))
+
+			// Lane 2: reserved explicitly, so spec.address must stay exactly what it was
+			// and nextAvailableFrom must not appear.
+			explicit := makeAddress("cel-explicit", func(a *uddiv1alpha1.Address) {
+				a.Spec.Address = "10.0.49.5"
+			})
+			Expect(reconcileAddress(explicit)).To(Succeed())
+
+			explicit.Spec.Address = ""
+			err = k8sClient.Update(ctx, explicit)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("address is immutable"))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(explicit), explicit)).To(Succeed())
+			explicit.Spec.NextAvailableFrom = &uddiv1alpha1.NextAvailableFrom{
+				SubnetRef: &uddiv1alpha1.ObjectRef{Name: subnet.Name},
+			}
+			err = k8sClient.Update(ctx, explicit)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("nextAvailableFrom is immutable"))
 		})
 	})
 })

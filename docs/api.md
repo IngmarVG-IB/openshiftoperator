@@ -263,7 +263,7 @@ A Record is a DNS resource record in Universal DDI. Universal DDI stores one rda
 | --- | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | No | Connection providing credentials. Empty means "default". |
 | `zoneRef` | ObjectRef | Yes | — | Yes | AuthZone CR or Universal DDI auth zone id. Immutable (CEL: `self == oldSelf`). |
-| `name` | string | No | — | Yes | Record name inside the zone. "@" or empty means the apex. Max 256 characters. Immutable (CEL: `self == oldSelf.orValue(self)`). |
+| `name` | string | No | — | Yes | Record name inside the zone. "@" or empty means the apex. Max 256 characters. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). |
 | `type` | RecordType | Yes | — | Yes | Record type: A, AAAA, CNAME, TXT, PTR, SRV, MX, NS, or CAA. Immutable (CEL: `self == oldSelf`). |
 | `rdata` | RecordRData | Yes | — | No | Exactly one typed rdata block matching `type` (CEL validation ensures this). |
 | `rdata.a.address` | string | Yes (if type A) | — | No | IPv4 address. Max 45 characters. |
@@ -374,9 +374,9 @@ An AddressBlock is a contiguous block of IP addresses in Universal DDI, partitio
 | --- | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | No | Connection providing credentials. Empty means "default". |
 | `spaceRef` | ObjectRef | Yes | — | No | IPSpace CR or Universal DDI ip space id. |
-| `address` | string | No | — | Yes | Block address, e.g. "10.0.0.0". Omit to allocate next available from parentRef. Max 45 characters. Immutable (CEL: `self == oldSelf.orValue(self)`). Requires `parentRef` when omitted (CEL: `has(self.address) \|\| has(self.parentRef)`). |
+| `address` | string | No | — | Yes | Block address, e.g. "10.0.0.0". Omit to allocate next available from parentRef. Max 45 characters. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). Requires `parentRef` when omitted (CEL: `has(self.address) \|\| has(self.parentRef)`). |
 | `cidr` | int32 | Yes | — | Yes | CIDR prefix length. 0–128. Immutable (CEL: `self == oldSelf`). |
-| `parentRef` | *ObjectRef | No (required if `address` omitted) | — | Yes | Parent AddressBlock CR or Universal DDI address block id. Required when address is omitted. Immutable (CEL: `self == oldSelf.orValue(self)`). |
+| `parentRef` | *ObjectRef | No (required if `address` omitted) | — | Yes | Parent AddressBlock CR or Universal DDI address block id. Required when address is omitted. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). |
 | `name` | string | No | — | No | Block name in Universal DDI. Max 256 characters. |
 | `comment` | string | No | — | No | Comment stored on the Universal DDI object. Max 1024 characters. |
 | `dhcpOptions` | []DHCPOption | No | — | No | DHCP options applied to everything in the block. |
@@ -424,9 +424,9 @@ A Subnet is a contiguous block of IP addresses in Universal DDI allocated for DH
 | --- | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | No | Connection providing credentials. Empty means "default". |
 | `spaceRef` | ObjectRef | Yes | — | No | IPSpace CR or Universal DDI ip space id. |
-| `address` | string | No | — | Yes | Subnet address, e.g. "10.0.10.0". Omit to allocate next available from parentRef. Max 45 characters. Immutable (CEL: `self == oldSelf.orValue(self)`). Requires `parentRef` when omitted (CEL: `has(self.address) \|\| has(self.parentRef)`). |
+| `address` | string | No | — | Yes | Subnet address, e.g. "10.0.10.0". Omit to allocate next available from parentRef. Max 45 characters. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). Requires `parentRef` when omitted (CEL: `has(self.address) \|\| has(self.parentRef)`). |
 | `cidr` | int32 | Yes | — | Yes | CIDR prefix length. 0–128. Immutable (CEL: `self == oldSelf`). |
-| `parentRef` | *ObjectRef | No (required if `address` omitted) | — | Yes | Parent AddressBlock CR or Universal DDI address block id. Required when address is omitted. Immutable (CEL: `self == oldSelf.orValue(self)`). |
+| `parentRef` | *ObjectRef | No (required if `address` omitted) | — | Yes | Parent AddressBlock CR or Universal DDI address block id. Required when address is omitted. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). |
 | `name` | string | No | — | No | Subnet name in Universal DDI. Max 256 characters. |
 | `comment` | string | No | — | No | Comment stored on the Universal DDI object. Max 1024 characters. |
 | `dhcpHost` | string | No | — | No | Universal DDI DHCP service host id, e.g. "dhcp/host/<uuid>". Max 256 characters. |
@@ -536,14 +536,14 @@ An Address is a reservation for a specific address in Universal DDI. It can be e
 | --- | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | No | Connection providing credentials. Empty means "default". |
 | `spaceRef` | ObjectRef | Yes | — | No | IPSpace CR or Universal DDI ip space id. |
-| `address` | string | No | — | Yes | Address to reserve, e.g. "10.0.10.7". Omit to allocate next available from nextAvailableFrom. Max 45 characters. Immutable (CEL: `self == oldSelf.orValue(self)`). Exactly one of address or nextAvailableFrom must be set (CEL: `has(self.address) != has(self.nextAvailableFrom)`). |
-| `nextAvailableFrom` | *NextAvailableFrom | No | — | Yes | Selects the parent to allocate from. Immutable (CEL: `self == oldSelf.orValue(self)`). Exactly one of address or nextAvailableFrom must be set (CEL: `has(self.address) != has(self.nextAvailableFrom)`). Exactly one of subnetRef, rangeRef or addressBlockRef must be set (CEL validation on the struct). |
+| `address` | string | No | — | Yes | Address to reserve, e.g. "10.0.10.7". Omit to allocate next available from nextAvailableFrom. Max 45 characters. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). Exactly one of address or nextAvailableFrom must be set (CEL: `has(self.address) != has(self.nextAvailableFrom)`). |
+| `nextAvailableFrom` | *NextAvailableFrom | No | — | Yes | Selects the parent to allocate from. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). Exactly one of address or nextAvailableFrom must be set (CEL: `has(self.address) != has(self.nextAvailableFrom)`). Exactly one of subnetRef, rangeRef or addressBlockRef must be set (CEL validation on the struct). |
 | `nextAvailableFrom.subnetRef` | *ObjectRef | No (one required) | — | No | Subnet CR or Universal DDI subnet id. |
 | `nextAvailableFrom.rangeRef` | *ObjectRef | No (one required) | — | No | Range CR or Universal DDI range id. |
 | `nextAvailableFrom.addressBlockRef` | *ObjectRef | No (one required) | — | No | AddressBlock CR or Universal DDI address block id. |
 | `names` | []AddressName | No | — | No | Names attached to the address. |
 | `names[].name` | string | Yes | — | No | Address name. Max 256 characters. |
-| `names[].type` | string | No | user | No | Name type, e.g. "user". Max 64 characters. |
+| `names[].type` | string | No | user | No | Name type, e.g. "user". Max 64 characters, min 1. The CRD default only applies when the key is absent from the submitted object; the operator also treats an empty type as "user" when it builds the request. |
 | `hwaddr` | string | No | — | No | MAC address associated with the reservation. Max 64 characters. |
 | `interface` | string | No | — | No | Interface name associated with the reservation. Max 256 characters. |
 | `comment` | string | No | — | No | Comment stored on the Universal DDI object. Max 1024 characters. |

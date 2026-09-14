@@ -70,7 +70,7 @@ func (authzoneAdapter) Find(ctx context.Context, uc *uddi.Client, spec *uddiv1al
 		return nil, nil
 	}
 	res, err := uc.DNSConfig.ListAuthZones(ctx, uddi.ListOptions{
-		Filter: `fqdn=="` + fqdn + `" and view=="` + view + `"`,
+		Filter: "fqdn==" + quoteFilterValue(fqdn) + " and view==" + quoteFilterValue(view),
 		Limit:  1,
 	})
 	if err != nil || len(res) == 0 {
@@ -312,7 +312,7 @@ func warningsOf(in []dnsconfig.Warning) []string {
 // Observe copies observed fields into the CR status.
 func (authzoneAdapter) Observe(obj client.Object, current *dnsconfig.AuthZone) {
 	z, ok := obj.(*uddiv1alpha1.AuthZone)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	z.Status.FQDN = strPtr(current.ProtocolFqdn)

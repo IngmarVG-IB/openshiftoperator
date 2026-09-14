@@ -107,10 +107,6 @@ spec:
                   Immutable.
                 maxLength: 256
                 type: string
-                x-kubernetes-validations:
-                - message: name is immutable
-                  optionalOldSelf: true
-                  rule: self == oldSelf.orValue(self)
               rdata:
                 description: RData holds exactly one block, matching type.
                 properties:
@@ -323,6 +319,10 @@ spec:
             - message: createPtr is only valid for A and AAAA records
               rule: '!has(self.createPtr) || !self.createPtr || self.type == ''A''
                 || self.type == ''AAAA'''
+            - message: 'name is immutable: a record created at the zone apex must
+                stay at the apex, and a set name must not change'
+              rule: (!has(oldSelf.name) && !has(self.name)) || (has(oldSelf.name)
+                && has(self.name) && oldSelf.name == self.name)
           status:
             description: RecordStatus reports the observed state of the record.
             properties:

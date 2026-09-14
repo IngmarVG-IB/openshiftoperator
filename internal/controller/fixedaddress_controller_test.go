@@ -83,7 +83,7 @@ var _ = Describe("FixedAddress controller through the generic object-layer loop"
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 

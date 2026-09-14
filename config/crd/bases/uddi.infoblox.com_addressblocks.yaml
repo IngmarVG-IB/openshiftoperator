@@ -62,10 +62,6 @@ spec:
                   block from parentRef. Immutable.
                 maxLength: 45
                 type: string
-                x-kubernetes-validations:
-                - message: address is immutable
-                  optionalOldSelf: true
-                  rule: self == oldSelf.orValue(self)
               cidr:
                 description: CIDR prefix length. Immutable.
                 format: int32
@@ -167,9 +163,6 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-validations:
-                - message: parentRef is immutable
-                  optionalOldSelf: true
-                  rule: self == oldSelf.orValue(self)
                 - message: exactly one of name or id must be set
                   rule: has(self.name) != has(self.id)
               spaceRef:
@@ -202,6 +195,14 @@ spec:
             x-kubernetes-validations:
             - message: parentRef is required when address is omitted
               rule: has(self.address) || has(self.parentRef)
+            - message: 'address is immutable: a block allocated from parentRef must
+                keep spec.address empty, and a set address must not change'
+              rule: (!has(oldSelf.address) && !has(self.address)) || (has(oldSelf.address)
+                && has(self.address) && oldSelf.address == self.address)
+            - message: 'parentRef is immutable: it may not be added, removed or changed
+                after creation'
+              rule: (!has(oldSelf.parentRef) && !has(self.parentRef)) || (has(oldSelf.parentRef)
+                && has(self.parentRef) && oldSelf.parentRef == self.parentRef)
           status:
             description: AddressBlockStatus reports the observed state of the address
               block.

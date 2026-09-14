@@ -62,7 +62,7 @@ func (ipspaceAdapter) Find(ctx context.Context, uc *uddi.Client, _ *uddiv1alpha1
 		return nil, nil
 	}
 	res, err := uc.IPAM.ListIPSpaces(ctx, uddi.ListOptions{
-		Filter: `name=="` + name + `"`,
+		Filter: "name==" + quoteFilterValue(name),
 		Limit:  1,
 	})
 	if err != nil || len(res) == 0 {
@@ -92,6 +92,7 @@ func (ipspaceAdapter) Create(ctx context.Context, uc *uddi.Client, spec *uddiv1a
 	if spec.Comment != "" {
 		in.Comment = &spec.Comment
 	}
+	in.DhcpOptions = toOptionItems(spec.DHCPOptions)
 	in.Tags = uddi.ToAPITags(t)
 	return uc.IPAM.CreateIPSpace(ctx, in)
 }
@@ -102,7 +103,7 @@ func (ipspaceAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*ipa
 }
 
 // Diff compares the managed fields and builds a partial patch. Name is mutable in the
-// API, so it is treated as managed and patched like comment and tags.
+// API, so it is treated as managed and patched like comment, dhcpOptions and tags.
 func (ipspaceAdapter) Diff(spec *uddiv1alpha1.IPSpaceSpec, deps uddisync.Deps, t map[string]string, current *ipam.IPSpace) (*ipam.IPSpace, bool) {
 	// ipam.IPSpace.Name is a required, non-pointer field, so it always rides along on a
 	// patch, exactly like dnsconfig.View.Name in the reference adapter.
@@ -112,6 +113,10 @@ func (ipspaceAdapter) Diff(spec *uddiv1alpha1.IPSpaceSpec, deps uddisync.Deps, t
 	if strPtr(current.Comment) != spec.Comment {
 		comment := spec.Comment
 		patch.Comment = &comment
+		changed = true
+	}
+	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions) {
+		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
 		changed = true
 	}
 	if merged, tagsChanged := tags.ForPatch(uddi.FromAPITags(current.Tags), t); tagsChanged {
@@ -134,7 +139,7 @@ func (ipspaceAdapter) Delete(ctx context.Context, uc *uddi.Client, id string) er
 // Observe copies observed fields into the CR status.
 func (ipspaceAdapter) Observe(obj client.Object, current *ipam.IPSpace) {
 	s, ok := obj.(*uddiv1alpha1.IPSpace)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	s.Status.Name = current.Name

@@ -29,6 +29,13 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "uddi.infoblox.com", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
+	//
+	// controller-runtime deprecated scheme.Builder because it drags controller-runtime
+	// into API packages, which are supposed to depend only on the standard library,
+	// k8s.io/apimachinery and other API packages. That is exactly the case it is still
+	// meant for ("this helper is only useful in api packages"), this is that package,
+	// and it is what the kubebuilder go/v4 scaffold generates, so it stays.
+	//nolint:staticcheck // SA1019: intended use inside an API package.
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
 
 	// AddToScheme adds the types in this group-version to the given scheme.

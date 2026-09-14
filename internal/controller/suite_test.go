@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -69,6 +70,15 @@ var (
 // TestClusterID is the cluster id stamped into the ownership tags during tests.
 const TestClusterID = "test-cluster-0001"
 
+// Literals shared by several suites, so a drift test reads the same on every kind.
+const (
+	// testUpdatedComment is the new comment a drift spec writes into spec.comment.
+	testUpdatedComment = "updated comment"
+	// testRootAddress is the network address of the top-level block or subnet parent
+	// the IPAM suites allocate from.
+	testRootAddress = "10.0.0.0"
+)
+
 // newNamespace creates a fresh namespace so specs cannot collide on object names.
 func newNamespace() string {
 	nsCounter++
@@ -104,18 +114,18 @@ func collectEvents() []string {
 }
 
 // makeSecret creates a Secret holding an API key.
-func makeSecret(namespace, name, key, value string) *corev1.Secret {
-	s := &corev1.Secret{
+func makeSecret(namespace, name, key, value string) {
+	Expect(k8sClient.Create(ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 		Data:       map[string][]byte{key: []byte(value)},
-	}
-	Expect(k8sClient.Create(ctx, s)).To(Succeed())
-	return s
+	})).To(Succeed())
 }
 
-// makeReadyConnection creates a Secret plus a Connection and reconciles the Connection
-// until it reports Ready, which is what every object-layer spec needs first.
-func makeReadyConnection(namespace, name string) *uddiv1alpha1.Connection {
+// makeReadyConnection creates a Secret plus the namespace's default Connection and
+// reconciles the Connection until it reports Ready, which is what every object-layer
+// spec needs first.
+func makeReadyConnection(namespace string) *uddiv1alpha1.Connection {
+	name := uddiv1alpha1.DefaultConnectionName
 	makeSecret(namespace, name+"-key", uddiv1alpha1.DefaultSecretKey, "not-a-real-key")
 	conn := &uddiv1alpha1.Connection{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
@@ -133,6 +143,19 @@ func makeReadyConnection(namespace, name string) *uddiv1alpha1.Connection {
 	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(conn), conn)).To(Succeed())
 	Expect(connection.IsReady(conn)).To(BeTrue())
 	return conn
+}
+
+// setConnectionReady forces a Connection's Ready condition, so a spec can simulate a
+// tenant that stopped answering without going through the Connection controller.
+func setConnectionReady(conn *uddiv1alpha1.Connection, status metav1.ConditionStatus, reason, message string) {
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(conn), conn)).To(Succeed())
+	meta.SetStatusCondition(&conn.Status.Conditions, metav1.Condition{
+		Type:    uddiv1alpha1.ConditionReady,
+		Status:  status,
+		Reason:  reason,
+		Message: message,
+	})
+	Expect(k8sClient.Status().Update(ctx, conn)).To(Succeed())
 }
 
 func TestControllers(t *testing.T) {

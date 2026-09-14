@@ -38,11 +38,14 @@ import (
 // it allocates from, so the fake's "taken addresses in this space" filtering lines up.
 const testIPSpaceID = "ipam/ip_space/corp-test"
 
-// newSubnetWithID creates a Subnet CR backed by a real ipam.Subnet in the fake, standing
-// in for the Subnet controller, which is still a wave 2 placeholder. Shared with the
-// Address specs.
-func newSubnetWithID(ns, name, address string, cidr int64, spaceID string) *uddiv1alpha1.Subnet {
-	space := spaceID
+// testSubnetCIDR is the prefix length every stand-in Subnet in these specs uses.
+const testSubnetCIDR = 24
+
+// newSubnetWithID creates a Subnet CR backed by a real ipam.Subnet in the fake, so the
+// Address specs get a parent to allocate from without running the Subnet controller.
+func newSubnetWithID(ns, name, address string) *uddiv1alpha1.Subnet {
+	space := testIPSpaceID
+	cidr := int64(testSubnetCIDR)
 	created, err := testFake.CreateSubnet(ctx, ipam.Subnet{
 		Address: &address,
 		Cidr:    &cidr,
@@ -52,9 +55,9 @@ func newSubnetWithID(ns, name, address string, cidr int64, spaceID string) *uddi
 	sub := &uddiv1alpha1.Subnet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: uddiv1alpha1.SubnetSpec{
-			SpaceRef: uddiv1alpha1.ObjectRef{ID: spaceID},
+			SpaceRef: uddiv1alpha1.ObjectRef{ID: testIPSpaceID},
 			Address:  address,
-			CIDR:     int32(cidr),
+			CIDR:     testSubnetCIDR,
 		},
 	}
 	Expect(k8sClient.Create(ctx, sub)).To(Succeed())
@@ -139,7 +142,7 @@ var _ = Describe("Range controller through the generic object-layer loop", func(
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 
@@ -225,6 +228,30 @@ var _ = Describe("Range controller through the generic object-layer loop", func(
 			updatesBefore = testFake.CallCount("UpdateRange")
 			Expect(reconcileRange(rg)).To(Succeed())
 			Expect(testFake.CallCount("UpdateRange")).To(Equal(updatesBefore))
+		})
+
+		It("round trips disableDhcp into the fake and patches it when the spec changes", func() {
+			rg := makeRange("dhcp-off", func(r *uddiv1alpha1.Range) {
+				r.Spec.Start = "10.0.31.10"
+				r.Spec.End = "10.0.31.20"
+				r.Spec.DisableDHCP = true
+			})
+			Expect(reconcileRange(rg)).To(Succeed())
+
+			Expect(fakeRange(rg.Status.ID).DisableDhcp).NotTo(BeNil())
+			Expect(*fakeRange(rg.Status.ID).DisableDhcp).To(BeTrue())
+
+			// A second pass with no spec change must not patch.
+			updatesBefore := testFake.CallCount("UpdateRange")
+			Expect(reconcileRange(rg)).To(Succeed())
+			Expect(testFake.CallCount("UpdateRange")).To(Equal(updatesBefore))
+
+			rg.Spec.DisableDHCP = false
+			Expect(k8sClient.Update(ctx, rg)).To(Succeed())
+			Expect(reconcileRange(rg)).To(Succeed())
+
+			Expect(testFake.CallCount("UpdateRange")).To(Equal(updatesBefore + 1))
+			Expect(*fakeRange(rg.Status.ID).DisableDhcp).To(BeFalse())
 		})
 
 		It("deletes the Universal DDI range when the uid tag matches", func() {

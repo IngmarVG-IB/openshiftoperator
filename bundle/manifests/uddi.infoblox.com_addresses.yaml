@@ -62,10 +62,6 @@ spec:
                   address from nextAvailableFrom. Immutable.
                 maxLength: 45
                 type: string
-                x-kubernetes-validations:
-                - message: address is immutable
-                  optionalOldSelf: true
-                  rule: self == oldSelf.orValue(self)
               comment:
                 description: Comment stored on the Universal DDI object.
                 maxLength: 1024
@@ -123,13 +119,17 @@ spec:
                       type: string
                     type:
                       default: user
-                      description: Type of the name, for example "user".
+                      description: |-
+                        Type of the name, for example "user". Defaults to "user" when omitted; note that
+                        this default only takes effect when the field is left out of the submitted object
+                        entirely (for example a YAML manifest with no type: key) and not when a client
+                        marshals an explicit empty string, since only a genuinely absent field is filled in
+                        by CRD defaulting.
                       maxLength: 64
                       minLength: 1
                       type: string
                   required:
                   - name
-                  - type
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
@@ -190,9 +190,6 @@ spec:
                       rule: has(self.name) != has(self.id)
                 type: object
                 x-kubernetes-validations:
-                - message: nextAvailableFrom is immutable
-                  optionalOldSelf: true
-                  rule: self == oldSelf.orValue(self)
                 - message: exactly one of subnetRef, rangeRef or addressBlockRef must
                     be set
                   rule: '[has(self.subnetRef), has(self.rangeRef), has(self.addressBlockRef)].filter(x,
@@ -226,6 +223,15 @@ spec:
             x-kubernetes-validations:
             - message: exactly one of address or nextAvailableFrom must be set
               rule: has(self.address) != has(self.nextAvailableFrom)
+            - message: 'address is immutable: an address allocated from nextAvailableFrom
+                must keep spec.address empty, and a set address must not change'
+              rule: (!has(oldSelf.address) && !has(self.address)) || (has(oldSelf.address)
+                && has(self.address) && oldSelf.address == self.address)
+            - message: 'nextAvailableFrom is immutable: it may not be added, removed
+                or changed after creation'
+              rule: (!has(oldSelf.nextAvailableFrom) && !has(self.nextAvailableFrom))
+                || (has(oldSelf.nextAvailableFrom) && has(self.nextAvailableFrom)
+                && oldSelf.nextAvailableFrom == self.nextAvailableFrom)
           status:
             description: |-
               AddressStatus reports the observed state of the address. status.address is the

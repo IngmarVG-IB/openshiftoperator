@@ -104,8 +104,9 @@ func (addressAdapter) Find(ctx context.Context, uc *uddi.Client, spec *uddiv1alp
 		return nil, nil
 	}
 	res, err := uc.IPAM.ListAddresses(ctx, uddi.ListOptions{
-		Filter: `address=="` + spec.Address + `" and space=="` + deps[addressDepSpace] + `"`,
-		Limit:  1,
+		Filter: "address==" + quoteFilterValue(spec.Address) +
+			" and space==" + quoteFilterValue(deps[addressDepSpace]),
+		Limit: 1,
 	})
 	if err != nil || len(res) == 0 {
 		return nil, err
@@ -199,7 +200,7 @@ func (addressAdapter) Delete(ctx context.Context, uc *uddi.Client, id string) er
 // address and the value consumers read (DESIGN.md section 4.4).
 func (addressAdapter) Observe(obj client.Object, current *ipam.Address) {
 	a, ok := obj.(*uddiv1alpha1.Address)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	a.Status.Address = current.Address

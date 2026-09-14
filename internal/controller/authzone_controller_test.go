@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/tags"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
@@ -101,7 +102,7 @@ var _ = Describe("AuthZone controller through the generic object-layer loop", fu
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 
@@ -217,7 +218,7 @@ var _ = Describe("AuthZone controller through the generic object-layer loop", fu
 			cond := readyOf(z)
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(uddiv1alpha1.ReasonAlreadyExists))
-			Expect(collectEvents()).To(ContainElement(ContainSubstring("AlreadyExists")))
+			Expect(collectEvents()).To(ContainElement(ContainSubstring(uddisync.EventConflict)))
 		})
 
 		It("patches comment and nsgs when the spec changes", func() {
@@ -229,7 +230,7 @@ var _ = Describe("AuthZone controller through the generic object-layer loop", fu
 			id := z.Status.ID
 			drainEvents()
 
-			z.Spec.Comment = "updated comment"
+			z.Spec.Comment = testUpdatedComment
 			z.Spec.NSGs = []string{"dns/auth_nsg/22222222-0000-4000-8000-000000000002"}
 			Expect(k8sClient.Update(ctx, z)).To(Succeed())
 
@@ -239,7 +240,7 @@ var _ = Describe("AuthZone controller through the generic object-layer loop", fu
 			Expect(testFake.CallCount("UpdateAuthZone")).To(Equal(updatesBefore + 1))
 			Expect(z.Status.ID).To(Equal(id))
 			got := fakeZone(id)
-			Expect(*got.Comment).To(Equal("updated comment"))
+			Expect(*got.Comment).To(Equal(testUpdatedComment))
 			Expect(got.Nsgs).To(Equal(z.Spec.NSGs))
 			Expect(collectEvents()).To(ContainElement(ContainSubstring("Updated")))
 

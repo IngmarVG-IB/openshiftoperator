@@ -70,7 +70,8 @@ func (subnetAdapter) Find(ctx context.Context, uc *uddi.Client, spec *uddiv1alph
 	if spec.Address == "" {
 		return nil, nil
 	}
-	filter := fmt.Sprintf(`address=="%s" and cidr==%d and space=="%s"`, spec.Address, spec.CIDR, deps[depSpace])
+	filter := fmt.Sprintf("address==%s and cidr==%d and space==%s",
+		quoteFilterValue(spec.Address), spec.CIDR, quoteFilterValue(deps[depSpace]))
 	res, err := uc.IPAM.ListSubnets(ctx, uddi.ListOptions{Filter: filter, Limit: 1})
 	if err != nil || len(res) == 0 {
 		return nil, err
@@ -114,6 +115,10 @@ func (subnetAdapter) Create(ctx context.Context, uc *uddi.Client, spec *uddiv1al
 		in.DhcpHost = &spec.DHCPHost
 	}
 	in.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	if spec.DisableDHCP {
+		disable := true
+		in.DisableDhcp = &disable
+	}
 	in.Tags = uddi.ToAPITags(t)
 	return uc.IPAM.CreateSubnet(ctx, in)
 }
@@ -125,7 +130,7 @@ func (subnetAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*ipam
 
 // Diff compares the managed fields and builds a partial patch. Address, cidr and space
 // are immutable (CEL on address and parentRef, always on cidr) and are never patched.
-// dhcpHost, unlike address and cidr, is mutable.
+// dhcpHost, dhcpOptions and disableDhcp, unlike address and cidr, are mutable.
 func (subnetAdapter) Diff(spec *uddiv1alpha1.SubnetSpec, _ uddisync.Deps, t map[string]string, current *ipam.Subnet) (*ipam.Subnet, bool) {
 	patch := &ipam.Subnet{}
 	changed := false
@@ -149,6 +154,11 @@ func (subnetAdapter) Diff(spec *uddiv1alpha1.SubnetSpec, _ uddisync.Deps, t map[
 		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
 		changed = true
 	}
+	if boolPtr(current.DisableDhcp) != spec.DisableDHCP {
+		disable := spec.DisableDHCP
+		patch.DisableDhcp = &disable
+		changed = true
+	}
 	if merged, tagsChanged := tags.ForPatch(uddi.FromAPITags(current.Tags), t); tagsChanged {
 		patch.Tags = uddi.ToAPITags(merged)
 		changed = true
@@ -170,7 +180,7 @@ func (subnetAdapter) Delete(ctx context.Context, uc *uddi.Client, id string) err
 // next-available allocation becomes visible to the user.
 func (subnetAdapter) Observe(obj client.Object, current *ipam.Subnet) {
 	s, ok := obj.(*uddiv1alpha1.Subnet)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	s.Status.Address = strPtr(current.Address)

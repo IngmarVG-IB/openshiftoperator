@@ -724,6 +724,7 @@ Check the Ready condition reason:
 | `Adopted` | (Informational) An existing object was adopted. | Normal; Ready is True. |
 | `APIError` | A Universal DDI API call failed. | Check the condition message for details; usually a network or permission issue. Check the Connection Secret and API key. |
 | `Deleting` | Deletion is blocked, e.g., by dependent objects in Universal DDI. | The message says what blocks it. Delete the blocking object first (e.g., records in a zone before deleting the zone). |
+| `ConnectionMissing` | Not a condition but a Warning event: the CR was deleted while the Connection it names no longer existed, so Universal DDI could not be reached. The operator orphaned the object and removed the finalizer instead of blocking forever. | The Universal DDI object is still there with its ownership tags. Delete it by hand, or re-create the Connection and a CR with the same natural key to re-adopt it. Deleting a Connection before the objects that use it is what causes this. |
 
 ### Check Connection Logs
 

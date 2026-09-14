@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/tags"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
@@ -82,7 +83,7 @@ var _ = Describe("IPSpace controller through the generic object-layer loop", fun
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 
@@ -160,7 +161,7 @@ var _ = Describe("IPSpace controller through the generic object-layer loop", fun
 			cond := readyOf(s)
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(uddiv1alpha1.ReasonAlreadyExists))
-			Expect(collectEvents()).To(ContainElement(ContainSubstring("AlreadyExists")))
+			Expect(collectEvents()).To(ContainElement(ContainSubstring(uddisync.EventConflict)))
 		})
 
 		It("patches Universal DDI when the comment changes", func() {
@@ -169,7 +170,7 @@ var _ = Describe("IPSpace controller through the generic object-layer loop", fun
 			id := s.Status.ID
 			drainEvents()
 
-			s.Spec.Comment = "updated comment"
+			s.Spec.Comment = testUpdatedComment
 			Expect(k8sClient.Update(ctx, s)).To(Succeed())
 
 			updatesBefore := testFake.CallCount("UpdateIPSpace")
@@ -178,7 +179,7 @@ var _ = Describe("IPSpace controller through the generic object-layer loop", fun
 			Expect(testFake.CallCount("UpdateIPSpace")).To(Equal(updatesBefore + 1))
 			Expect(s.Status.ID).To(Equal(id))
 			got := fakeSpace(id)
-			Expect(*got.Comment).To(Equal("updated comment"))
+			Expect(*got.Comment).To(Equal(testUpdatedComment))
 			Expect(s.Status.ObservedGeneration).To(Equal(s.Generation))
 			Expect(collectEvents()).To(ContainElement(ContainSubstring("Updated")))
 
@@ -186,6 +187,38 @@ var _ = Describe("IPSpace controller through the generic object-layer loop", fun
 			updatesBefore = testFake.CallCount("UpdateIPSpace")
 			Expect(reconcileSpace(s)).To(Succeed())
 			Expect(testFake.CallCount("UpdateIPSpace")).To(Equal(updatesBefore))
+		})
+
+		It("round trips dhcpOptions into the fake and patches them when the spec changes", func() {
+			sp := makeIPSpace("with-options", func(s *uddiv1alpha1.IPSpace) {
+				s.Spec.DHCPOptions = []uddiv1alpha1.DHCPOption{
+					{Type: uddiv1alpha1.DHCPOptionTypeOption, OptionCode: "dhcp/option_code/router", OptionValue: "10.0.0.1"},
+					{Type: uddiv1alpha1.DHCPOptionTypeGroup, Group: "dhcp/option_group/base"},
+				}
+			})
+			Expect(reconcileSpace(sp)).To(Succeed())
+
+			got := fakeSpace(sp.Status.ID)
+			Expect(got.DhcpOptions).To(HaveLen(2))
+			Expect(*got.DhcpOptions[0].OptionCode).To(Equal("dhcp/option_code/router"))
+			Expect(*got.DhcpOptions[0].OptionValue).To(Equal("10.0.0.1"))
+			Expect(*got.DhcpOptions[1].Group).To(Equal("dhcp/option_group/base"))
+
+			// A second pass with no spec change must not patch.
+			updatesBefore := testFake.CallCount("UpdateIPSpace")
+			Expect(reconcileSpace(sp)).To(Succeed())
+			Expect(testFake.CallCount("UpdateIPSpace")).To(Equal(updatesBefore))
+
+			sp.Spec.DHCPOptions = []uddiv1alpha1.DHCPOption{
+				{Type: uddiv1alpha1.DHCPOptionTypeOption, OptionCode: "dhcp/option_code/router", OptionValue: "10.0.0.254"},
+			}
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+			Expect(reconcileSpace(sp)).To(Succeed())
+
+			Expect(testFake.CallCount("UpdateIPSpace")).To(Equal(updatesBefore + 1))
+			got = fakeSpace(sp.Status.ID)
+			Expect(got.DhcpOptions).To(HaveLen(1))
+			Expect(*got.DhcpOptions[0].OptionValue).To(Equal("10.0.0.254"))
 		})
 
 		It("deletes the Universal DDI IP space when the uid tag matches", func() {

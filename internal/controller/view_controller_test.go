@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/tags"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
@@ -82,7 +83,7 @@ var _ = Describe("View controller through the generic object-layer loop", func()
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 
@@ -169,7 +170,7 @@ var _ = Describe("View controller through the generic object-layer loop", func()
 			cond := readyOf(v)
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(uddiv1alpha1.ReasonAlreadyExists))
-			Expect(collectEvents()).To(ContainElement(ContainSubstring("AlreadyExists")))
+			Expect(collectEvents()).To(ContainElement(ContainSubstring(uddisync.EventConflict)))
 		})
 
 		It("patches Universal DDI when the spec changes", func() {
@@ -178,7 +179,7 @@ var _ = Describe("View controller through the generic object-layer loop", func()
 			id := v.Status.ID
 			drainEvents()
 
-			v.Spec.Comment = "updated comment"
+			v.Spec.Comment = testUpdatedComment
 			v.Spec.Disabled = true
 			Expect(k8sClient.Update(ctx, v)).To(Succeed())
 
@@ -188,7 +189,7 @@ var _ = Describe("View controller through the generic object-layer loop", func()
 			Expect(testFake.CallCount("UpdateView")).To(Equal(updatesBefore + 1))
 			Expect(v.Status.ID).To(Equal(id))
 			got := fakeView(id)
-			Expect(*got.Comment).To(Equal("updated comment"))
+			Expect(*got.Comment).To(Equal(testUpdatedComment))
 			Expect(*got.Disabled).To(BeTrue())
 			Expect(v.Status.ObservedGeneration).To(Equal(v.Generation))
 			Expect(collectEvents()).To(ContainElement(ContainSubstring("Updated")))
@@ -280,6 +281,28 @@ var _ = Describe("View controller through the generic object-layer loop", func()
 			Expect(collectEvents()).To(ContainElement(ContainSubstring("Orphaned")))
 		})
 
+		// A natural key is user-controlled text that ends up inside a _filter literal,
+		// so it has to be quoted rather than concatenated.
+		It("finds a view whose name contains a double quote", func() {
+			const awkward = `we"ird "view"`
+			existing, err := testFake.CreateView(ctx, dnsconfig.View{Name: awkward})
+			Expect(err).NotTo(HaveOccurred())
+
+			v := makeView("awkward-name", func(v *uddiv1alpha1.View) {
+				v.Spec.Name = awkward
+				v.Spec.Lifecycle.AdoptExisting = true
+			})
+
+			Expect(reconcileView(v)).To(Succeed())
+
+			// The lookup matched the existing object instead of erroring or creating a
+			// second one.
+			Expect(v.Status.ID).To(Equal(*existing.Id))
+			Expect(readyOf(v).Status).To(Equal(metav1.ConditionTrue))
+			Expect(fakeView(v.Status.ID).Name).To(Equal(awkward))
+			Expect(collectEvents()).To(ContainElement(ContainSubstring(uddisync.EventAdopted)))
+		})
+
 		It("waits for a referenced IPSpace to gain a status.id", func() {
 			space := &uddiv1alpha1.IPSpace{
 				ObjectMeta: metav1.ObjectMeta{Name: "corp", Namespace: ns},
@@ -319,7 +342,71 @@ var _ = Describe("View controller through the generic object-layer loop", func()
 			Expect(v.Status.ID).To(BeEmpty())
 			Expect(controllerutil.ContainsFinalizer(v, uddiv1alpha1.Finalizer)).To(BeFalse())
 		})
+	})
 
+	// DESIGN.md section 7: a CR whose Connection CR is gone can never reach Universal
+	// DDI again, so it is orphaned rather than wedged on Ready=False/Deleting forever.
+	// A Connection that merely stopped verifying is transient and keeps blocking.
+	Context("deleting without a usable Connection", func() {
+		It("orphans the Universal DDI object when the Connection CR no longer exists", func() {
+			conn := makeReadyConnection(ns)
+			v := makeView("connection-deleted", nil)
+			Expect(reconcileView(v)).To(Succeed())
+			id := v.Status.ID
+			drainEvents()
+
+			Expect(k8sClient.Delete(ctx, conn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, v)).To(Succeed())
+
+			deletesBefore := testFake.CallCount("DeleteView")
+			_, err := reconciler.Reconcile(ctx, requestFor(v))
+			Expect(err).NotTo(HaveOccurred())
+
+			// The CR is gone, the Universal DDI object is not, and it kept its tags so
+			// a later CR with the same natural key can re-adopt it.
+			Expect(testFake.CallCount("DeleteView")).To(Equal(deletesBefore))
+			Expect(fakeView(id).Name).To(Equal("connection-deleted"))
+			Expect(uddi.FromAPITags(fakeView(id).Tags)[tags.KeyUID]).To(Equal(string(v.UID)))
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(v), v))).To(BeTrue())
+			Expect(collectEvents()).To(ContainElement(And(
+				ContainSubstring(uddisync.EventConnectionMissing),
+				ContainSubstring("left in place with its ownership tags"),
+			)))
+		})
+
+		It("keeps blocking while the Connection exists but is not Ready", func() {
+			conn := makeReadyConnection(ns)
+			v := makeView("connection-unready", nil)
+			Expect(reconcileView(v)).To(Succeed())
+			id := v.Status.ID
+			drainEvents()
+
+			setConnectionReady(conn, metav1.ConditionFalse, uddiv1alpha1.ReasonAPIError, "the tenant is unreachable")
+			Expect(k8sClient.Delete(ctx, v)).To(Succeed())
+
+			deletesBefore := testFake.CallCount("DeleteView")
+			_, err := reconciler.Reconcile(ctx, requestFor(v))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(testFake.CallCount("DeleteView")).To(Equal(deletesBefore))
+			Expect(fakeView(id).Name).To(Equal("connection-unready"))
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(v), v)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(v, uddiv1alpha1.Finalizer)).To(BeTrue())
+			Expect(readyOf(v).Reason).To(Equal(uddiv1alpha1.ReasonDeleting))
+			Expect(collectEvents()).NotTo(ContainElement(ContainSubstring(uddisync.EventConnectionMissing)))
+
+			// Once the Connection verifies again the delete goes through normally.
+			setConnectionReady(conn, metav1.ConditionTrue, uddiv1alpha1.ReasonVerified, "verified")
+			_, err = reconciler.Reconcile(ctx, requestFor(v))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, gerr := testFake.GetView(ctx, id)
+			Expect(uddi.IsNotFound(gerr)).To(BeTrue())
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(v), v))).To(BeTrue())
+		})
+	})
+
+	Context("without a usable Connection", func() {
 		It("reports ConnectionNotReady when the Connection exists but is unverified", func() {
 			makeSecret(ns, "creds", uddiv1alpha1.DefaultSecretKey, "key")
 			conn := &uddiv1alpha1.Connection{

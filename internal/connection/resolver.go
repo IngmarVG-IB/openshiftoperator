@@ -232,19 +232,22 @@ func rateLimit(conn *uddiv1alpha1.Connection) (float64, int) {
 // specHash fingerprints the client-relevant parts of a Connection spec. The Secret
 // contents are deliberately not part of it: the Secret's resourceVersion covers those.
 func specHash(conn *uddiv1alpha1.Connection) string {
-	h := sha256.New()
-	fmt.Fprintf(h, "url=%s\n", conn.CSPURL())
-	fmt.Fprintf(h, "client=%s\n", conn.ClientName())
-	fmt.Fprintf(h, "secret=%s/%s\n", conn.Spec.SecretRef.Name, conn.SecretKey())
 	rps, burst := rateLimit(conn)
-	fmt.Fprintf(h, "rate=%g/%d\n", rps, burst)
+	lines := make([]string, 0, 4+len(conn.Spec.DefaultTags))
+	lines = append(lines,
+		fmt.Sprintf("url=%s", conn.CSPURL()),
+		fmt.Sprintf("client=%s", conn.ClientName()),
+		fmt.Sprintf("secret=%s/%s", conn.Spec.SecretRef.Name, conn.SecretKey()),
+		fmt.Sprintf("rate=%g/%d", rps, burst),
+	)
 	keys := make([]string, 0, len(conn.Spec.DefaultTags))
 	for k := range conn.Spec.DefaultTags {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		fmt.Fprintf(h, "tag=%s=%s\n", k, conn.Spec.DefaultTags[k])
+		lines = append(lines, fmt.Sprintf("tag=%s=%s", k, conn.Spec.DefaultTags[k]))
 	}
-	return hex.EncodeToString(h.Sum(nil))[:16]
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n") + "\n"))
+	return hex.EncodeToString(sum[:])[:16]
 }

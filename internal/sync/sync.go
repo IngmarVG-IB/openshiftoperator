@@ -43,17 +43,32 @@ import (
 // only a safety net.
 const RequeueNotReady = 30 * time.Second
 
-// Event reasons emitted by the loop.
+// Event reasons emitted by the loop. They are the same for every object-layer kind.
 const (
-	EventCreated       = "Created"
-	EventAdopted       = "Adopted"
-	EventUpdated       = "Updated"
-	EventDeleted       = "Deleted"
-	EventOrphaned      = "Orphaned"
-	EventConflict      = "AlreadyExists"
-	EventRecreated     = "Recreated"
+	// EventCreated: a Universal DDI object was created for this CR.
+	EventCreated = "Created"
+	// EventAdopted: an existing Universal DDI object was taken over, either because it
+	// carries this CR's uid tag or because lifecycle.adoptExisting is set.
+	EventAdopted = "Adopted"
+	// EventUpdated: managed fields were patched in Universal DDI.
+	EventUpdated = "Updated"
+	// EventDeleted: the Universal DDI object was deleted during finalization.
+	EventDeleted = "Deleted"
+	// EventOrphaned: the Universal DDI object was deliberately left in place, because
+	// deletionPolicy is Orphan or because the ownership uid tag did not match.
+	EventOrphaned = "Orphaned"
+	// EventConflict: a matching Universal DDI object exists that this CR may not take
+	// over. The Ready condition carries reason AlreadyExists with the same message.
+	EventConflict = "Conflict"
+	// EventRecreated: the Universal DDI object disappeared out of band.
+	EventRecreated = "Recreated"
+	// EventConnectionMissing: the CR is being deleted but its Connection CR is gone, so
+	// the Universal DDI object was orphaned rather than deleted.
+	EventConnectionMissing = "ConnectionMissing"
+	// EventDeleteBlocked: cleanup failed and will be retried with backoff.
 	EventDeleteBlocked = "DeleteBlocked"
-	EventAPIError      = "APIError"
+	// EventAPIError: a Universal DDI API call failed.
+	EventAPIError = "APIError"
 )
 
 // Runtime holds everything the loop needs that is not per-kind.
@@ -127,6 +142,14 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 	if err != nil {
 		if isTerminalConnectionError(err) {
 			if deleting {
+				// The Connection CR itself is gone, so nothing will ever make this CR
+				// deletable again: orphan the Universal DDI object instead of wedging
+				// on Ready=False/Deleting forever. A Connection that exists but is not
+				// Ready (or whose Secret is temporarily missing) is transient, so it
+				// keeps blocking through the branch below.
+				if errors.Is(err, connection.ErrConnectionNotFound) {
+					return orphanMissingConnection(ctx, rt, obj, ad.Kind(), status.ID)
+				}
 				setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,
 					uddiv1alpha1.ReasonDeleting, "cannot reach Universal DDI to clean up: "+err.Error(), obj.GetGeneration())
 				return ctrl.Result{RequeueAfter: RequeueNotReady}, true, nil
@@ -333,6 +356,26 @@ func finalize[S any, U any](
 	}
 
 	rt.event(obj, corev1.EventTypeNormal, EventDeleted, "deleted Universal DDI %s %s", ad.Kind(), id)
+	return ctrl.Result{}, false, removeFinalizer(ctx, rt, obj)
+}
+
+// orphanMissingConnection drops the finalizer of a CR that is being deleted while the
+// Connection it names no longer exists. The Universal DDI object cannot be reached, so
+// it is left in place with its ownership tags and the user is told about it through a
+// Warning event; a later CR with the same natural key re-adopts it.
+func orphanMissingConnection(ctx context.Context, rt *Runtime, obj client.Object, kind, id string) (ctrl.Result, bool, error) {
+	if !controllerutil.ContainsFinalizer(obj, uddiv1alpha1.Finalizer) {
+		return ctrl.Result{}, false, nil
+	}
+	if id == "" {
+		id = "(no id recorded)"
+	}
+	rt.event(obj, corev1.EventTypeWarning, EventConnectionMissing,
+		"the Connection this object uses no longer exists, so Universal DDI cannot be reached; "+
+			"%s %s was left in place with its ownership tags and has to be removed by hand or re-adopted by a new CR",
+		kind, id)
+	logf.FromContext(ctx).Info("Connection is gone while deleting, orphaning the Universal DDI object",
+		"kind", kind, "id", id)
 	return ctrl.Result{}, false, removeFinalizer(ctx, rt, obj)
 }
 

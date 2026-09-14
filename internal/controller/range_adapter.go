@@ -53,8 +53,10 @@ func (rangeAdapter) Resolve(ctx context.Context, c client.Client, obj client.Obj
 // Find looks a range up by its natural key: start plus end plus space.
 func (rangeAdapter) Find(ctx context.Context, uc *uddi.Client, spec *uddiv1alpha1.RangeSpec, deps uddisync.Deps) (*ipam.Range, error) {
 	res, err := uc.IPAM.ListRanges(ctx, uddi.ListOptions{
-		Filter: `start=="` + spec.Start + `" and end=="` + spec.End + `" and space=="` + deps[rangeDepSpace] + `"`,
-		Limit:  1,
+		Filter: "start==" + quoteFilterValue(spec.Start) +
+			" and end==" + quoteFilterValue(spec.End) +
+			" and space==" + quoteFilterValue(deps[rangeDepSpace]),
+		Limit: 1,
 	})
 	if err != nil || len(res) == 0 {
 		return nil, err
@@ -90,6 +92,10 @@ func (rangeAdapter) Create(ctx context.Context, uc *uddi.Client, spec *uddiv1alp
 		DhcpOptions:     toOptionItems(spec.DHCPOptions),
 		ExclusionRanges: toExclusionRanges(spec.ExclusionRanges),
 		Tags:            uddi.ToAPITags(t),
+	}
+	if spec.DisableDHCP {
+		disable := true
+		in.DisableDhcp = &disable
 	}
 	return uc.IPAM.CreateRange(ctx, in)
 }
@@ -128,6 +134,11 @@ func (rangeAdapter) Diff(spec *uddiv1alpha1.RangeSpec, deps uddisync.Deps, t map
 		patch.ExclusionRanges = toExclusionRanges(spec.ExclusionRanges)
 		changed = true
 	}
+	if boolPtr(current.DisableDhcp) != spec.DisableDHCP {
+		disable := spec.DisableDHCP
+		patch.DisableDhcp = &disable
+		changed = true
+	}
 	if merged, tagsChanged := tags.ForPatch(uddi.FromAPITags(current.Tags), t); tagsChanged {
 		patch.Tags = uddi.ToAPITags(merged)
 		changed = true
@@ -148,14 +159,14 @@ func (rangeAdapter) Delete(ctx context.Context, uc *uddi.Client, id string) erro
 // Observe copies observed fields into the CR status.
 func (rangeAdapter) Observe(obj client.Object, current *ipam.Range) {
 	r, ok := obj.(*uddiv1alpha1.Range)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	r.Status.Start = current.Start
 	r.Status.End = current.End
 	r.Status.Space = strPtr(current.Space)
 	r.Status.Parent = strPtr(current.Parent)
-	r.Status.Utilization = toUtilization(current.Utilization)
+	r.Status.Utilization = utilizationFrom(current.Utilization)
 }
 
 // IDOf returns the Universal DDI resource id.
@@ -174,24 +185,6 @@ func optStr(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// toUtilization converts the SDK's read-only utilisation block into the CRD's mirror
-// type, field for field. It returns nil when Universal DDI reports none.
-func toUtilization(in *ipam.Utilization) *uddiv1alpha1.Utilization {
-	if in == nil {
-		return nil
-	}
-	return &uddiv1alpha1.Utilization{
-		AbandonUtilization: i64Ptr(in.AbandonUtilization),
-		Abandoned:          strPtr(in.Abandoned),
-		Dynamic:            strPtr(in.Dynamic),
-		Free:               strPtr(in.Free),
-		Static:             strPtr(in.Static),
-		Total:              strPtr(in.Total),
-		Used:               strPtr(in.Used),
-		Utilization:        i64Ptr(in.Utilization),
-	}
 }
 
 // toExclusionRanges converts CR exclusion ranges into the SDK's ipam.ExclusionRange

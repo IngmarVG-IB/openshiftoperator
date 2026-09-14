@@ -431,7 +431,14 @@ Steps per reconcile:
    are also triggered when a dependency's `status.id` appears (field indexer on ref names).
 5. If `status.id` is empty: `Find` by natural key. Found with our `uid` tag: adopt. Found
    without our tags: adopt only if `lifecycle.adoptExisting`, else `AlreadyExists`. Not
-   found: `Create`.
+   found: `Create`. `Find` has one more hook: an adapter that matched an object which may
+   never be taken over, whatever `adoptExisting` says, returns an error wrapping
+   `sync.ErrConflict` with a message naming why. The loop reports that message verbatim
+   on `Ready=False/AlreadyExists` and emits a `Conflict` event, and never calls `Create`,
+   `Update` or `Delete` for that object. Record uses it for a match whose `source` is not
+   `STATIC`, so a `SYSTEM`, `DYNAMIC`, `DELEGATED` or `DTC` record is reported rather than
+   touched. Natural-key `_filter` expressions quote every spec value they interpolate, so
+   a name containing a double quote cannot change the meaning of the query.
 6. If `status.id` is set: `Get`; 404 means the object was removed out of band, so recreate
    (record an event). Otherwise `Diff` and `Update` if needed. Updates use PATCH semantics
    and only send fields the CR manages; anything else set in Universal DDI is left alone.
@@ -440,7 +447,10 @@ Steps per reconcile:
 
 Spec fields that Universal DDI does not allow to change (addresses, fqdn, record type,
 match type) are immutable via CEL `self == oldSelf` rules on the CRD, so the failure is at
-admission time rather than a permanently unready object.
+admission time rather than a permanently unready object. Optional fields cannot use that
+form, because a rule on a field is skipped when the field is absent and `optionalOldSelf`
+needs Kubernetes 1.30; those rules live on the Spec struct instead, which also lets them
+reject adding or removing the field. See section 14.
 
 ## 6. Ownership tags and cluster identity
 
@@ -470,6 +480,14 @@ The `uid` tag is the guard: delete and destructive update paths compare it befor
 - Dependents block deletion of their dependencies in Universal DDI (a zone with records, a
   subnet with addresses); the API error is surfaced as `Ready=False/Deleting` with the
   message, and the controller keeps retrying with backoff.
+- A Connection that exists but is not Ready also blocks deletion that way, because it is
+  transient: the tenant comes back, the Connection verifies again and the delete goes
+  through. A Connection CR that no longer exists is not transient, so the loop stops
+  waiting: it emits a Warning event `ConnectionMissing` saying the Universal DDI object
+  was left in place with its ownership tags, and removes the finalizer so the CR can go
+  away. The object is then orphaned exactly as under `deletionPolicy: Orphan` and a later
+  CR with the same natural key re-adopts it. Delete Connections after the objects that
+  use them to avoid this.
 
 ## 8. Universal DDI client layer
 
@@ -587,6 +605,22 @@ Integration tests never touch objects that lack the run's tags.
    undocumented for IPAM and DNS. The design does not depend on it.
 8. **Option code id prefix** (`dhcp/option_code/<uuid>`) is inferred from convention, not
    documented; the CRD treats it as an opaque id.
+
+Known limitations of the object layer as shipped:
+
+- **Tag keys removed from `spec.tags` are not removed in Universal DDI.** The merge is
+  additive, so a key that disappears from `spec.tags` stays on the object and has to be
+  removed by hand.
+- **Deleting a CR whose Connection CR is already gone orphans the Universal DDI object**,
+  with a `ConnectionMissing` Warning event, as described in section 7.
+- **Unified nameservers are not modelled**; AuthZone carries the legacy fields only, until
+  a tagged SDK ships `nameservers` (open question 3).
+- **Kubernetes 1.29 CEL constraints.** The OpenShift 4.16 floor rules out `optionalOldSelf`
+  and `oldSelf.orValue()`, so every "this optional field is immutable" rule is written at
+  the spec level (`!has(oldSelf.f) && !has(self.f) || has(oldSelf.f) && has(self.f) &&
+  oldSelf.f == self.f`) rather than on the field. That is stricter in a useful way, since
+  it also rejects adding or removing the field, and it is what `make test-floor` proves on
+  envtest 1.29.5. New validation has to stay inside the 1.29 CEL feature set.
 
 Resolved: quay.io organisation is `quay.io/ingmarvg-ib`. MetalLB uses
 `metallb.io/loadBalancerIPs` (plus `metallb.io/address-pool`). Next-available creates use

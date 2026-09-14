@@ -97,7 +97,7 @@ var _ = Describe("AddressBlock controller through the generic object-layer loop"
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 
@@ -105,7 +105,7 @@ var _ = Describe("AddressBlock controller through the generic object-layer loop"
 			space := makeReadySpace("corp")
 			b := makeBlock("block-10", func(b *uddiv1alpha1.AddressBlock) {
 				b.Spec.SpaceRef = uddiv1alpha1.ObjectRef{Name: space.Name}
-				b.Spec.Address = "10.0.0.0"
+				b.Spec.Address = testRootAddress
 				b.Spec.CIDR = 16
 				b.Spec.Name = "corp-root"
 				b.Spec.Comment = "root block"
@@ -114,7 +114,7 @@ var _ = Describe("AddressBlock controller through the generic object-layer loop"
 			Expect(reconcileBlock(b)).To(Succeed())
 
 			Expect(b.Status.ID).To(HavePrefix(uddi.PrefixAddressBlock + "/"))
-			Expect(b.Status.Address).To(Equal("10.0.0.0"))
+			Expect(b.Status.Address).To(Equal(testRootAddress))
 			Expect(b.Status.CIDR).To(Equal(int32(16)))
 			Expect(b.Status.Space).To(Equal(space.Status.ID))
 			Expect(readyOf(b).Status).To(Equal(metav1.ConditionTrue))
@@ -136,7 +136,7 @@ var _ = Describe("AddressBlock controller through the generic object-layer loop"
 			space := makeReadySpace("corp")
 			parent := makeBlock("parent", func(b *uddiv1alpha1.AddressBlock) {
 				b.Spec.SpaceRef = uddiv1alpha1.ObjectRef{Name: space.Name}
-				b.Spec.Address = "10.0.0.0"
+				b.Spec.Address = testRootAddress
 				b.Spec.CIDR = 16
 			})
 			Expect(reconcileBlock(parent)).To(Succeed())
@@ -174,7 +174,7 @@ var _ = Describe("AddressBlock controller through the generic object-layer loop"
 
 			b := makeBlock("needs-space", func(b *uddiv1alpha1.AddressBlock) {
 				b.Spec.SpaceRef = uddiv1alpha1.ObjectRef{Name: "corp"}
-				b.Spec.Address = "10.0.0.0"
+				b.Spec.Address = testRootAddress
 				b.Spec.CIDR = 16
 			})
 
@@ -241,6 +241,54 @@ var _ = Describe("AddressBlock controller through the generic object-layer loop"
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsInvalid(err)).To(BeTrue())
 			Expect(err.Error()).To(ContainSubstring("address is immutable"))
+		})
+
+		// The immutability rules are spec-level so they survive the Kubernetes 1.29
+		// floor, where oldSelf.orValue() does not exist. Both lanes have to hold: an
+		// address that started empty for next-available allocation must stay empty, and
+		// a parentRef that was set must stay exactly as it was.
+		It("rejects adding or removing address and parentRef on a next-available block", func() {
+			space := makeReadySpace("corp")
+			parent := makeBlock("cel-parent", func(b *uddiv1alpha1.AddressBlock) {
+				b.Spec.SpaceRef = uddiv1alpha1.ObjectRef{Name: space.Name}
+				b.Spec.Address = "10.20.0.0"
+				b.Spec.CIDR = 16
+			})
+			Expect(reconcileBlock(parent)).To(Succeed())
+
+			child := makeBlock("cel-child", func(b *uddiv1alpha1.AddressBlock) {
+				b.Spec.SpaceRef = uddiv1alpha1.ObjectRef{Name: space.Name}
+				b.Spec.CIDR = 24
+				b.Spec.ParentRef = &uddiv1alpha1.ObjectRef{Name: parent.Name}
+			})
+			Expect(reconcileBlock(child)).To(Succeed())
+			Expect(child.Status.Address).NotTo(BeEmpty())
+
+			// Lane 1: a block allocated from a parent must keep spec.address empty.
+			child.Spec.Address = child.Status.Address
+			err := k8sClient.Update(ctx, child)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("address is immutable"))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(child), child)).To(Succeed())
+			child.Spec.ParentRef = nil
+			err = k8sClient.Update(ctx, child)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("parentRef is immutable"))
+
+			// Lane 2: a block created with an explicit address must not drop it, and
+			// must not gain a parentRef either.
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(parent), parent)).To(Succeed())
+			parent.Spec.Address = ""
+			err = k8sClient.Update(ctx, parent)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("address is immutable"))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(parent), parent)).To(Succeed())
+			parent.Spec.ParentRef = &uddiv1alpha1.ObjectRef{Name: "cel-child"}
+			err = k8sClient.Update(ctx, parent)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("parentRef is immutable"))
 		})
 
 		It("deletes the Universal DDI address block when the uid tag matches", func() {

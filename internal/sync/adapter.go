@@ -110,7 +110,8 @@ type Adapter[S any, U any] interface {
 
 	// Observe copies observed fields from the Universal DDI object into the CR's
 	// kind-specific status. The loop writes id, observedGeneration, lastSyncTime and
-	// the conditions itself.
+	// the conditions itself. Implementations must do nothing rather than panic when
+	// current is nil or obj is not the kind they expect.
 	Observe(obj client.Object, current *U)
 
 	// IDOf returns the Universal DDI resource id of an object.

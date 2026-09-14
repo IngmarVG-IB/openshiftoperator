@@ -196,7 +196,9 @@ func (recordAdapter) Find(ctx context.Context, uc *uddi.Client, spec *uddiv1alph
 	}
 	name := nameInZone(spec.Name)
 	res, err := uc.DNSData.ListRecords(ctx, uddi.ListOptions{
-		Filter: `zone=="` + zone + `" and name_in_zone=="` + name + `" and type=="` + string(spec.Type) + `"`,
+		Filter: "zone==" + quoteFilterValue(zone) +
+			" and name_in_zone==" + quoteFilterValue(name) +
+			" and type==" + quoteFilterValue(string(spec.Type)),
 	})
 	if err != nil {
 		return nil, err
@@ -327,7 +329,7 @@ func (recordAdapter) Delete(ctx context.Context, uc *uddi.Client, id string) err
 // Observe copies observed fields into the CR status.
 func (recordAdapter) Observe(obj client.Object, current *dnsdata.Record) {
 	r, ok := obj.(*uddiv1alpha1.Record)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	r.Status.AbsoluteName = strPtr(current.AbsoluteNameSpec)

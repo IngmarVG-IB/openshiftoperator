@@ -260,37 +260,61 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The remaining eight kinds are registered but reconcile to a no-op until their
-	// wave 2 adapters land. See the WAVE 2 PLACEHOLDER comment on each reconciler.
-	if err := (&controller.AuthZoneReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	// The remaining eight object-layer kinds. Every one of them runs the same generic
+	// loop from internal/sync, parameterised by its adapter in internal/controller.
+	if err := (&controller.AuthZoneReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AuthZone")
 		os.Exit(1)
 	}
-	if err := (&controller.RecordReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.RecordReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Record")
 		os.Exit(1)
 	}
-	if err := (&controller.IPSpaceReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.IPSpaceReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IPSpace")
 		os.Exit(1)
 	}
-	if err := (&controller.AddressBlockReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.AddressBlockReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AddressBlock")
 		os.Exit(1)
 	}
-	if err := (&controller.SubnetReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.SubnetReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Subnet")
 		os.Exit(1)
 	}
-	if err := (&controller.RangeReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.RangeReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Range")
 		os.Exit(1)
 	}
-	if err := (&controller.AddressReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.AddressReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Address")
 		os.Exit(1)
 	}
-	if err := (&controller.FixedAddressReconciler{Client: mgr.GetClient(), Runtime: runtimeCtx}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.FixedAddressReconciler{
+		Client:  mgr.GetClient(),
+		Runtime: runtimeCtx,
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FixedAddress")
 		os.Exit(1)
 	}
@@ -339,9 +363,10 @@ func watchNamespaces() []string {
 	if raw == "" {
 		return nil
 	}
-	seen := map[string]bool{}
-	var out []string
-	for _, part := range strings.Split(raw, ",") {
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]bool, len(parts))
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
 		ns := strings.TrimSpace(part)
 		if ns == "" || seen[ns] {
 			continue

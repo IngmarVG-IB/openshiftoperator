@@ -51,8 +51,9 @@ func (fixedaddressAdapter) Resolve(ctx context.Context, c client.Client, obj cli
 // Find looks a fixed address up by its natural key: address plus ip space.
 func (fixedaddressAdapter) Find(ctx context.Context, uc *uddi.Client, spec *uddiv1alpha1.FixedAddressSpec, deps uddisync.Deps) (*ipam.FixedAddress, error) {
 	res, err := uc.DHCP.ListFixedAddresses(ctx, uddi.ListOptions{
-		Filter: `address=="` + spec.Address + `" and ip_space=="` + deps[fixedAddressDepSpace] + `"`,
-		Limit:  1,
+		Filter: "address==" + quoteFilterValue(spec.Address) +
+			" and ip_space==" + quoteFilterValue(deps[fixedAddressDepSpace]),
+		Limit: 1,
 	})
 	if err != nil || len(res) == 0 {
 		return nil, err
@@ -159,7 +160,7 @@ func (fixedaddressAdapter) Delete(ctx context.Context, uc *uddi.Client, id strin
 // Observe copies observed fields into the CR status.
 func (fixedaddressAdapter) Observe(obj client.Object, current *ipam.FixedAddress) {
 	f, ok := obj.(*uddiv1alpha1.FixedAddress)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	f.Status.Address = current.Address

@@ -59,9 +59,17 @@ type NextAvailableFrom struct {
 	AddressBlockRef *ObjectRef `json:"addressBlockRef,omitempty"`
 }
 
+// The two immutability rules on AddressSpec live on the spec rather than on the fields
+// themselves so they also catch adding or removing a field, which a rule on the field
+// cannot see without optionalOldSelf (Kubernetes 1.30 and newer; the OpenShift 4.16
+// floor is Kubernetes 1.29). An address that starts empty for next-available allocation
+// must stay empty, and a set address must stay equal.
+
 // AddressSpec describes a Universal DDI address reservation.
 // Natural key for adoption: address plus space.
 // +kubebuilder:validation:XValidation:rule="has(self.address) != has(self.nextAvailableFrom)",message="exactly one of address or nextAvailableFrom must be set"
+// +kubebuilder:validation:XValidation:rule="(!has(oldSelf.address) && !has(self.address)) || (has(oldSelf.address) && has(self.address) && oldSelf.address == self.address)",message="address is immutable: an address allocated from nextAvailableFrom must keep spec.address empty, and a set address must not change"
+// +kubebuilder:validation:XValidation:rule="(!has(oldSelf.nextAvailableFrom) && !has(self.nextAvailableFrom)) || (has(oldSelf.nextAvailableFrom) && has(self.nextAvailableFrom) && oldSelf.nextAvailableFrom == self.nextAvailableFrom)",message="nextAvailableFrom is immutable: it may not be added, removed or changed after creation"
 type AddressSpec struct {
 	CommonSpec `json:",inline"`
 
@@ -71,12 +79,10 @@ type AddressSpec struct {
 	// Address to reserve, for example "10.0.10.7". Omit to allocate the next available
 	// address from nextAvailableFrom. Immutable.
 	// +kubebuilder:validation:MaxLength=45
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf.orValue(self)",message="address is immutable",optionalOldSelf=true
 	// +optional
 	Address string `json:"address,omitempty"`
 
 	// NextAvailableFrom selects the parent to allocate from. Immutable.
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf.orValue(self)",message="nextAvailableFrom is immutable",optionalOldSelf=true
 	// +optional
 	NextAvailableFrom *NextAvailableFrom `json:"nextAvailableFrom,omitempty"`
 

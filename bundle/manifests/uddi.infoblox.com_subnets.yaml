@@ -62,10 +62,6 @@ spec:
                   subnet from parentRef. Immutable.
                 maxLength: 45
                 type: string
-                x-kubernetes-validations:
-                - message: address is immutable
-                  optionalOldSelf: true
-                  rule: self == oldSelf.orValue(self)
               cidr:
                 description: CIDR prefix length. Immutable.
                 format: int32
@@ -176,9 +172,6 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-validations:
-                - message: parentRef is immutable
-                  optionalOldSelf: true
-                  rule: self == oldSelf.orValue(self)
                 - message: exactly one of name or id must be set
                   rule: has(self.name) != has(self.id)
               spaceRef:
@@ -211,6 +204,14 @@ spec:
             x-kubernetes-validations:
             - message: parentRef is required when address is omitted
               rule: has(self.address) || has(self.parentRef)
+            - message: 'address is immutable: a subnet allocated from parentRef must
+                keep spec.address empty, and a set address must not change'
+              rule: (!has(oldSelf.address) && !has(self.address)) || (has(oldSelf.address)
+                && has(self.address) && oldSelf.address == self.address)
+            - message: 'parentRef is immutable: it may not be added, removed or changed
+                after creation'
+              rule: (!has(oldSelf.parentRef) && !has(self.parentRef)) || (has(oldSelf.parentRef)
+                && has(self.parentRef) && oldSelf.parentRef == self.parentRef)
           status:
             description: SubnetStatus reports the observed state of the subnet.
             properties:
@@ -283,6 +284,28 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dhcpUtilization:
+                description: DHCPUtilization reported by Universal DDI for the DHCP
+                  ranges within this subnet.
+                properties:
+                  dhcpFree:
+                    description: DHCPFree is the free address count within the DHCP
+                      ranges.
+                    type: string
+                  dhcpTotal:
+                    description: DHCPTotal is the total address count within the DHCP
+                      ranges.
+                    type: string
+                  dhcpUsed:
+                    description: DHCPUsed is the used address count within the DHCP
+                      ranges.
+                    type: string
+                  dhcpUtilization:
+                    description: DHCPUtilization is the utilization percentage within
+                      the DHCP ranges.
+                    format: int64
+                    type: integer
+                type: object
               id:
                 description: ID is the Universal DDI resource id, for example "ipam/subnet/<uuid>".
                 type: string

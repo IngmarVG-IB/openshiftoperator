@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/tags"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
@@ -182,7 +183,7 @@ var _ = Describe("Record controller through the generic object-layer loop", func
 		var zone *uddiv1alpha1.AuthZone
 
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			zone = makeReadyZone("apps-zone")
 			drainEvents()
 		})
@@ -345,7 +346,7 @@ var _ = Describe("Record controller through the generic object-layer loop", func
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(uddiv1alpha1.ReasonAlreadyExists))
 			Expect(cond.Message).To(ContainSubstring("SYSTEM"))
-			Expect(collectEvents()).To(ContainElement(ContainSubstring("AlreadyExists")))
+			Expect(collectEvents()).To(ContainElement(ContainSubstring(uddisync.EventConflict)))
 
 			Expect(testFake.CallCount("UpdateRecord")).To(Equal(0))
 			Expect(testFake.CallCount("DeleteRecord")).To(Equal(0))
@@ -442,7 +443,7 @@ var _ = Describe("Record controller through the generic object-layer loop", func
 
 	Context("dependency handling", func() {
 		It("reports DependencyNotReady when the zone has no status.id yet", func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			z := &uddiv1alpha1.AuthZone{
 				ObjectMeta: metav1.ObjectMeta{Name: "pending-zone", Namespace: ns},
 				Spec: uddiv1alpha1.AuthZoneSpec{

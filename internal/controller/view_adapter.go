@@ -40,7 +40,7 @@ const (
 )
 
 // viewAdapter maps the View CR onto dnsconfig.View. It is the reference implementation
-// of sync.Adapter; the wave 2 kinds follow the same shape.
+// of sync.Adapter; every other kind follows the same shape.
 type viewAdapter struct{}
 
 var _ uddisync.Adapter[uddiv1alpha1.ViewSpec, dnsconfig.View] = viewAdapter{}
@@ -89,7 +89,7 @@ func (viewAdapter) Find(ctx context.Context, uc *uddi.Client, _ *uddiv1alpha1.Vi
 		return nil, nil
 	}
 	res, err := uc.DNSConfig.ListViews(ctx, uddi.ListOptions{
-		Filter: `name=="` + name + `"`,
+		Filter: "name==" + quoteFilterValue(name),
 		Limit:  1,
 	})
 	if err != nil || len(res) == 0 {
@@ -178,7 +178,7 @@ func (viewAdapter) Delete(ctx context.Context, uc *uddi.Client, id string) error
 // Observe copies observed fields into the CR status.
 func (viewAdapter) Observe(obj client.Object, current *dnsconfig.View) {
 	v, ok := obj.(*uddiv1alpha1.View)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	v.Status.Name = current.Name

@@ -80,7 +80,8 @@ func (addressblockAdapter) Find(ctx context.Context, uc *uddi.Client, spec *uddi
 	if spec.Address == "" {
 		return nil, nil
 	}
-	filter := fmt.Sprintf(`address=="%s" and cidr==%d and space=="%s"`, spec.Address, spec.CIDR, deps[depSpace])
+	filter := fmt.Sprintf("address==%s and cidr==%d and space==%s",
+		quoteFilterValue(spec.Address), spec.CIDR, quoteFilterValue(deps[depSpace]))
 	res, err := uc.IPAM.ListAddressBlocks(ctx, uddi.ListOptions{Filter: filter, Limit: 1})
 	if err != nil || len(res) == 0 {
 		return nil, err
@@ -171,7 +172,7 @@ func (addressblockAdapter) Delete(ctx context.Context, uc *uddi.Client, id strin
 // next-available allocation becomes visible to the user.
 func (addressblockAdapter) Observe(obj client.Object, current *ipam.AddressBlock) {
 	b, ok := obj.(*uddiv1alpha1.AddressBlock)
-	if !ok {
+	if !ok || current == nil {
 		return
 	}
 	b.Status.Address = strPtr(current.Address)

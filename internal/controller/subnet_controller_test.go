@@ -118,7 +118,7 @@ var _ = Describe("Subnet controller through the generic object-layer loop", func
 
 	Context("with a Ready Connection", func() {
 		BeforeEach(func() {
-			makeReadyConnection(ns, uddiv1alpha1.DefaultConnectionName)
+			makeReadyConnection(ns)
 			drainEvents()
 		})
 
@@ -153,7 +153,7 @@ var _ = Describe("Subnet controller through the generic object-layer loop", func
 
 		It("allocates the next available subnet from an address block, and a second CR gets a different subnet", func() {
 			space := makeReadySpace("corp")
-			block := makeReadyBlock("block-10", "10.0.0.0", 16, space)
+			block := makeReadyBlock("block-10", testRootAddress, 16, space)
 
 			s := makeSubnet("next-lb", func(s *uddiv1alpha1.Subnet) {
 				s.Spec.SpaceRef = uddiv1alpha1.ObjectRef{Name: space.Name}
@@ -232,7 +232,7 @@ var _ = Describe("Subnet controller through the generic object-layer loop", func
 
 		It("recovers a next-available subnet whose status write was lost, without allocating twice", func() {
 			space := makeReadySpace("corp")
-			block := makeReadyBlock("block-10", "10.0.0.0", 16, space)
+			block := makeReadyBlock("block-10", testRootAddress, 16, space)
 
 			s := makeSubnet("recovered", func(s *uddiv1alpha1.Subnet) {
 				s.Spec.SpaceRef = uddiv1alpha1.ObjectRef{Name: space.Name}
@@ -263,6 +263,30 @@ var _ = Describe("Subnet controller through the generic object-layer loop", func
 			Expect(s.Status.Address).To(Equal(*pre.Address))
 			Expect(readyOf(s).Status).To(Equal(metav1.ConditionTrue))
 			Expect(collectEvents()).To(ContainElement(ContainSubstring("Adopted")))
+		})
+
+		It("round trips disableDhcp into the fake and patches it when the spec changes", func() {
+			sub := makeSubnet("dhcp-off", func(s *uddiv1alpha1.Subnet) {
+				s.Spec.SpaceRef = uddiv1alpha1.ObjectRef{ID: testIPSpaceID}
+				s.Spec.Address = "10.30.7.0"
+				s.Spec.DisableDHCP = true
+			})
+			Expect(reconcileSubnet(sub)).To(Succeed())
+
+			Expect(fakeSubnet(sub.Status.ID).DisableDhcp).NotTo(BeNil())
+			Expect(*fakeSubnet(sub.Status.ID).DisableDhcp).To(BeTrue())
+
+			// A second pass with no spec change must not patch.
+			updatesBefore := testFake.CallCount("UpdateSubnet")
+			Expect(reconcileSubnet(sub)).To(Succeed())
+			Expect(testFake.CallCount("UpdateSubnet")).To(Equal(updatesBefore))
+
+			sub.Spec.DisableDHCP = false
+			Expect(k8sClient.Update(ctx, sub)).To(Succeed())
+			Expect(reconcileSubnet(sub)).To(Succeed())
+
+			Expect(testFake.CallCount("UpdateSubnet")).To(Equal(updatesBefore + 1))
+			Expect(*fakeSubnet(sub.Status.ID).DisableDhcp).To(BeFalse())
 		})
 
 		It("deletes the Universal DDI subnet when the uid tag matches", func() {
