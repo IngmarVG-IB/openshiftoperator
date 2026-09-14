@@ -1,5 +1,7 @@
-# Next-available allocation: omit spec.address and name a parent instead.
-# WAVE 2: the Address controller is a no-op until its adapter lands.
+# A Universal DDI address reservation. Natural key for adoption: address plus space.
+# Next-available allocation: omit spec.address and name a parent instead, here the
+# "lb-pool" Range sample. status.address is the allocated address and the value
+# consumers read.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: Address
 metadata:
@@ -8,6 +10,8 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: svc-web
 spec:
+  connectionRef:
+    name: default
   spaceRef:
     name: corp
   nextAvailableFrom:
@@ -16,3 +20,6 @@ spec:
   names:
     - name: svc-web.team-a
       type: user
+  comment: Managed by uddi-operator
+  tags:
+    team: platform

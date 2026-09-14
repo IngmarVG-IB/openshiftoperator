@@ -123,13 +123,17 @@ spec:
                       type: string
                     type:
                       default: user
-                      description: Type of the name, for example "user".
+                      description: |-
+                        Type of the name, for example "user". Defaults to "user" when omitted; note that
+                        this default only takes effect when the field is left out of the submitted object
+                        entirely (for example a YAML manifest with no type: key) and not when a client
+                        marshals an explicit empty string, since only a genuinely absent field is filled in
+                        by CRD defaulting.
                       maxLength: 64
                       minLength: 1
                       type: string
                   required:
                   - name
-                  - type
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
