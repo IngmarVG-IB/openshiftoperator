@@ -44,6 +44,7 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/clusterid"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/controller"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/routeapi"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	// +kubebuilder:scaffold:imports
 )
@@ -57,6 +58,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(uddiv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(routeapi.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -318,12 +320,21 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "FixedAddress")
 		os.Exit(1)
 	}
-	// DNSPublishPolicy is scaffolded but not yet implemented: its controller is a
-	// no-op placeholder until milestone 2 wave 2 builds the publish pipeline on top
-	// of internal/publish.
+	// The Route API (github.com/openshift/api/route/v1) is only served on OpenShift,
+	// not on a vanilla Kubernetes/kind cluster, so its presence is checked once here
+	// with discovery; DNSPublishPolicyReconciler uses the answer to ignore the Route
+	// source rather than failing when Routes are not available.
+	routesAvailable, err := routeapi.Available(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to determine whether the Route API is available")
+		os.Exit(1)
+	}
+	setupLog.Info("discovered Route API availability", "routesAvailable", routesAvailable)
+
 	if err := (&controller.DNSPublishPolicyReconciler{
-		Client:  mgr.GetClient(),
-		Runtime: runtimeCtx,
+		Client:          mgr.GetClient(),
+		Runtime:         runtimeCtx,
+		RoutesAvailable: routesAvailable,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DNSPublishPolicy")
 		os.Exit(1)
