@@ -35,6 +35,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/hostreg"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/ipalloc"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/publish"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
@@ -137,6 +138,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		Expect((&FixedAddressReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&DNSPublishPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, RoutesAvailable: true}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&IPAllocationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
+		Expect((&HostRegistrationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, NMStateAvailable: true}).SetupWithManager(mgr)).To(Succeed())
 
 		var mgrCtx context.Context
 		mgrCtx, mgrCancel = context.WithCancel(ctx)
@@ -346,6 +348,50 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			var list uddiv1alpha1.AddressList
 			if err := k8sClient.List(ctx, &list, client.InNamespace(mgrNS),
 				client.MatchingLabels{ipalloc.LabelPolicy: policy.Name}); err != nil {
+				return -1
+			}
+			return len(list.Items)
+		}).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
+	})
+
+	It("registers a Node labelled after the HostRegistrationPolicy exists, purely through the watch", func() {
+		space := &uddiv1alpha1.IPSpace{
+			ObjectMeta: metav1.ObjectMeta{Name: "hostreg-watch-space", Namespace: mgrNS},
+			Spec:       uddiv1alpha1.IPSpaceSpec{Name: "hostreg-watch-space"},
+		}
+		Expect(k8sClient.Create(ctx, space)).To(Succeed())
+		Eventually(readyCondition(space, func() []metav1.Condition { return space.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		policy := &uddiv1alpha1.HostRegistrationPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "watch-hostreg-policy", Namespace: mgrNS},
+			Spec: uddiv1alpha1.HostRegistrationPolicySpec{
+				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"hostreg-watch-test": "true"}},
+				SpaceRef: uddiv1alpha1.ObjectRef{Name: space.Name},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "watch-hostreg-node",
+				Labels: map[string]string{"hostreg-watch-test": "true"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		node.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.123"}}
+		Expect(k8sClient.Status().Update(ctx, node)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, node))).To(Succeed())
+		})
+
+		// No direct Reconcile call on HostRegistrationPolicyReconciler: the Node watch
+		// wakes it and it creates the Address on its own.
+		Eventually(func() int {
+			var list uddiv1alpha1.AddressList
+			if err := k8sClient.List(ctx, &list, client.InNamespace(mgrNS),
+				client.MatchingLabels{hostreg.LabelPolicy: policy.Name}); err != nil {
 				return -1
 			}
 			return len(list.Items)

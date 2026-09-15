@@ -44,6 +44,7 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/clusterid"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/controller"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/nmstateapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/routeapi"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	// +kubebuilder:scaffold:imports
@@ -348,11 +349,21 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "IPAllocationPolicy")
 		os.Exit(1)
 	}
-	// Milestone 4 wave 1 placeholder: registered so the manager wires up cleanly;
-	// Reconcile is a no-op until milestone 4 wave 2 implements the pipeline.
+	// NodeNetworkState (nmstate.io/v1beta1) is only served when the NMState operator is
+	// installed, so its presence is checked once here with discovery, mirroring the
+	// Route API check above; HostRegistrationPolicyReconciler uses the answer to skip
+	// NodeNetworkState-based MAC resolution rather than failing when NMState is absent.
+	nmstateAvailable, err := nmstateapi.Available(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to determine whether the NMState API is available")
+		os.Exit(1)
+	}
+	setupLog.Info("discovered NMState API availability", "nmstateAvailable", nmstateAvailable)
+
 	if err := (&controller.HostRegistrationPolicyReconciler{
-		Client:  mgr.GetClient(),
-		Runtime: runtimeCtx,
+		Client:           mgr.GetClient(),
+		Runtime:          runtimeCtx,
+		NMStateAvailable: nmstateAvailable,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HostRegistrationPolicy")
 		os.Exit(1)
