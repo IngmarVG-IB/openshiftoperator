@@ -158,7 +158,9 @@ HostRegistrationPolicy: Nodes become DHCP FixedAddress reservations when a MAC i
 - [ ] **NodeNetworkState fixture:** Mock `nmstate.io/v1beta1 NodeNetworkState` in envtest so the controller can test MAC reading.
 - [ ] **Documentation:** `docs/host-registration.md` (task guide: what it does, prerequisites, complete example, Node annotations, modes, MAC discovery, generated object naming, status fields, skip reasons, release and deletion behavior, limitations).
 
-## Milestone 5: distribution
+## Milestones 5 and beyond
 
-Publish to quay.io, community OperatorHub submission checklist, Red Hat certification
-prerequisites (image labels, licenses directory, scorecard), docs site.
+Planned in [ROADMAP.md](ROADMAP.md): proving the operator on a real tenant and cluster
+(5), hardening the object layer (6), completing the integration layer (7), API maturity
+with `v1beta1` (8), distribution through OperatorHub and certification (9), and operating
+at scale (10). Each milestone moves here as a checklist when it starts.

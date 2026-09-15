@@ -110,6 +110,7 @@ See [docs/usage.md](docs/usage.md) for complete task-oriented documentation.
 - **[docs/api.md](docs/api.md)** — Full API reference for all kinds and shared types.
 - **[DESIGN.md](DESIGN.md)** — Architecture, decisions and implementation notes.
 - **[PLAN.md](PLAN.md)** — Implementation roadmap.
+- **[ROADMAP.md](ROADMAP.md)** — The plan from here to a supported 1.0 (milestones 5 to 10).
 - **[docs/uddi-api-notes.md](docs/uddi-api-notes.md)** — Background on the Universal DDI REST API and Go SDK.
 
 ## Development
