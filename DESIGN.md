@@ -508,11 +508,84 @@ the policy label mapped back to their policy, and the pool kinds through a field
 `allocateFrom` does not move already allocated Services; release and re-opt-in to move
 one.
 
-**HostRegistrationPolicy** (milestone 4, open design)
+**HostRegistrationPolicy** (milestone 4)
 
-Registers Nodes as `FixedAddress` or named `Address` objects. Nodes do not expose MAC
-addresses, so this depends on the NMState operator's `NodeNetworkState` or a node
-annotation. See open questions.
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: HostRegistrationPolicy
+metadata: { name: nodes, namespace: uddi-system }   # namespaced; Nodes are cluster-scoped
+spec:
+  connectionRef: { name: default }          # used by every generated object
+  selector: { matchLabels: { node-role.kubernetes.io/worker: "" } }   # Node label selector; empty selects all
+  spaceRef: { name: corp }                  # IPSpace CR in this namespace that holds the node addresses
+  addressType: InternalIP                   # InternalIP | ExternalIP; the first Node address of that type
+  register:
+    mode: Auto                              # Auto | Address | FixedAddress
+                                            # Address: an IPAM Address carrying the hostname and, if known, the MAC
+                                            # FixedAddress: a DHCP reservation; needs a MAC
+                                            # Auto: FixedAddress when a MAC is known, Address otherwise
+    dhcpOptions: []                         # copied to generated FixedAddresses
+  macSource:
+    nodeAnnotation: uddi.infoblox.com/mac   # default key; an admin or another agent sets it on the Node
+    nmstate: { enabled: true, interface: "" }   # read NodeNetworkState when the nmstate.io API exists;
+                                                # interface "" means the one carrying the registered address
+  tags: { role: node }                      # merged into every generated object's spec.tags
+  lifecycle: { deletionPolicy: Delete }     # copied to generated objects
+status:
+  observedGeneration: 1
+  conditions: [ { type: Ready, ... } ]
+  registered: 5                             # Nodes whose registration object is Ready
+  pending: 1                                # registration objects that exist but are not Ready
+  skipped:                                  # bounded (50), sorted by node
+    - { node: infra-2, reason: NoMAC, message: "mode FixedAddress needs a MAC; no annotation and no NodeNetworkState" }
+```
+
+Pipeline per reconcile, pure functions in `internal/hostreg` plus a thin controller:
+
+1. **Selection.** Nodes matching `selector` (all when empty). Node annotations, prefix
+   `uddi.infoblox.com/`: `register: "false"` opts out (`Excluded`), `hostname` overrides
+   the registered name (default: the Node name, which is usually already an FQDN),
+   `address` overrides the address to register, `mac` supplies the MAC. Malformed values
+   are `InvalidAnnotation`.
+2. **Address.** The first `status.addresses` entry of `addressType`, or the `address`
+   annotation. None: `NoAddress`.
+3. **MAC.** In order: the `mac` annotation; then, when `macSource.nmstate.enabled` and the
+   `nmstate.io/v1beta1 NodeNetworkState` API is present, the NodeNetworkState named after
+   the Node, taking the `mac-address` of the interface named `macSource.nmstate.interface`
+   or, when empty, of the interface whose IPv4 or IPv6 addresses include the registered
+   address. MACs are normalised to lower-case colon form. NodeNetworkState is read as
+   unstructured data; the operator takes no dependency on the NMState Go module.
+4. **Kind.** `mode: Address` always registers an `Address` (with `hwaddr` when a MAC is
+   known); `FixedAddress` needs a MAC (`NoMAC` otherwise); `Auto` picks `FixedAddress` when
+   a MAC is known and `Address` otherwise. When the chosen kind changes for a Node, the old
+   object is released and the new one ensured.
+5. **Desired object** per Node: name `<policy>-<node>` (hash-truncated only above 253
+   characters), labels `uddi.infoblox.com/policy` and `uddi.infoblox.com/node`, a controller
+   ownerReference to the **Node** (a namespaced dependent may own a cluster-scoped owner, so
+   Kubernetes garbage-collects the object when the Node goes), spec with the policy's
+   connectionRef and spaceRef, the address, `names: [{name: <hostname>, type: user}]` plus
+   `hwaddr` for an Address, or `matchType: mac`, `matchValue`, `name`, `hostname` and
+   `dhcpOptions` for a FixedAddress, comment "Registered by HostRegistrationPolicy
+   <ns>/<policy> for Node <name>", tags = policy tags plus `uddi_operator_source:
+   Node/<name>`, lifecycle from the policy. Applied with server-side apply, field manager
+   `uddi-operator/hostregistrationpolicy`.
+6. **Release.** A Node that is no longer selected, opted out, or whose kind changed has its
+   old object deleted; the object's finalizer removes it from Universal DDI. Node deletion
+   garbage-collects the object. Policy deletion leaves objects in place (they carry their
+   ownership tags and can be re-adopted).
+7. **Status.** `registered`, `pending`, `skipped`, `observedGeneration`.
+   `Ready=True/Registered` when nothing is pending and no `SpaceNotReady` skip remains;
+   `Ready=False/RegistrationsPending` while objects are not Ready;
+   `Ready=False/SpaceNotReady` when the IPSpace CR is missing or has no `status.id`.
+   Events: Warning `Skipped` per reason with a count, Normal `Registered` and `Released`
+   per Node.
+
+Watches: the policy, Nodes mapped to every HostRegistrationPolicy, NodeNetworkStates (only
+when the API is present) mapped the same way by Node name, Addresses and FixedAddresses
+carrying the policy label mapped to their policy, and the IPSpace through a field index on
+`spaceRef`. The IPSpace must contain the node addresses; the operator does not verify
+subnet membership, Universal DDI rejects an address outside the space's networks and that
+error surfaces on the generated object and as `RegistrationPending`.
 
 ## 5. Object-layer reconciliation model
 
@@ -699,8 +772,10 @@ Integration tests never touch objects that lack the run's tags.
 
 1. **Tag lookup performance**: whether `_tfilter` lookups are indexed well enough for
    adoption by uid tag at scale. Only measurable against the tenant.
-2. **MAC discovery for host registration**: rely on the NMState operator, a node annotation
-   set by another agent, or drop MAC matching in favour of named `Address` objects.
+2. **MAC discovery for host registration**: resolved in milestone 4 with a fallback chain
+   (Node annotation, then NMState's NodeNetworkState when present) and an `Auto` mode that
+   registers a named `Address` when no MAC is known. Remaining question: whether to also
+   read MACs from the Metal3 `BareMetalHost` inventory on bare-metal IPI clusters.
 3. **Unified nameservers**: watch for the SDK tag that ships the `nameservers` /
    `version` fields (master has them since 2026-09-10) and add them to AuthZone, including
    adoption of `v2` zones.
