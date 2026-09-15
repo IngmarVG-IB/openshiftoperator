@@ -63,6 +63,7 @@ rules:
   - connections
   - dnspublishpolicies
   - fixedaddresses
+  - hostregistrationpolicies
   - ipallocationpolicies
   - ipspaces
   - ranges
@@ -86,6 +87,7 @@ rules:
   - connections/finalizers
   - dnspublishpolicies/finalizers
   - fixedaddresses/finalizers
+  - hostregistrationpolicies/finalizers
   - ipallocationpolicies/finalizers
   - ipspaces/finalizers
   - ranges/finalizers
@@ -103,6 +105,7 @@ rules:
   - connections/status
   - dnspublishpolicies/status
   - fixedaddresses/status
+  - hostregistrationpolicies/status
   - ipallocationpolicies/status
   - ipspaces/status
   - ranges/status

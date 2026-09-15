@@ -12,4 +12,5 @@ resources:
 - uddi_v1alpha1_fixedaddress.yaml
 - uddi_v1alpha1_dnspublishpolicy.yaml
 - uddi_v1alpha1_ipallocationpolicy.yaml
+- uddi_v1alpha1_hostregistrationpolicy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

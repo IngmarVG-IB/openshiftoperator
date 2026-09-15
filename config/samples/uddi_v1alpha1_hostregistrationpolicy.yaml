@@ -1,0 +1,32 @@
+# Registers every worker Node's InternalIP in the "corp" IPSpace: a DHCP FixedAddress
+# when the Node's MAC is known (from the uddi.infoblox.com/mac annotation or, failing
+# that, NodeNetworkState), otherwise a plain IPAM Address.
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: HostRegistrationPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: nodes
+  namespace: uddi-system
+spec:
+  connectionRef:
+    name: default
+  selector:
+    matchLabels:
+      node-role.kubernetes.io/worker: ""
+  spaceRef:
+    name: corp
+  addressType: InternalIP
+  register:
+    mode: Auto
+    dhcpOptions: []
+  macSource:
+    nodeAnnotation: uddi.infoblox.com/mac
+    nmstate:
+      enabled: true
+      interface: ""
+  tags:
+    role: node
+  lifecycle:
+    deletionPolicy: Delete
