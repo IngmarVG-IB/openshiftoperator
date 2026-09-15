@@ -4,13 +4,14 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 
 ## Status
 
-Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records. Milestone 3 (IP allocation) is complete: an IPAllocationPolicy allocates IPs to LoadBalancer Services from Universal DDI pools and writes them into the load balancer annotation.
+Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records. Milestone 3 (IP allocation) is complete: an IPAllocationPolicy allocates IPs to LoadBalancer Services from Universal DDI pools and writes them into the load balancer annotation. Milestone 4 (host registration) is in progress: a HostRegistrationPolicy registers cluster Nodes in Universal DDI as DHCP or IPAM reservations.
 
 ## Features
 
 - **DNS management:** Define Views and AuthZones, create and manage A/AAAA/CNAME/TXT/MX/NS/CAA/SRV/PTR records.
 - **DNS publishing:** Automatically publish OpenShift Routes, Ingresses, and LoadBalancer Services as DNS records via DNSPublishPolicy.
 - **IP allocation:** Automatically allocate IPs to LoadBalancer Services from Universal DDI pools (Subnet, Range, or AddressBlock) via IPAllocationPolicy.
+- **Host registration:** Automatically register cluster Nodes in Universal DDI as DHCP or IPAM reservations via HostRegistrationPolicy.
 - **IPAM management:** Create and allocate from IP spaces, address blocks, subnets, and ranges. Reserve explicit addresses or allocate the next available IP.
 - **DHCP management:** Create fixed address reservations matched by MAC address or DUID. Assign DHCP options at space, subnet, range, or fixed address level.
 - **Adoption:** Take over existing Universal DDI objects with `lifecycle.adoptExisting=true`.
@@ -105,6 +106,7 @@ See [docs/usage.md](docs/usage.md) for complete task-oriented documentation.
 - **[docs/usage.md](docs/usage.md)** — Task-oriented guide: DNS, IPAM, DHCP, ownership tags, deletion, status and troubleshooting.
 - **[docs/dns-publishing.md](docs/dns-publishing.md)** — DNS Publishing: automatic publication of Routes, Ingresses, and LoadBalancer Services as DNS records.
 - **[docs/ip-allocation.md](docs/ip-allocation.md)** — IP Allocation: automatic IP allocation to LoadBalancer Services from Universal DDI pools.
+- **[docs/host-registration.md](docs/host-registration.md)** — Host Registration: automatic registration of cluster Nodes as DHCP or IPAM reservations.
 - **[docs/api.md](docs/api.md)** — Full API reference for all kinds and shared types.
 - **[DESIGN.md](DESIGN.md)** — Architecture, decisions and implementation notes.
 - **[PLAN.md](PLAN.md)** — Implementation roadmap.

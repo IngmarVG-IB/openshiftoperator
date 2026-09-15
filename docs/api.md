@@ -844,3 +844,104 @@ spec:
 ```
 
 Reference: [DESIGN.md](../DESIGN.md) section 4.7.
+
+---
+
+## HostRegistrationPolicy
+
+A HostRegistrationPolicy watches cluster Nodes and automatically generates Address or FixedAddress CRs that register them in Universal DDI. The policy selects Nodes by label, discovers MAC addresses from annotations or NMState, and generates registration objects (Address for hostname-based reservations, FixedAddress for DHCP MAC-based reservations). Generated objects are owned by the Node, so deleting a Node releases its reservation. The policy supports three modes: `Auto` (chooses based on MAC availability), `Address` (always IPAM), and `FixedAddress` (always DHCP, requires MAC).
+
+**Purpose:** Create a HostRegistrationPolicy CR to automatically register cluster Nodes as DHCP or IPAM reservations in Universal DDI, integrating node infrastructure with Infoblox IP management.
+
+**Short name:** `uddihostreg`
+
+**Print columns:**
+| Column | Type | JSONPath |
+| --- | --- | --- |
+| `Ready` | string | `.status.conditions[?(@.type=="Ready")].status` |
+| `Registered` | integer | `.status.registered` |
+| `Pending` | integer | `.status.pending` |
+| `Age` | date | `.metadata.creationTimestamp` |
+
+### HostRegistrationPolicy Spec
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Address or FixedAddress. |
+| `selector` | *metav1.LabelSelector | No | — | Label selector to filter Nodes. Empty selects all. |
+| `spaceRef` | ObjectRef | Yes | — | IPSpace CR in this namespace that contains the node networks. Must be Ready (have a `status.id`). |
+| `addressType` | AddressType | No | InternalIP | The type of Node address to register: `InternalIP` or `ExternalIP`. |
+| `register` | RegisterMode | No | — | Registration mode and options. |
+| `register.mode` | string | No | Auto | `Auto` (FixedAddress when MAC known, Address otherwise), `Address` (always IPAM), or `FixedAddress` (always DHCP, requires MAC). |
+| `register.dhcpOptions` | []DHCPOption | No | — | DHCP options applied to generated FixedAddresses. Ignored for Addresses. |
+| `macSource` | MACSource | No | — | Where to discover Node MAC addresses. |
+| `macSource.nodeAnnotation` | string | No | uddi.infoblox.com/mac | Annotation key on Nodes holding the MAC address. Empty means the default. Max 256 characters. |
+| `macSource.nmstate.enabled` | bool | No | true | Read NodeNetworkState from the NMState operator when the API is present. |
+| `macSource.nmstate.interface` | string | No | — | Interface name to read the MAC from. Empty means the interface carrying the registered address. Max 256 characters. |
+| `tags` | map[string]string | No | — | Tags merged into every generated Address or FixedAddress's `spec.tags`. |
+| `lifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated objects (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
+
+### HostRegistrationPolicy Status
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `observedGeneration` | int64 | The `metadata.generation` the status was last computed from. |
+| `conditions` | []metav1.Condition | Conditions: `Ready` (summary). |
+| `registered` | int32 | Number of Nodes whose registration object is Ready. |
+| `pending` | int32 | Number of registration objects that exist but are not Ready. |
+| `skipped` | []SkippedNode | Nodes not registered (bounded to 50 entries, sorted by node name). |
+
+### SkippedNode
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `node` | string | Node name. Max 253 characters. |
+| `reason` | string | Machine-readable skip reason: `Excluded`, `NoAddress`, `NoMAC`, `InvalidAnnotation`, `SpaceNotReady`, or `RegistrationPending`. Max 64 characters. |
+| `message` | string | Human-readable explanation. Max 512 characters. |
+
+### HostRegistrationPolicy Conditions
+
+**Ready** (summary condition)
+- `True/Registered`: Every selected Node is registered, and no `SpaceNotReady` skip remains.
+- `False/RegistrationsPending`: Some Nodes have pending registration objects (not Ready yet).
+- `False/SpaceNotReady`: The IPSpace CR is missing or has no `status.id` yet.
+
+### Node Annotations
+
+All annotations are prefixed `uddi.infoblox.com/`. They override policy settings per Node:
+- `register: "false"` or `"true"` — opt out or in of registration.
+- `hostname: <name>` — override the registered hostname (default: Node name).
+- `address: <ip>` — override the address to register (default: from Node status or addressType).
+- `mac: <mac>` — supply the MAC address when automatic discovery is not available (format: `52:54:00:aa:bb:cc`).
+
+### HostRegistrationPolicy Example
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: HostRegistrationPolicy
+metadata:
+  name: nodes
+spec:
+  connectionRef:
+    name: default
+  selector:
+    matchLabels:
+      node-role.kubernetes.io/worker: ""
+  spaceRef:
+    name: corp
+  addressType: InternalIP
+  register:
+    mode: Auto
+    dhcpOptions: []
+  macSource:
+    nodeAnnotation: uddi.infoblox.com/mac
+    nmstate:
+      enabled: true
+      interface: ""
+  tags:
+    role: node
+  lifecycle:
+    deletionPolicy: Delete
+```
+
+Reference: [DESIGN.md](../DESIGN.md) section 4.7; fields verified against the Go type in milestone 4 wave 2.
