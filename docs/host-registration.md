@@ -75,7 +75,7 @@ apiVersion: uddi.infoblox.com/v1alpha1
 kind: HostRegistrationPolicy
 metadata:
   name: workers
-namespace: uddi-system
+  namespace: uddi-system
 spec:
   connectionRef:
     name: default
@@ -139,11 +139,11 @@ The policy watches all worker Nodes. For each Node with an internal IP address:
 Check the policy status:
 
 ```bash
-kubectl get hostregistrationpolicy workers
+kubectl get uddihostreg workers
 # NAME      READY   REGISTERED   PENDING   AGE
 # workers   True    3            0         2m
 
-kubectl describe hostregistrationpolicy workers
+kubectl describe uddihostreg workers
 # Status:
 #   Conditions:
 #     Last Transition Time:  2026-09-14T12:00:00Z
@@ -305,10 +305,15 @@ The object spec includes:
 
 The policy discovers a Node's MAC address in priority order:
 
-1. **Node annotation `uddi.infoblox.com/mac`** (highest priority): the MAC is directly on the Node. Set it by hand when the operator has no other way to learn it.
+1. **Node annotation `uddi.infoblox.com/mac`** (highest priority): the MAC is directly on the Node. Set it by hand when the operator has no other way to learn it. Accepted formats (all normalized to lower-case colon form, e.g. `52:54:00:aa:bb:cc`):
+   - Colon-separated: `52:54:00:aa:bb:cc`
+   - Hyphen-separated: `52-54-00-aa-bb-cc`
+   - Cisco dot-separated: `5254.00aa.bbcc`
+   - 12 bare hex digits: `525400aabbcc`
 2. **NMState NodeNetworkState** (when enabled and the API exists): the operator reads the `NodeNetworkState` object named after the Node and extracts the MAC from:
-   - The interface named `spec.macSource.nmstate.interface`, if set
-   - The interface carrying the registered IP address (when `interface` is empty)
+   - The interface named `spec.macSource.nmstate.interface`, if set (must be an exact interface name match)
+   - The interface carrying the registered IP address when `interface` is empty (the first interface in report order whose ipv4 or ipv6 addresses include the registered address; loopback interfaces are always skipped, since loopback MACs and addresses cannot represent a Node's identity)
+   - For details on NodeNetworkState structure and interface discovery, see the [NMState reporting guide](https://raw.githubusercontent.com/nmstate/kubernetes-nmstate/main/docs/content/user-guide/101-reporting.md) and [NMState examples](https://nmstate.io/examples.html).
 3. **No MAC** (lowest priority): the MAC remains unknown.
 
 ### Enabling MAC Discovery via NMState
@@ -350,16 +355,16 @@ The policy's `status` reports registration progress:
 | --- | --- | --- |
 | `registered` | int32 | Number of Nodes whose registration object is Ready |
 | `pending` | int32 | Number of registration objects that exist but are not Ready |
-| `skipped` | []Skip | Nodes not registered (bounded to 50 entries) |
+| `skipped` | []SkippedNode | Nodes not registered or not Ready (bounded to 50 entries, sorted by node name then reason) |
 | `observedGeneration` | int64 | The `metadata.generation` the status was last computed from |
-| `conditions` | []metav1.Condition | `Ready` condition (summary) |
+| `conditions` | []metav1.Condition | Conditions: `Ready` (summary) |
 
 The `Ready` condition:
-- `True/Registered`: All selected Nodes are registered (registered == total selected), and no `RegistrationsPending` skip remains
-- `False/RegistrationsPending`: Some Nodes have pending registration objects (not Ready yet)
+- `True/Registered`: Nothing is pending and no `SpaceNotReady` skip remains
+- `False/RegistrationsPending`: Some registration objects exist but are not Ready yet
 - `False/SpaceNotReady`: The IPSpace CR is missing or has no `status.id`
 
-Each Skip entry has:
+Each SkippedNode entry has:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -381,7 +386,7 @@ Each Skip entry has:
 Example: view skipped Nodes and troubleshoot:
 
 ```bash
-kubectl describe hostregistrationpolicy workers | grep -A 30 "Skipped:"
+kubectl describe uddihostreg workers | grep -A 30 "Skipped:"
 
 # Status:
 #   Skipped:

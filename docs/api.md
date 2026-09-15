@@ -871,12 +871,12 @@ A HostRegistrationPolicy watches cluster Nodes and automatically generates Addre
 | `selector` | *metav1.LabelSelector | No | — | Label selector to filter Nodes. Empty selects all. |
 | `spaceRef` | ObjectRef | Yes | — | IPSpace CR in this namespace that contains the node networks. Must be Ready (have a `status.id`). |
 | `addressType` | AddressType | No | InternalIP | The type of Node address to register: `InternalIP` or `ExternalIP`. |
-| `register` | RegisterMode | No | — | Registration mode and options. |
-| `register.mode` | string | No | Auto | `Auto` (FixedAddress when MAC known, Address otherwise), `Address` (always IPAM), or `FixedAddress` (always DHCP, requires MAC). |
+| `register` | Register | No | — | Registration mode and options. |
+| `register.mode` | RegisterMode | No | Auto | `Auto` (FixedAddress when MAC known, Address otherwise), `Address` (always IPAM), or `FixedAddress` (always DHCP, requires MAC). |
 | `register.dhcpOptions` | []DHCPOption | No | — | DHCP options applied to generated FixedAddresses. Ignored for Addresses. |
 | `macSource` | MACSource | No | — | Where to discover Node MAC addresses. |
-| `macSource.nodeAnnotation` | string | No | uddi.infoblox.com/mac | Annotation key on Nodes holding the MAC address. Empty means the default. Max 256 characters. |
-| `macSource.nmstate.enabled` | bool | No | true | Read NodeNetworkState from the NMState operator when the API is present. |
+| `macSource.nodeAnnotation` | string | No | uddi.infoblox.com/mac | Annotation key on Nodes holding the MAC address. Pattern: valid annotation key format. Max 317 characters. |
+| `macSource.nmstate.enabled` | \*bool | No | true | Read NodeNetworkState from the NMState operator when the API is present. |
 | `macSource.nmstate.interface` | string | No | — | Interface name to read the MAC from. Empty means the interface carrying the registered address. Max 256 characters. |
 | `tags` | map[string]string | No | — | Tags merged into every generated Address or FixedAddress's `spec.tags`. |
 | `lifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated objects (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
@@ -944,4 +944,4 @@ spec:
     deletionPolicy: Delete
 ```
 
-Reference: [DESIGN.md](../DESIGN.md) section 4.7; fields verified against the Go type in milestone 4 wave 2.
+Reference: [DESIGN.md](../DESIGN.md) section 4.7.
