@@ -194,6 +194,49 @@ metadata:
         },
         {
           "apiVersion": "uddi.infoblox.com/v1alpha1",
+          "kind": "HostRegistrationPolicy",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "uddi-operator"
+            },
+            "name": "nodes",
+            "namespace": "uddi-system"
+          },
+          "spec": {
+            "addressType": "InternalIP",
+            "connectionRef": {
+              "name": "default"
+            },
+            "lifecycle": {
+              "deletionPolicy": "Delete"
+            },
+            "macSource": {
+              "nmstate": {
+                "enabled": true,
+                "interface": ""
+              },
+              "nodeAnnotation": "uddi.infoblox.com/mac"
+            },
+            "register": {
+              "dhcpOptions": [],
+              "mode": "Auto"
+            },
+            "selector": {
+              "matchLabels": {
+                "node-role.kubernetes.io/worker": ""
+              }
+            },
+            "spaceRef": {
+              "name": "corp"
+            },
+            "tags": {
+              "role": "node"
+            }
+          }
+        },
+        {
+          "apiVersion": "uddi.infoblox.com/v1alpha1",
           "kind": "IPAllocationPolicy",
           "metadata": {
             "labels": {
@@ -386,7 +429,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: quay.io/ingmarvg-ib/uddi-operator:0.1.0
-    createdAt: "2026-09-14T21:39:13Z"
+    createdAt: "2026-09-15T17:24:17Z"
     olm.skipRange: <0.1.0
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -430,6 +473,13 @@ spec:
       displayName: Fixed Address
       kind: FixedAddress
       name: fixedaddresses.uddi.infoblox.com
+      version: v1alpha1
+    - description: |-
+        HostRegistrationPolicy registers selected Nodes in Universal DDI as an IPAM Address
+        or a DHCP FixedAddress.
+      displayName: Host Registration Policy
+      kind: HostRegistrationPolicy
+      name: hostregistrationpolicies.uddi.infoblox.com
       version: v1alpha1
     - description: |-
         IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
@@ -511,6 +561,7 @@ spec:
           - ""
           resources:
           - namespaces
+          - nodes
           - secrets
           verbs:
           - get
@@ -543,6 +594,14 @@ spec:
           - list
           - watch
         - apiGroups:
+          - nmstate.io
+          resources:
+          - nodenetworkstates
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
           - route.openshift.io
           resources:
           - routes
@@ -559,6 +618,7 @@ spec:
           - connections
           - dnspublishpolicies
           - fixedaddresses
+          - hostregistrationpolicies
           - ipallocationpolicies
           - ipspaces
           - ranges
@@ -582,6 +642,7 @@ spec:
           - connections/finalizers
           - dnspublishpolicies/finalizers
           - fixedaddresses/finalizers
+          - hostregistrationpolicies/finalizers
           - ipallocationpolicies/finalizers
           - ipspaces/finalizers
           - ranges/finalizers
@@ -599,6 +660,7 @@ spec:
           - connections/status
           - dnspublishpolicies/status
           - fixedaddresses/status
+          - hostregistrationpolicies/status
           - ipallocationpolicies/status
           - ipspaces/status
           - ranges/status

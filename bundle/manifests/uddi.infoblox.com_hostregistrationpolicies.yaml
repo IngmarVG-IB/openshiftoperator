@@ -1,0 +1,374 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  creationTimestamp: null
+  name: hostregistrationpolicies.uddi.infoblox.com
+spec:
+  group: uddi.infoblox.com
+  names:
+    kind: HostRegistrationPolicy
+    listKind: HostRegistrationPolicyList
+    plural: hostregistrationpolicies
+    shortNames:
+    - uddihostreg
+    singular: hostregistrationpolicy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.registered
+      name: Registered
+      type: integer
+    - jsonPath: .status.pending
+      name: Pending
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          HostRegistrationPolicy registers selected Nodes in Universal DDI as an IPAM Address
+          or a DHCP FixedAddress.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HostRegistrationPolicySpec selects which Nodes get registered in Universal DDI as an
+              Address or a DHCP FixedAddress. See DESIGN.md section 4.7 for the full pipeline.
+            properties:
+              addressType:
+                default: InternalIP
+                description: AddressType selects which Node address is registered.
+                enum:
+                - InternalIP
+                - ExternalIP
+                type: string
+              connectionRef:
+                description: |-
+                  ConnectionRef names the Connection used by every generated object. Empty means
+                  the Connection called "default" in this namespace.
+                properties:
+                  name:
+                    description: Name of the Connection in this namespace. Defaults
+                      to "default".
+                    maxLength: 253
+                    type: string
+                type: object
+              lifecycle:
+                description: Lifecycle is copied onto every generated object's spec.lifecycle.
+                properties:
+                  adoptExisting:
+                    default: false
+                    description: |-
+                      AdoptExisting allows taking over an existing Universal DDI object that matches the
+                      natural key but does not carry this operator's ownership tags. When false such an
+                      object is reported as a conflict (Ready=False/AlreadyExists).
+                    type: boolean
+                  deletionPolicy:
+                    default: Delete
+                    description: DeletionPolicy decides whether deleting the CR also
+                      deletes the Universal DDI object.
+                    enum:
+                    - Delete
+                    - Orphan
+                    type: string
+                type: object
+              macSource:
+                description: MACSource selects where a Node's MAC address comes from.
+                properties:
+                  nmstate:
+                    description: NMState controls reading NodeNetworkState for the
+                      MAC.
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          Enabled reads NodeNetworkState when the nmstate.io/v1beta1 API is present on the
+                          cluster.
+                        type: boolean
+                      interface:
+                        description: |-
+                          Interface names the NodeNetworkState interface to take the MAC from. Empty means
+                          the interface whose addresses include the registered address.
+                        maxLength: 256
+                        type: string
+                    type: object
+                  nodeAnnotation:
+                    default: uddi.infoblox.com/mac
+                    description: |-
+                      NodeAnnotation is the fully qualified annotation key holding the MAC. Defaults
+                      to uddi.infoblox.com/mac.
+                    maxLength: 317
+                    pattern: ^(([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$
+                    type: string
+                type: object
+              register:
+                description: Register controls which kind of object is created for
+                  each Node.
+                properties:
+                  dhcpOptions:
+                    description: DHCPOptions are copied to every generated FixedAddress.
+                      Ignored in Address mode.
+                    items:
+                      description: |-
+                        DHCPOption maps to the Universal DDI ipam.OptionItem. Option codes and groups are
+                        opaque Universal DDI resource ids in v1alpha1; lookup by name is a later convenience.
+                      properties:
+                        group:
+                          description: |-
+                            Group is a Universal DDI option group id, for example "dhcp/option_group/<uuid>".
+                            Required when type is "group".
+                          maxLength: 256
+                          type: string
+                        optionCode:
+                          description: |-
+                            OptionCode is a Universal DDI option code id, for example "dhcp/option_code/<uuid>".
+                            Required when type is "option".
+                          maxLength: 256
+                          type: string
+                        optionValue:
+                          description: OptionValue is the value for the option code.
+                          maxLength: 4096
+                          type: string
+                        type:
+                          default: option
+                          description: Type selects a single option or an option group.
+                          enum:
+                          - option
+                          - group
+                          type: string
+                      required:
+                      - type
+                      type: object
+                      x-kubernetes-validations:
+                      - message: type option requires optionCode, type group requires
+                          group
+                        rule: 'self.type == ''option'' ? has(self.optionCode) : has(self.group)'
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  mode:
+                    default: Auto
+                    description: |-
+                      Mode selects Address, FixedAddress, or Auto (FixedAddress when a MAC is known,
+                      Address otherwise).
+                    enum:
+                    - Auto
+                    - Address
+                    - FixedAddress
+                    type: string
+                type: object
+              selector:
+                description: Selector selects the Nodes this policy considers. Empty
+                  selects every Node.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              spaceRef:
+                description: |-
+                  SpaceRef names the IPSpace CR, in this namespace, that holds the Node addresses.
+                  Only a name is accepted (not a raw Universal DDI id): the IPSpace CR must exist
+                  so its status.id can be watched for readiness.
+                properties:
+                  id:
+                    description: ID is a Universal DDI resource id, for example "dns/view/2c1a...".
+                    maxLength: 256
+                    type: string
+                  name:
+                    description: Name of an object-layer CR in this namespace.
+                    maxLength: 253
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: spaceRef must set name
+                  rule: size(self.name) > 0
+                - message: exactly one of name or id must be set
+                  rule: has(self.name) != has(self.id)
+              tags:
+                additionalProperties:
+                  type: string
+                description: Tags are merged into every generated object's spec.tags.
+                type: object
+            required:
+            - spaceRef
+            type: object
+          status:
+            description: HostRegistrationPolicyStatus reports the observed state of
+              a HostRegistrationPolicy.
+            properties:
+              conditions:
+                description: Conditions hold Ready.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation the status was last computed
+                  from.
+                format: int64
+                type: integer
+              pending:
+                description: Pending is the number of registration objects that exist
+                  but are not Ready.
+                format: int32
+                type: integer
+              registered:
+                description: Registered is the number of Nodes whose registration
+                  object is Ready.
+                format: int32
+                type: integer
+              skipped:
+                description: |-
+                  Skipped lists Nodes not registered, and why. Bounded and sorted by node then
+                  reason.
+                items:
+                  description: |-
+                    SkippedNode is one Node that was not registered, or not registered as desired, and
+                    why. See internal/hostreg.Skip.
+                  properties:
+                    message:
+                      description: Message is a human-readable explanation.
+                      maxLength: 512
+                      type: string
+                    node:
+                      description: Node is the name of the Node that was skipped.
+                      maxLength: 253
+                      type: string
+                    reason:
+                      description: Reason is a short machine-readable skip reason,
+                        for example NoMAC.
+                      maxLength: 64
+                      type: string
+                  type: object
+                maxItems: 50
+                type: array
+                x-kubernetes-list-type: atomic
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null

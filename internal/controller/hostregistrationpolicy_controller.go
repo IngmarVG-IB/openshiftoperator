@@ -153,6 +153,10 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 	for _, e := range existing {
 		prior[registrationKey{e.Kind, e.Name}] = true
 	}
+	// created counts objects that did not exist before this reconcile. The planner only
+	// counts registrations it could observe, so these are added to pending below; without
+	// that the first reconcile would report Ready with nothing registered and flap.
+	created := int32(0)
 	for _, d := range plan.Ensure {
 		obj, err := desiredRegistrationObject(policy, d)
 		if err != nil {
@@ -163,6 +167,7 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 			return ctrl.Result{}, fmt.Errorf("applying %s %s: %w", d.Kind, d.Name, err)
 		}
 		if !prior[registrationKey{d.Kind, d.Name}] {
+			created++
 			r.event(policy, corev1.EventTypeNormal, "Registered", "registered %s %s for Node %s", d.Kind, d.Name, d.Node.Name)
 		}
 	}
@@ -179,8 +184,9 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 
 	// Step 9: status.
 	policy.Status.ObservedGeneration = policy.Generation
+	pending := plan.Pending + created
 	policy.Status.Registered = plan.Registered
-	policy.Status.Pending = plan.Pending
+	policy.Status.Pending = pending
 	policy.Status.Skipped = toSkippedNodes(plan.Skips)
 
 	cond := metav1.Condition{Type: uddiv1alpha1.ConditionReady, ObservedGeneration: policy.Generation}
@@ -189,10 +195,10 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = uddiv1alpha1.ReasonSpaceNotReady
 		cond.Message = fmt.Sprintf("space %s has no status.id yet", space.Name)
-	case plan.Pending > 0:
+	case pending > 0:
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = uddiv1alpha1.ReasonRegistrationsPending
-		cond.Message = fmt.Sprintf("%d pending", plan.Pending)
+		cond.Message = fmt.Sprintf("%d pending", pending)
 	default:
 		cond.Status = metav1.ConditionTrue
 		cond.Reason = uddiv1alpha1.ReasonRegistered

@@ -50,6 +50,13 @@ spec:
       name: fixedaddresses.uddi.infoblox.com
       version: v1alpha1
     - description: |-
+        HostRegistrationPolicy registers selected Nodes in Universal DDI as an IPAM Address
+        or a DHCP FixedAddress.
+      displayName: Host Registration Policy
+      kind: HostRegistrationPolicy
+      name: hostregistrationpolicies.uddi.infoblox.com
+      version: v1alpha1
+    - description: |-
         IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
         Services and writes them back as a Service annotation or spec.loadBalancerIP.
       displayName: IPAllocation Policy

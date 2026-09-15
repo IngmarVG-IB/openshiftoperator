@@ -202,13 +202,14 @@ var _ = Describe("HostRegistrationPolicy controller", func() {
 		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 		Expect(reconcilePolicy(policy)).To(Succeed())
 
-		// hostreg.Compute only counts a registration as pending once it already
-		// existed going into the reconcile that computed the plan (see
-		// TestCompute_PendingMessage in internal/hostreg/plan_test.go): the very first
-		// reconcile creates the FixedAddress but reports 0/0, exactly like a brand new
-		// IPAllocationPolicy Address reports Allocated but not yet Assigned.
-		Expect(policy.Status.Pending).To(Equal(int32(0)))
+		// hostreg.Compute only counts registrations it could observe, so the controller
+		// adds the objects it just created to pending: the very first reconcile already
+		// reports the new FixedAddress as pending rather than flapping to Ready with
+		// nothing registered.
+		Expect(policy.Status.Pending).To(Equal(int32(1)))
 		Expect(policy.Status.Registered).To(Equal(int32(0)))
+		Expect(readyConditionOf(policy).Status).To(Equal(metav1.ConditionFalse))
+		Expect(readyConditionOf(policy).Reason).To(Equal(uddiv1alpha1.ReasonRegistrationsPending))
 
 		fa := getFixedAddress(policy, node.Name)
 		Expect(fa.Labels[hostreg.LabelPolicy]).To(Equal(policy.Name))
