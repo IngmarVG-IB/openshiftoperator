@@ -39,3 +39,26 @@ per-feature-gate variants under `zz_generated.featuregated-crd-manifests/`.
    over `route.openshift.io_routes.yaml` unmodified, and update the pseudo-version above.
 4. Re-run the `internal/routeapi` envtest suite to confirm it still loads and that
    `Available` still returns true.
+
+## nmstate.io_nodenetworkstates.yaml
+
+Used by `internal/nmstateapi`'s envtest suite and by any future HostRegistrationPolicy
+controller envtest that needs a real NodeNetworkState resource.
+
+Unlike `route.openshift.io_routes.yaml` above, this one is **hand-written, not copied**
+from the upstream project. The real `nodenetworkstates.nmstate.io` CRD (from
+[kubernetes-nmstate](https://github.com/nmstate/kubernetes-nmstate)) spells out the full
+NMState network-state schema in `status.currentState` — the same schema documented at
+https://nmstate.io/ and in that project's
+[reporting guide](https://github.com/nmstate/kubernetes-nmstate/blob/main/docs/content/user-guide/101-reporting.md)
+— and is large enough that vendoring it verbatim would mean tracking an upstream schema
+this operator does not otherwise depend on (DESIGN.md 4.7: "NodeNetworkState is read as
+unstructured data; the operator takes no dependency on the NMState Go module"). Since
+`internal/nmstateapi` and `internal/hostreg` only ever read `status.currentState` as
+unstructured data and never validate against the real schema, this file instead declares
+the bare minimum envtest needs: the right group/version/kind, cluster scope, a status
+subresource, and `spec`/`status` as wide-open objects
+(`x-kubernetes-preserve-unknown-fields: true`) so any shape of `currentState` can be
+written and read back. It is not meant to reject malformed NodeNetworkStates the way the
+real CRD would; it exists purely so tests can create one and exercise the status
+subresource against a real apiserver.
