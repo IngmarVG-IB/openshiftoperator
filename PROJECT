@@ -119,4 +119,13 @@ resources:
   kind: IPAllocationPolicy
   path: github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: infoblox.com
+  group: uddi
+  kind: HostRegistrationPolicy
+  path: github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1
+  version: v1alpha1
 version: "3"
