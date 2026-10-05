@@ -164,14 +164,16 @@ type RecordRData struct {
 // The name immutability rule on RecordSpec lives on the spec rather than on spec.name
 // so it also catches adding or removing the field, which a rule on the field itself
 // cannot see without optionalOldSelf (Kubernetes 1.30 and newer; the OpenShift 4.16
-// floor is Kubernetes 1.29).
+// floor is Kubernetes 1.29). Both sides are normalised before comparing: an omitted or
+// empty name and the at sign all mean the zone apex, so switching between those
+// spellings is allowed and any other change is rejected.
 
 // RecordSpec describes a Universal DDI DNS resource record. Universal DDI stores one
 // rdata per record object, so two A records for the same name are two CRs.
 // Natural key for adoption: zone plus name plus type plus rdata.
 // +kubebuilder:validation:XValidation:rule="(self.type == 'A' && has(self.rdata.a)) || (self.type == 'AAAA' && has(self.rdata.aaaa)) || (self.type == 'CNAME' && has(self.rdata.cname)) || (self.type == 'TXT' && has(self.rdata.txt)) || (self.type == 'PTR' && has(self.rdata.ptr)) || (self.type == 'SRV' && has(self.rdata.srv)) || (self.type == 'MX' && has(self.rdata.mx)) || (self.type == 'NS' && has(self.rdata.ns)) || (self.type == 'CAA' && has(self.rdata.caa))",message="rdata must contain the block matching spec.type"
 // +kubebuilder:validation:XValidation:rule="!has(self.createPtr) || !self.createPtr || self.type == 'A' || self.type == 'AAAA'",message="createPtr is only valid for A and AAAA records"
-// +kubebuilder:validation:XValidation:rule="(!has(oldSelf.name) && !has(self.name)) || (has(oldSelf.name) && has(self.name) && oldSelf.name == self.name)",message="name is immutable: a record created at the zone apex must stay at the apex, and a set name must not change"
+// +kubebuilder:validation:XValidation:rule="(has(oldSelf.name) && size(oldSelf.name) > 0 ? oldSelf.name : '@') == (has(self.name) && size(self.name) > 0 ? self.name : '@')",message="name is immutable: an omitted name and @ both mean the zone apex and may be swapped, any other change is rejected"
 type RecordSpec struct {
 	CommonSpec `json:",inline"`
 

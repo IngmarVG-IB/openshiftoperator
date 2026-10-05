@@ -1440,6 +1440,11 @@ func (in *ObjectStatus) DeepCopyInto(out *ObjectStatus) {
 		in, out := &in.LastSyncTime, &out.LastSyncTime
 		*out = (*in).DeepCopy()
 	}
+	if in.AppliedTags != nil {
+		in, out := &in.AppliedTags, &out.AppliedTags
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

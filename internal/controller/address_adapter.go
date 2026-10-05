@@ -159,7 +159,7 @@ func (addressAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*ipa
 // immutable and ride along on every patch because ipam.Address models address as a
 // required, non-pointer field; the value sent always equals what Universal DDI already
 // has, so this is harmless, the same way view_adapter.go handles dnsconfig.View.Name.
-func (addressAdapter) Diff(spec *uddiv1alpha1.AddressSpec, deps uddisync.Deps, t map[string]string, current *ipam.Address) (*ipam.Address, bool) {
+func (addressAdapter) Diff(spec *uddiv1alpha1.AddressSpec, deps uddisync.Deps, t tags.Desired, current *ipam.Address) (*ipam.Address, bool) {
 	patch := &ipam.Address{Address: current.Address}
 	changed := false
 

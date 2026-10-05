@@ -107,7 +107,7 @@ func (fixedaddressAdapter) Get(ctx context.Context, uc *uddi.Client, id string) 
 // address, matchType and matchValue as required, non-pointer fields; the address and
 // matchType values sent always equal what Universal DDI already has, so this is
 // harmless, the same way view_adapter.go handles dnsconfig.View.Name.
-func (fixedaddressAdapter) Diff(spec *uddiv1alpha1.FixedAddressSpec, deps uddisync.Deps, t map[string]string, current *ipam.FixedAddress) (*ipam.FixedAddress, bool) {
+func (fixedaddressAdapter) Diff(spec *uddiv1alpha1.FixedAddressSpec, deps uddisync.Deps, t tags.Desired, current *ipam.FixedAddress) (*ipam.FixedAddress, bool) {
 	patch := &ipam.FixedAddress{
 		Address:    current.Address,
 		MatchType:  current.MatchType,

@@ -203,6 +203,9 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 	uid := string(obj.GetUID())
 	owner := tags.Ownership(rt.ClusterID, obj.GetNamespace(), ad.Kind(), obj.GetName(), uid)
 	merged := tags.Merge(owner, conn.DefaultTags, obj.SpecTags())
+	// Keys applied at the last successful sync that are no longer wanted are removed;
+	// keys the operator never wrote are left alone (DESIGN.md section 6).
+	desired := tags.NewDesired(merged, status.AppliedTags)
 
 	// 5 and 6. Read the object, recreating it if it vanished out of band.
 	var current *U
@@ -255,7 +258,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 		case found == nil:
 			setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,
 				uddiv1alpha1.ReasonCreating, "creating the Universal DDI "+ad.Kind(), obj.GetGeneration())
-			created, cerr := ad.Create(ctx, uc, spec, deps, merged)
+			created, cerr := ad.Create(ctx, uc, spec, deps, desired.Want)
 			if cerr != nil {
 				return apiFailure(rt, obj, status, cerr)
 			}
@@ -282,7 +285,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 	status.ID = ad.IDOf(current)
 
 	// Diff and patch. Only fields the CR manages are sent.
-	if patch, changed := ad.Diff(spec, deps, merged, current); changed {
+	if patch, changed := ad.Diff(spec, deps, desired, current); changed {
 		updated, uerr := ad.Update(ctx, uc, status.ID, patch)
 		if uerr != nil {
 			if uddi.IsNotFound(uerr) {
@@ -302,6 +305,9 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 	ad.Observe(obj, current)
 	status.ID = ad.IDOf(current)
 	status.ObservedGeneration = obj.GetGeneration()
+	// appliedTags moves together with Synced=True for this generation and is never
+	// touched on an error path, so the next sync knows exactly what the operator wrote.
+	status.AppliedTags = tags.Keys(merged)
 	now := metav1.Now()
 	status.LastSyncTime = &now
 	setCondition(status, uddiv1alpha1.ConditionSynced, metav1.ConditionTrue,

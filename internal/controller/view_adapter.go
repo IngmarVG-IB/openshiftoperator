@@ -134,7 +134,7 @@ func (viewAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*dnscon
 }
 
 // Diff compares the managed fields and builds a partial patch.
-func (viewAdapter) Diff(spec *uddiv1alpha1.ViewSpec, deps uddisync.Deps, t map[string]string, current *dnsconfig.View) (*dnsconfig.View, bool) {
+func (viewAdapter) Diff(spec *uddiv1alpha1.ViewSpec, deps uddisync.Deps, t tags.Desired, current *dnsconfig.View) (*dnsconfig.View, bool) {
 	// dnsconfig.View.Name is a required, non-pointer field, so it always rides along on
 	// a patch. That is harmless: the name is mutable and the value sent is the desired one.
 	patch := &dnsconfig.View{Name: deps[depName]}

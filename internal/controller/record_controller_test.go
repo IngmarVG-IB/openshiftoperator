@@ -24,8 +24,10 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/infobloxopen/universal-ddi-go-client/dnsdata"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -466,6 +468,64 @@ var _ = Describe("Record controller through the generic object-layer loop", func
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(uddiv1alpha1.ReasonDependencyNotReady))
 			Expect(r.Status.ID).To(BeEmpty())
+		})
+	})
+
+	// The name rule is spec-level so it works on the Kubernetes 1.29 floor, and it
+	// normalises both sides first: an omitted name, an empty name and "@" all mean the
+	// zone apex, so swapping between those spellings is not a change.
+	Context("name immutability via CEL", func() {
+		apexRecord := func(name string, mutate func(*uddiv1alpha1.Record)) *uddiv1alpha1.Record {
+			return makeRecord(name, func(r *uddiv1alpha1.Record) {
+				r.Spec.ZoneRef = uddiv1alpha1.ObjectRef{ID: "dns/auth_zone/cel-test"}
+				r.Spec.Type = "A"
+				r.Spec.RData = uddiv1alpha1.RecordRData{A: &uddiv1alpha1.ARData{Address: "192.0.2.90"}}
+				if mutate != nil {
+					mutate(r)
+				}
+			})
+		}
+
+		setName := func(r *uddiv1alpha1.Record, name string) error {
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(r), r)).To(Succeed())
+			r.Spec.Name = name
+			return k8sClient.Update(ctx, r)
+		}
+
+		expectImmutable := func(err error) {
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected an Invalid error, got %v", err)
+			Expect(err.Error()).To(ContainSubstring("name is immutable"))
+		}
+
+		It("accepts switching an apex record between an omitted name and @", func() {
+			r := apexRecord("apex-omitted", nil)
+			Expect(r.Spec.Name).To(BeEmpty())
+
+			Expect(setName(r, "@")).To(Succeed())
+			Expect(r.Spec.Name).To(Equal("@"))
+			Expect(setName(r, "")).To(Succeed())
+			Expect(r.Spec.Name).To(BeEmpty())
+
+			// An explicit empty string is the apex too.
+			Expect(k8sClient.Patch(ctx, r, client.RawPatch(types.MergePatchType,
+				[]byte(`{"spec":{"name":""}}`)))).To(Succeed())
+			Expect(setName(r, "@")).To(Succeed())
+		})
+
+		It("rejects moving an apex record to another label", func() {
+			omitted := apexRecord("apex-stays-omitted", nil)
+			expectImmutable(setName(omitted, "www"))
+
+			at := apexRecord("apex-stays-at", func(r *uddiv1alpha1.Record) { r.Spec.Name = "@" })
+			expectImmutable(setName(at, "www"))
+		})
+
+		It("rejects moving a named record to the apex or to another label", func() {
+			named := apexRecord("named", func(r *uddiv1alpha1.Record) { r.Spec.Name = "www" })
+			expectImmutable(setName(named, "@"))
+			expectImmutable(setName(named, ""))
+			expectImmutable(setName(named, "web"))
+			Expect(setName(named, "www")).To(Succeed())
 		})
 	})
 })

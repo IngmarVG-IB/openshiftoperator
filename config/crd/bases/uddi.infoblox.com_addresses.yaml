@@ -240,6 +240,18 @@ spec:
               address:
                 description: Address allocated or reserved in Universal DDI.
                 type: string
+              appliedTags:
+                description: |-
+                  AppliedTags lists, sorted, the tag keys the operator wrote on the Universal DDI
+                  object at the last successful sync: the ownership tags, the Connection's
+                  defaultTags and spec.tags. It is written together with Synced=True for
+                  observedGeneration. On the next sync a key listed here that is no longer wanted
+                  is removed from the object; keys the operator never wrote are left alone, and an
+                  empty list removes nothing.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               conditions:
                 description: Conditions hold Ready and Synced.
                 items:

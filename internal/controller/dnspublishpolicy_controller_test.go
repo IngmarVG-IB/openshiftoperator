@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	routev1 "github.com/openshift/api/route/v1"
@@ -488,5 +490,112 @@ var _ = Describe("DNSPublishPolicy controller", func() {
 		Expect(reconcilePolicy(policy)).To(Succeed())
 		Expect(policy.Status.Published).To(Equal(int32(1)))
 		Expect(policyRecords(policy)).To(HaveLen(1))
+	})
+
+	Context("ZonesResolved", func() {
+		zonesResolvedOf := func(p *uddiv1alpha1.DNSPublishPolicy) *metav1.Condition {
+			return meta.FindStatusCondition(p.Status.Conditions, uddiv1alpha1.ConditionZonesResolved)
+		}
+
+		makeIngress := func(name, host, ip string) {
+			ing := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+				Spec:       networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{Host: host}}},
+			}
+			Expect(k8sClient.Create(ctx, ing)).To(Succeed())
+			ing.Status.LoadBalancer.Ingress = []networkingv1.IngressLoadBalancerIngress{{IP: ip}}
+			Expect(k8sClient.Status().Update(ctx, ing)).To(Succeed())
+		}
+
+		It("names a missing zoneRef without changing Ready, and turns True once the AuthZone exists", func() {
+			makeReadyConnection(ns)
+			zone := readyZone("apps-zone", "apps.example.com.")
+			makeIngress("web", "www.apps.example.com", "192.0.2.60")
+			drainEvents()
+
+			policy := &uddiv1alpha1.DNSPublishPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "partial-policy", Namespace: ns},
+				Spec: uddiv1alpha1.DNSPublishPolicySpec{
+					Sources:  []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindIngress},
+					ZoneRefs: []uddiv1alpha1.ObjectRef{{Name: zone.Name}, {Name: "corp-zone"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+			Expect(reconcilePolicy(policy)).To(Succeed())
+
+			// Ready follows the working zone exactly as it would without the bad ref.
+			Expect(policy.Status.Published).To(Equal(int32(1)))
+			Expect(readyConditionOf(policy).Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyConditionOf(policy).Reason).To(Equal(uddiv1alpha1.ReasonRecordsNotReady))
+
+			resolved := zonesResolvedOf(policy)
+			Expect(resolved).NotTo(BeNil())
+			Expect(resolved.Status).To(Equal(metav1.ConditionFalse))
+			Expect(resolved.Reason).To(Equal(uddiv1alpha1.ReasonZoneNotFound))
+			Expect(resolved.Message).To(Equal("zoneRefs not found: corp-zone"))
+			Expect(resolved.ObservedGeneration).To(Equal(policy.Generation))
+
+			events := collectEvents()
+			Expect(events).To(ContainElement(And(
+				ContainSubstring("Warning"),
+				ContainSubstring(uddiv1alpha1.ReasonZoneNotFound),
+				ContainSubstring("corp-zone"),
+			)))
+
+			records := policyRecords(policy)
+			Expect(records).To(HaveLen(1))
+			_, err := recordRec.Reconcile(ctx, requestFor(&records[0]))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(reconcilePolicy(policy)).To(Succeed())
+			Expect(readyConditionOf(policy).Status).To(Equal(metav1.ConditionTrue))
+			Expect(readyConditionOf(policy).Reason).To(Equal(uddiv1alpha1.ReasonPublished))
+			Expect(zonesResolvedOf(policy).Status).To(Equal(metav1.ConditionFalse))
+
+			// The AuthZone only has to exist; it does not have to be Ready yet.
+			makeZone("corp-zone", "corp.example.com.")
+			drainEvents()
+
+			Expect(reconcilePolicy(policy)).To(Succeed())
+			resolved = zonesResolvedOf(policy)
+			Expect(resolved.Status).To(Equal(metav1.ConditionTrue))
+			Expect(resolved.Reason).To(Equal(uddiv1alpha1.ReasonZonesFound))
+			Expect(readyConditionOf(policy).Status).To(Equal(metav1.ConditionTrue))
+			Expect(readyConditionOf(policy).Reason).To(Equal(uddiv1alpha1.ReasonPublished))
+			Expect(collectEvents()).NotTo(ContainElement(ContainSubstring(uddiv1alpha1.ReasonZoneNotFound)))
+		})
+
+		It("lists every missing zoneRef once, sorted, and keeps Ready=False/ZonesNotReady when none resolves", func() {
+			makeReadyConnection(ns)
+			drainEvents()
+
+			policy := &uddiv1alpha1.DNSPublishPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "missing-policy", Namespace: ns},
+				Spec: uddiv1alpha1.DNSPublishPolicySpec{
+					Sources: []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindIngress},
+					ZoneRefs: []uddiv1alpha1.ObjectRef{
+						{Name: "zz-zone"}, {Name: "aa-zone"}, {Name: "zz-zone"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+			Expect(reconcilePolicy(policy)).To(Succeed())
+
+			Expect(readyConditionOf(policy).Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyConditionOf(policy).Reason).To(Equal(uddiv1alpha1.ReasonZonesNotReady))
+
+			resolved := zonesResolvedOf(policy)
+			Expect(resolved.Status).To(Equal(metav1.ConditionFalse))
+			Expect(resolved.Message).To(Equal("zoneRefs not found: aa-zone, zz-zone"))
+
+			var zoneNotFound []string
+			for _, e := range collectEvents() {
+				if strings.Contains(e, uddiv1alpha1.ReasonZoneNotFound) {
+					zoneNotFound = append(zoneNotFound, e)
+				}
+			}
+			Expect(zoneNotFound).To(HaveLen(1))
+			Expect(zoneNotFound[0]).To(ContainSubstring("zoneRefs not found: aa-zone, zz-zone"))
+		})
 	})
 })

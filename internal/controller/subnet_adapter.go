@@ -131,7 +131,7 @@ func (subnetAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*ipam
 // Diff compares the managed fields and builds a partial patch. Address, cidr and space
 // are immutable (CEL on address and parentRef, always on cidr) and are never patched.
 // dhcpHost, dhcpOptions and disableDhcp, unlike address and cidr, are mutable.
-func (subnetAdapter) Diff(spec *uddiv1alpha1.SubnetSpec, _ uddisync.Deps, t map[string]string, current *ipam.Subnet) (*ipam.Subnet, bool) {
+func (subnetAdapter) Diff(spec *uddiv1alpha1.SubnetSpec, _ uddisync.Deps, t tags.Desired, current *ipam.Subnet) (*ipam.Subnet, bool) {
 	patch := &ipam.Subnet{}
 	changed := false
 
