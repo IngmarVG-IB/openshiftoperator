@@ -24,6 +24,7 @@ package hostreg
 
 import (
 	"fmt"
+	"net/netip"
 
 	"k8s.io/apimachinery/pkg/types"
 
@@ -85,11 +86,25 @@ const DefaultMACAnnotation = DefaultAnnotationPrefix + "/" + AnnotationMAC
 const (
 	LabelPolicy = "uddi.infoblox.com/policy"
 	LabelNode   = "uddi.infoblox.com/node"
+	// LabelInterface carries the additionalInterfaces entry name on the registration
+	// generated for it. Primary registrations (one per Node) do not carry it.
+	LabelInterface = "uddi.infoblox.com/interface"
 	// TagSource is the Universal DDI tag key naming the Node an object was registered for.
 	TagSource = "uddi_operator_source"
 	// FieldManager is the server-side apply field manager for generated objects.
 	FieldManager = "uddi-operator/hostregistrationpolicy"
 )
+
+// NodeView.MACFrom values, in the order the MAC chain consults the sources.
+const (
+	MACFromAnnotation = "annotation"
+	MACFromNMState    = "nmstate"
+	MACFromMetal3     = "metal3"
+)
+
+// DefaultMetal3Namespace is the namespace BareMetalHosts are read from when
+// spec.macSource.metal3.namespace is empty.
+const DefaultMetal3Namespace = uddiv1alpha1.DefaultMetal3Namespace
 
 // MACSource is the resolved spec.macSource.
 type MACSource struct {
@@ -103,6 +118,13 @@ type MACSource struct {
 	// NMStateInterface names the interface to take the MAC from; empty means the interface
 	// carrying the registered address.
 	NMStateInterface string
+	// Metal3 enables reading Metal3 BareMetalHosts; Metal3Available says the
+	// metal3.io/v1alpha1 API exists on the cluster (the controller checks once with
+	// discovery). Metal3Namespace is where the controller lists BareMetalHosts from; empty
+	// means DefaultMetal3Namespace.
+	Metal3          bool
+	Metal3Available bool
+	Metal3Namespace string
 }
 
 // Key returns the effective MAC annotation key.
@@ -111,6 +133,22 @@ func (m MACSource) Key() string {
 		return DefaultMACAnnotation
 	}
 	return m.NodeAnnotation
+}
+
+// UseNMState reports whether NodeNetworkState is a MAC source: enabled in the spec and
+// served by the cluster.
+func (m MACSource) UseNMState() bool { return m.NMState && m.NMStateAvailable }
+
+// UseMetal3 reports whether Metal3 BareMetalHosts are a MAC source: enabled in the spec and
+// served by the cluster.
+func (m MACSource) UseMetal3() bool { return m.Metal3 && m.Metal3Available }
+
+// Metal3NamespaceOrDefault returns the namespace to list BareMetalHosts from.
+func (m MACSource) Metal3NamespaceOrDefault() string {
+	if m.Metal3Namespace == "" {
+		return DefaultMetal3Namespace
+	}
+	return m.Metal3Namespace
 }
 
 // SkipReason explains why a Node was not (or not yet) registered. The values are the
@@ -124,18 +162,28 @@ const (
 	SkipInvalidAnnotation   SkipReason = "InvalidAnnotation"   // a malformed hostname / address / mac value
 	SkipSpaceNotReady       SkipReason = "SpaceNotReady"       // the IPSpace CR is missing or has no status.id
 	SkipRegistrationPending SkipReason = "RegistrationPending" // the generated object exists but is not Ready yet
+	// SkipInvalidInterface means an additionalInterfaces entry cannot be resolved for the
+	// Node: its cidr does not parse, or inserting its hostnameSuffix does not give a valid
+	// DNS name.
+	SkipInvalidInterface SkipReason = "InvalidInterface"
 )
 
-// Skip records one Node that was not registered and why.
+// Skip records one Node (or one additional interface of a Node) that was not registered and
+// why.
 type Skip struct {
-	Node    NodeRef
-	Reason  SkipReason
-	Message string
+	Node NodeRef
+	// Interface names the additionalInterfaces entry the skip is about; empty for the
+	// Node's primary registration. Messages of an interface skip start with
+	// "interface <name>: ".
+	Interface string
+	Reason    SkipReason
+	Message   string
 }
 
 // NodeView is everything the planner needs to know about one Node. It is built by
-// ViewNode from a corev1.Node, then completed with a MAC from the annotation or from
-// NodeNetworkState.
+// ViewNode from a corev1.Node, then completed with a MAC by ResolveMAC (annotation,
+// NodeNetworkState, Metal3) and, when the policy has additionalInterfaces, with
+// Interfaces by ResolveInterfaces.
 type NodeView struct {
 	Ref NodeRef
 	// OptOut is true when the register annotation is "false".
@@ -144,12 +192,49 @@ type NodeView struct {
 	Address string
 	// MAC is the normalised lower-case colon-form MAC, empty when unknown.
 	MAC string
-	// MACFrom says where the MAC came from: "annotation", "nmstate" or "".
+	// MACFrom says where the MAC came from: MACFromAnnotation, MACFromNMState,
+	// MACFromMetal3 or "".
 	MACFrom string
 	// Hostname is the annotation value or the Node name.
 	Hostname string
 	// Invalid carries the message of an InvalidAnnotation skip; empty when the view is valid.
 	Invalid string
+	// Interfaces holds one resolved entry per spec.additionalInterfaces item, built by
+	// ResolveInterfaces. The planner looks entries up by name; a spec entry with no
+	// InterfaceView here is treated as having no matching address.
+	Interfaces []InterfaceView
+}
+
+// InterfaceView is one spec.additionalInterfaces entry resolved against one Node.
+type InterfaceView struct {
+	// Name is the entry's name.
+	Name string
+	// Address is the first IP inside the entry's cidr, in canonical text form; empty when
+	// no Node address or NodeNetworkState interface address matched.
+	Address string
+	// MAC is the normalised MAC of the NodeNetworkState interface or Metal3 NIC carrying
+	// Address, empty when neither knows it.
+	MAC string
+	// MACFrom is MACFromNMState, MACFromMetal3 or "".
+	MACFrom string
+	// Hostname is the Node's registered hostname with the entry's hostnameSuffix inserted
+	// after the first label. Empty when Invalid is set.
+	Hostname string
+	// Invalid carries the message of an InvalidInterface skip (an unparsable cidr or a
+	// suffix that makes the hostname invalid); empty when the entry resolved.
+	Invalid string
+}
+
+// Metal3Hardware answers the two questions the MAC chain asks of Metal3 inventory.
+// internal/metal3api implements it over the BareMetalHosts the controller lists; it is an
+// interface here because metal3api imports this package (for NormalizeMAC).
+type Metal3Hardware interface {
+	// MACForNode returns the MAC for a Node: the NIC carrying address, else the
+	// bootMACAddress of the host whose inspected hostname is nodeName. host is the
+	// BareMetalHost name.
+	MACForNode(address, nodeName string) (mac, host string, ok bool)
+	// MACForIP returns the MAC of the NIC carrying ip. host is the BareMetalHost name.
+	MACForIP(ip netip.Addr) (mac, host string, ok bool)
 }
 
 // SpaceState is the IPSpace CR as the planner sees it.
@@ -160,10 +245,12 @@ type SpaceState struct {
 
 // RegistrationState is an existing generated object as the planner sees it.
 type RegistrationState struct {
-	Name  string
-	Kind  RegistrationKind
-	Node  string // from the LabelNode label
-	Ready bool
+	Name string
+	Kind RegistrationKind
+	Node string // from the LabelNode label
+	// Interface is the LabelInterface label; empty for a Node's primary registration.
+	Interface string
+	Ready     bool
 	// Reason and Message come from the object's Ready condition when it is not Ready.
 	Reason  string
 	Message string
@@ -172,9 +259,11 @@ type RegistrationState struct {
 // DesiredRegistration is one generated object the policy wants to exist. Exactly one of
 // AddressSpec or FixedAddressSpec is set, matching Kind.
 type DesiredRegistration struct {
-	Name             string
-	Kind             RegistrationKind
-	Node             NodeRef
+	Name string
+	Kind RegistrationKind
+	Node NodeRef
+	// Interface is the additionalInterfaces entry name; empty for the primary registration.
+	Interface        string
 	Labels           map[string]string
 	Annotations      map[string]string
 	AddressSpec      *uddiv1alpha1.AddressSpec
@@ -182,11 +271,13 @@ type DesiredRegistration struct {
 }
 
 // Release deletes a generated object that should no longer exist (Node gone, opted out,
-// no longer selected, or its kind changed).
+// no longer selected, its kind changed, or its interface removed from the spec).
 type Release struct {
 	Name string
 	Kind RegistrationKind
 	Node NodeRef
+	// Interface is the additionalInterfaces entry name; empty for a primary registration.
+	Interface string
 }
 
 // Plan is the planner's output for one reconcile.

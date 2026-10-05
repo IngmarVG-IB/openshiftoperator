@@ -21,13 +21,16 @@ package v1alpha1
 // with apply.
 //
 // MACSource selects where a Node's MAC address comes from: first the annotation, then
-// (when enabled and available) NodeNetworkState.
+// (when enabled and available) NodeNetworkState, then (when enabled and available) Metal3
+// BareMetalHosts.
 type MACSourceApplyConfiguration struct {
 	// NodeAnnotation is the fully qualified annotation key holding the MAC. Defaults
 	// to uddi.infoblox.com/mac.
 	NodeAnnotation *string `json:"nodeAnnotation,omitempty"`
 	// NMState controls reading NodeNetworkState for the MAC.
 	NMState *NMStateSourceApplyConfiguration `json:"nmstate,omitempty"`
+	// Metal3 controls reading Metal3 BareMetalHosts for the MAC.
+	Metal3 *Metal3SourceApplyConfiguration `json:"metal3,omitempty"`
 }
 
 // MACSourceApplyConfiguration constructs a declarative configuration of the MACSource type for use with
@@ -49,5 +52,13 @@ func (b *MACSourceApplyConfiguration) WithNodeAnnotation(value string) *MACSourc
 // If called multiple times, the NMState field is set to the value of the last call.
 func (b *MACSourceApplyConfiguration) WithNMState(value *NMStateSourceApplyConfiguration) *MACSourceApplyConfiguration {
 	b.NMState = value
+	return b
+}
+
+// WithMetal3 sets the Metal3 field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Metal3 field is set to the value of the last call.
+func (b *MACSourceApplyConfiguration) WithMetal3(value *Metal3SourceApplyConfiguration) *MACSourceApplyConfiguration {
+	b.Metal3 = value
 	return b
 }

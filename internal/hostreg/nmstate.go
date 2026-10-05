@@ -85,6 +85,61 @@ func MACFromNodeNetworkState(currentState map[string]interface{}, iface string, 
 	return "", "", false
 }
 
+// AddressInPrefixFromNodeNetworkState returns the first address, in report order, of any
+// non-loopback interface in the unstructured status.currentState that lies inside prefix,
+// together with the name of the interface carrying it. Within an interface the ipv4 list
+// is searched before the ipv6 list; addresses are parsed with net/netip, so IPv4 and IPv6
+// prefixes both work and an address of the other family never matches. ok is false when no
+// interface has an address inside prefix.
+func AddressInPrefixFromNodeNetworkState(currentState map[string]interface{}, prefix netip.Prefix) (addr netip.Addr, iface string, ok bool) {
+	interfaces, _ := currentState["interfaces"].([]interface{})
+	for _, rawIface := range interfaces {
+		i, isMap := rawIface.(map[string]interface{})
+		if !isMap {
+			continue
+		}
+		if typ, _ := i["type"].(string); typ == "loopback" {
+			continue
+		}
+		name, _ := i["name"].(string)
+		for _, family := range []string{"ipv4", "ipv6"} {
+			if a, found := familyAddressInPrefix(i, family, prefix); found {
+				return a, name, true
+			}
+		}
+	}
+	return netip.Addr{}, "", false
+}
+
+// familyAddressInPrefix returns the first address in interface i's ipv4 or ipv6 block
+// (family) that lies inside prefix.
+func familyAddressInPrefix(i map[string]interface{}, family string, prefix netip.Prefix) (netip.Addr, bool) {
+	block, isMap := i[family].(map[string]interface{})
+	if !isMap {
+		return netip.Addr{}, false
+	}
+	entries, isSlice := block["address"].([]interface{})
+	if !isSlice {
+		return netip.Addr{}, false
+	}
+	for _, rawEntry := range entries {
+		entry, isMap := rawEntry.(map[string]interface{})
+		if !isMap {
+			continue
+		}
+		ipStr, _ := entry["ip"].(string)
+		got, err := netip.ParseAddr(strings.TrimSpace(ipStr))
+		if err != nil {
+			continue
+		}
+		got = got.WithZone("")
+		if prefix.Contains(got) {
+			return got, true
+		}
+	}
+	return netip.Addr{}, false
+}
+
 // macAddressOf reads and normalises an interface's mac-address field.
 func macAddressOf(i map[string]interface{}, name string) (mac string, matchedInterface string, ok bool) {
 	raw, _ := i["mac-address"].(string)

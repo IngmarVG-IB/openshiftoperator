@@ -90,8 +90,31 @@ type NMStateSource struct {
 	Interface string `json:"interface,omitempty"`
 }
 
+// DefaultMetal3Namespace is the namespace the OpenShift baremetal platform keeps its
+// BareMetalHosts in, and the default of Metal3Source.Namespace.
+const DefaultMetal3Namespace = "openshift-machine-api"
+
+// Metal3Source selects whether, and from which namespace, a Node's MAC is read from Metal3
+// BareMetalHosts.
+type Metal3Source struct {
+	// Enabled reads BareMetalHosts when the metal3.io/v1alpha1 API is present on the
+	// cluster. It is the last MAC source consulted, after the annotation and
+	// NodeNetworkState.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Namespace is the namespace BareMetalHosts are read from.
+	// +kubebuilder:default=openshift-machine-api
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
 // MACSource selects where a Node's MAC address comes from: first the annotation, then
-// (when enabled and available) NodeNetworkState.
+// (when enabled and available) NodeNetworkState, then (when enabled and available) Metal3
+// BareMetalHosts.
 type MACSource struct {
 	// NodeAnnotation is the fully qualified annotation key holding the MAC. Defaults
 	// to uddi.infoblox.com/mac.
@@ -104,6 +127,43 @@ type MACSource struct {
 	// NMState controls reading NodeNetworkState for the MAC.
 	// +optional
 	NMState NMStateSource `json:"nmstate,omitempty"`
+
+	// Metal3 controls reading Metal3 BareMetalHosts for the MAC.
+	// +optional
+	Metal3 Metal3Source `json:"metal3,omitempty"`
+}
+
+// AdditionalInterface registers one more address of each selected Node: the first Node
+// address, or NodeNetworkState interface address, inside CIDR. Each entry becomes its own
+// registration named <policy>-<node>-<name> with the label uddi.infoblox.com/interface.
+type AdditionalInterface struct {
+	// Name identifies the interface within the policy. It is part of the generated object
+	// names and the value of the uddi.infoblox.com/interface label.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// CIDR selects the interface's address: the first IPv4 or IPv6 address inside it found
+	// among the Node's status.addresses, then among the NodeNetworkState interface
+	// addresses.
+	// +kubebuilder:validation:MaxLength=43
+	// +kubebuilder:validation:Pattern=`^(((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])|(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(:[0-9a-fA-F]{1,4}){1,6}|:((:[0-9a-fA-F]{1,4}){1,7}|:))/(12[0-8]|1[01][0-9]|[1-9]?[0-9]))$`
+	CIDR string `json:"cidr"`
+
+	// SpaceRef names the IPSpace CR, in this namespace, that holds the interface address.
+	// Defaults to the policy's spaceRef. Only a name is accepted.
+	// +kubebuilder:validation:XValidation:rule="has(self.name) && size(self.name) > 0",message="spaceRef must set name"
+	// +optional
+	SpaceRef *ObjectRef `json:"spaceRef,omitempty"`
+
+	// HostnameSuffix is inserted after the first label of the Node's registered hostname,
+	// so -storage turns node1.example.com into node1-storage.example.com. A single-label
+	// hostname gets the suffix appended. Empty keeps the hostname unchanged.
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9-]*$`
+	// +optional
+	HostnameSuffix string `json:"hostnameSuffix,omitempty"`
 }
 
 // HostRegistrationPolicySpec selects which Nodes get registered in Universal DDI as an
@@ -136,6 +196,14 @@ type HostRegistrationPolicySpec struct {
 	// MACSource selects where a Node's MAC address comes from.
 	// +optional
 	MACSource MACSource `json:"macSource,omitempty"`
+
+	// AdditionalInterfaces registers further addresses of each selected Node, one
+	// registration per entry, using register.mode. At most 8, unique by name.
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	AdditionalInterfaces []AdditionalInterface `json:"additionalInterfaces,omitempty"`
 
 	// Tags are merged into every generated object's spec.tags.
 	// +optional
@@ -178,7 +246,8 @@ type HostRegistrationPolicyStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// Registered is the number of Nodes whose registration object is Ready.
+	// Registered is the number of registration objects that are Ready: one per Node, plus
+	// one per additional interface of each Node.
 	// +optional
 	Registered int32 `json:"registered,omitempty"`
 

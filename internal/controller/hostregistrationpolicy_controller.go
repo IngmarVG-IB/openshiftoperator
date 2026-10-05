@@ -287,19 +287,19 @@ func (r *HostRegistrationPolicyReconciler) listExisting(ctx context.Context, pol
 	out := make([]hostreg.RegistrationState, 0, len(addrList.Items)+len(fixedList.Items))
 	for i := range addrList.Items {
 		a := &addrList.Items[i]
-		out = append(out, registrationStateOf(a.Name, hostreg.KindAddress, a.Labels[hostreg.LabelNode], a.Status.Conditions))
+		out = append(out, registrationStateOf(a.Name, hostreg.KindAddress, a.Labels, a.Status.Conditions))
 	}
 	for i := range fixedList.Items {
 		f := &fixedList.Items[i]
-		out = append(out, registrationStateOf(f.Name, hostreg.KindFixedAddress, f.Labels[hostreg.LabelNode], f.Status.Conditions))
+		out = append(out, registrationStateOf(f.Name, hostreg.KindFixedAddress, f.Labels, f.Status.Conditions))
 	}
 	return out, nil
 }
 
 // registrationStateOf builds one hostreg.RegistrationState from a generated object's
-// name, kind, node label and Ready condition.
-func registrationStateOf(name string, kind hostreg.RegistrationKind, node string, conditions []metav1.Condition) hostreg.RegistrationState {
-	st := hostreg.RegistrationState{Name: name, Kind: kind, Node: node}
+// name, kind, labels (node and interface) and Ready condition.
+func registrationStateOf(name string, kind hostreg.RegistrationKind, lbls map[string]string, conditions []metav1.Condition) hostreg.RegistrationState {
+	st := hostreg.RegistrationState{Name: name, Kind: kind, Node: lbls[hostreg.LabelNode], Interface: lbls[hostreg.LabelInterface]}
 	if cond := meta.FindStatusCondition(conditions, uddiv1alpha1.ConditionReady); cond != nil {
 		st.Ready = cond.Status == metav1.ConditionTrue
 		if !st.Ready {

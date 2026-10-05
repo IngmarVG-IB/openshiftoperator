@@ -1,6 +1,8 @@
 # Registers every worker Node's InternalIP in the "corp" IPSpace: a DHCP FixedAddress
 # when the Node's MAC is known (from the uddi.infoblox.com/mac annotation or, failing
-# that, NodeNetworkState), otherwise a plain IPAM Address.
+# that, NodeNetworkState, then Metal3 BareMetalHosts), otherwise a plain IPAM Address.
+# A second registration per Node covers its storage network: the first Node address
+# inside 10.20.0.0/16, registered as <node>-storage in the "storage" IPSpace.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: HostRegistrationPolicy
 metadata:
@@ -26,6 +28,15 @@ spec:
     nmstate:
       enabled: true
       interface: ""
+    metal3:
+      enabled: true
+      namespace: openshift-machine-api
+  additionalInterfaces:
+    - name: storage
+      cidr: 10.20.0.0/16
+      spaceRef:
+        name: storage
+      hostnameSuffix: -storage
   tags:
     role: node
   lifecycle:

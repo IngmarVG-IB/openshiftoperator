@@ -31,7 +31,8 @@ type HostRegistrationPolicyStatusApplyConfiguration struct {
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// Conditions hold Ready.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
-	// Registered is the number of Nodes whose registration object is Ready.
+	// Registered is the number of registration objects that are Ready: one per Node, plus
+	// one per additional interface of each Node.
 	Registered *int32 `json:"registered,omitempty"`
 	// Pending is the number of registration objects that exist but are not Ready.
 	Pending *int32 `json:"pending,omitempty"`

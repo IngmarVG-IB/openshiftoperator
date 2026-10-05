@@ -64,132 +64,282 @@ func ChooseKind(mode RegisterMode, mac string) (RegistrationKind, bool) {
 }
 
 // PlanInput is everything Compute needs: the policy (for its metadata, connectionRef,
-// spaceRef, addressType, register mode/dhcpOptions, tags and lifecycle), the Node views
-// already selected and annotation/MAC-resolved, the IPSpace CR state the policy's
-// spaceRef names, and the registration objects this policy currently owns.
+// spaceRef, addressType, register mode/dhcpOptions, additionalInterfaces, tags and
+// lifecycle), the Node views already selected and annotation/MAC-resolved (and
+// interface-resolved, see ResolveInterfaces), the IPSpace CR state the policy's spaceRef
+// names, and the registration objects this policy currently owns.
 type PlanInput struct {
-	Policy   *uddiv1alpha1.HostRegistrationPolicy
-	Nodes    []NodeView
-	Space    SpaceState
+	Policy *uddiv1alpha1.HostRegistrationPolicy
+	Nodes  []NodeView
+	Space  SpaceState
+	// Spaces holds the state of the other IPSpace CRs that additionalInterfaces entries
+	// name in their own spaceRef, keyed by name (AdditionalSpaceNames lists them). A name
+	// with no entry counts as not ready. It may be nil when no entry names a space of its
+	// own; entries without a spaceRef use Space.
+	Spaces   map[string]SpaceState
 	Existing []RegistrationState
+}
+
+// slot identifies one registration a policy may own for a Node: its primary registration
+// (iface empty) or the one generated for an additionalInterfaces entry.
+type slot struct {
+	node  string
+	iface string
+}
+
+// planner holds the state Compute threads through its helpers.
+type planner struct {
+	in   PlanInput
+	mode RegisterMode
+	// existing indexes the policy's current objects by slot, then by kind, so a kind change
+	// can release the object of the other kind.
+	existing map[slot]map[RegistrationKind]RegistrationState
+	plan     Plan
 }
 
 // Compute turns Node views, IPSpace state and existing registration objects into the
 // Addresses/FixedAddresses a HostRegistrationPolicy should own, the objects to release,
-// and the Nodes skipped along with why. See DESIGN.md section 4.7, pipeline steps 2 to 7.
+// and the Nodes skipped along with why. See DESIGN.md section 4.7, pipeline steps 2 to 7
+// and the milestone 7 extensions.
 //
-// NoAddress, NoMAC, InvalidAnnotation and SpaceNotReady are all treated as transient,
-// retryable conditions: a Node hitting one of them keeps whatever registration object it
-// already has rather than having it released out from under it, mirroring how
-// internal/ipalloc.Compute freezes a Service on InvalidAnnotation or PoolNotReady. The
-// three conditions that do release an existing registration are exactly the ones
-// DESIGN.md names: the Node disappeared from the input, it opted out, or its chosen kind
-// changed.
+// Each Node gets a primary registration "<policy>-<node>" and, for every
+// spec.additionalInterfaces entry, one more "<policy>-<node>-<interface>" labelled with
+// LabelInterface. Interface registrations use the same register mode as the primary one
+// but resolve their own address, MAC and hostname (NodeView.Interfaces), and are planned
+// independently: a Node without an InternalIP still gets its interface registrations.
 //
-//nolint:gocyclo // the loop is a single linear pipeline; splitting it hides the order.
+// NoAddress, NoMAC, InvalidAnnotation, InvalidInterface and SpaceNotReady are all treated
+// as transient, retryable conditions: a slot hitting one of them keeps whatever
+// registration object it already has rather than having it released out from under it,
+// mirroring how internal/ipalloc.Compute freezes a Service on InvalidAnnotation or
+// PoolNotReady. The conditions that do release an existing registration are the Node
+// disappearing from the input, opting out, its chosen kind changing, and (for an interface
+// registration) the interface being removed from the spec.
 func Compute(in PlanInput) Plan {
-	var plan Plan
-
-	nodeRefs := make(map[string]NodeRef, len(in.Nodes))
-
-	existingByNode := make(map[string]map[RegistrationKind]RegistrationState, len(in.Existing))
+	p := &planner{
+		in:       in,
+		mode:     RegisterMode(in.Policy.Spec.Register.Mode),
+		existing: make(map[slot]map[RegistrationKind]RegistrationState, len(in.Existing)),
+	}
 	for _, e := range in.Existing {
-		byKind := existingByNode[e.Node]
+		s := slot{node: e.Node, iface: e.Interface}
+		byKind := p.existing[s]
 		if byKind == nil {
 			byKind = make(map[RegistrationKind]RegistrationState, 1)
-			existingByNode[e.Node] = byKind
+			p.existing[s] = byKind
 		}
 		byKind[e.Kind] = e
 	}
 
-	// wanted tracks every Node name whose existing registration must survive this
+	nodeRefs := make(map[string]NodeRef, len(in.Nodes))
+	// wanted tracks every Node name whose existing registrations must survive this
 	// round: it is in the input and did not opt out.
 	wanted := make(map[string]bool, len(in.Nodes))
-
-	// The CRD's RegisterMode (api/v1alpha1) and the planner's own RegisterMode share
-	// their string values but are distinct types, converted here at the one place the
-	// planner reads the policy's spec.
-	mode := RegisterMode(in.Policy.Spec.Register.Mode)
 
 	for _, v := range in.Nodes {
 		nodeRefs[v.Ref.Name] = v.Ref
 
 		if v.OptOut {
-			plan.Skips = append(plan.Skips, Skip{Node: v.Ref, Reason: SkipExcluded, Message: `register annotation is "false"`})
+			p.plan.Skips = append(p.plan.Skips, Skip{Node: v.Ref, Reason: SkipExcluded, Message: `register annotation is "false"`})
 			continue
 		}
 		wanted[v.Ref.Name] = true
 
 		if v.Invalid != "" {
-			plan.Skips = append(plan.Skips, Skip{Node: v.Ref, Reason: SkipInvalidAnnotation, Message: v.Invalid})
+			p.plan.Skips = append(p.plan.Skips, Skip{Node: v.Ref, Reason: SkipInvalidAnnotation, Message: v.Invalid})
 			continue
 		}
 
-		if v.Address == "" {
-			plan.Skips = append(plan.Skips, Skip{
-				Node:    v.Ref,
-				Reason:  SkipNoAddress,
-				Message: fmt.Sprintf("node has no %s address", in.Policy.Spec.AddressType),
-			})
-			continue
-		}
-
-		kind, ok := ChooseKind(mode, v.MAC)
-		if !ok {
-			plan.Skips = append(plan.Skips, Skip{
-				Node:    v.Ref,
-				Reason:  SkipNoMAC,
-				Message: fmt.Sprintf("mode %s needs a MAC; no annotation and no NodeNetworkState", mode),
-			})
-			continue
-		}
-
-		if !in.Space.Ready {
-			plan.Skips = append(plan.Skips, Skip{
-				Node:    v.Ref,
-				Reason:  SkipSpaceNotReady,
-				Message: fmt.Sprintf("space %s has no status.id yet", in.Space.Name),
-			})
-			continue
-		}
-
-		plan.Ensure = append(plan.Ensure, buildDesired(in.Policy, v, kind))
-
-		for exKind, ex := range existingByNode[v.Ref.Name] {
-			if exKind == kind {
-				continue
-			}
-			plan.Release = append(plan.Release, Release{Name: ex.Name, Kind: ex.Kind, Node: v.Ref})
-		}
-
-		if ex, ok := existingByNode[v.Ref.Name][kind]; ok {
-			if ex.Ready {
-				plan.Registered++
-			} else {
-				plan.Pending++
-				plan.Skips = append(plan.Skips, Skip{
-					Node:    v.Ref,
-					Reason:  SkipRegistrationPending,
-					Message: fmt.Sprintf("%s: %s", ex.Reason, ex.Message),
-				})
-			}
+		p.planPrimary(v)
+		for _, entry := range in.Policy.Spec.AdditionalInterfaces {
+			p.planInterface(v, entry)
 		}
 	}
 
-	for node, byKind := range existingByNode {
-		if wanted[node] {
+	p.releaseStale(nodeRefs, wanted)
+	p.sort()
+	return p.plan
+}
+
+// planPrimary plans the Node's own registration, in the order the pipeline checks it:
+// address, kind, space.
+func (p *planner) planPrimary(v NodeView) {
+	if v.Address == "" {
+		p.skip(Skip{
+			Node:    v.Ref,
+			Reason:  SkipNoAddress,
+			Message: fmt.Sprintf("node has no %s address", p.in.Policy.Spec.AddressType),
+		})
+		return
+	}
+
+	kind, ok := ChooseKind(p.mode, v.MAC)
+	if !ok {
+		p.skip(Skip{
+			Node:    v.Ref,
+			Reason:  SkipNoMAC,
+			Message: fmt.Sprintf("mode %s needs a MAC; no annotation and no NodeNetworkState", p.mode),
+		})
+		return
+	}
+
+	if space := p.in.Space; !space.Ready {
+		p.skip(Skip{
+			Node:    v.Ref,
+			Reason:  SkipSpaceNotReady,
+			Message: fmt.Sprintf("space %s has no status.id yet", space.Name),
+		})
+		return
+	}
+
+	p.ensure(buildDesired(p.in.Policy, v.Ref, kind, registrationTarget{
+		name:     RegistrationName(p.in.Policy.Name, v.Ref.Name),
+		address:  v.Address,
+		mac:      v.MAC,
+		hostname: v.Hostname,
+		space:    p.in.Policy.Spec.SpaceRef,
+		comment:  fmt.Sprintf("Registered by HostRegistrationPolicy %s/%s for Node %s", p.in.Policy.Namespace, p.in.Policy.Name, v.Ref.Name),
+	}), "")
+}
+
+// planInterface plans the registration of one additionalInterfaces entry of a Node. A spec
+// entry the view has no resolution for counts as having no matching address.
+func (p *planner) planInterface(v NodeView, entry uddiv1alpha1.AdditionalInterface) {
+	iv := InterfaceView{Name: entry.Name}
+	for _, candidate := range v.Interfaces {
+		if candidate.Name == entry.Name {
+			iv = candidate
+			break
+		}
+	}
+
+	if iv.Invalid != "" {
+		p.skip(Skip{Node: v.Ref, Interface: entry.Name, Reason: SkipInvalidInterface, Message: interfaceMessage(entry.Name, iv.Invalid)})
+		return
+	}
+	if iv.Address == "" {
+		p.skip(Skip{
+			Node:      v.Ref,
+			Interface: entry.Name,
+			Reason:    SkipNoAddress,
+			Message:   interfaceMessage(entry.Name, fmt.Sprintf("no Node or NodeNetworkState address inside %s", entry.CIDR)),
+		})
+		return
+	}
+
+	kind, ok := ChooseKind(p.mode, iv.MAC)
+	if !ok {
+		p.skip(Skip{
+			Node:      v.Ref,
+			Interface: entry.Name,
+			Reason:    SkipNoMAC,
+			Message:   interfaceMessage(entry.Name, fmt.Sprintf("mode %s needs a MAC; no NodeNetworkState interface or Metal3 NIC carries %s", p.mode, iv.Address)),
+		})
+		return
+	}
+
+	spaceRef := interfaceSpaceRef(p.in.Policy, entry)
+	if space := p.spaceState(spaceRef); !space.Ready {
+		p.skip(Skip{
+			Node:      v.Ref,
+			Interface: entry.Name,
+			Reason:    SkipSpaceNotReady,
+			Message:   interfaceMessage(entry.Name, fmt.Sprintf("space %s has no status.id yet", space.Name)),
+		})
+		return
+	}
+
+	p.ensure(buildDesired(p.in.Policy, v.Ref, kind, registrationTarget{
+		name:     InterfaceRegistrationName(p.in.Policy.Name, v.Ref.Name, entry.Name),
+		iface:    entry.Name,
+		address:  iv.Address,
+		mac:      iv.MAC,
+		hostname: iv.Hostname,
+		space:    spaceRef,
+		comment: fmt.Sprintf("Registered by HostRegistrationPolicy %s/%s for Node %s interface %s",
+			p.in.Policy.Namespace, p.in.Policy.Name, v.Ref.Name, entry.Name),
+	}), entry.Name)
+}
+
+// spaceState returns the planner's view of the IPSpace CR ref names: Space for the policy's
+// own spaceRef, otherwise the entry in Spaces (not ready when absent).
+func (p *planner) spaceState(ref uddiv1alpha1.ObjectRef) SpaceState {
+	if ref.Name == p.in.Policy.Spec.SpaceRef.Name {
+		return p.in.Space
+	}
+	if s, ok := p.in.Spaces[ref.Name]; ok {
+		return s
+	}
+	return SpaceState{Name: ref.Name}
+}
+
+// skip records a skip.
+func (p *planner) skip(s Skip) { p.plan.Skips = append(p.plan.Skips, s) }
+
+// ensure adds d to the plan, releases the object of the other kind that the same slot
+// already has (a kind change), and counts the slot as registered or pending when its
+// object of the chosen kind already exists. iface is d's interface name, "" for a primary
+// registration.
+func (p *planner) ensure(d DesiredRegistration, iface string) {
+	p.plan.Ensure = append(p.plan.Ensure, d)
+
+	s := slot{node: d.Node.Name, iface: iface}
+	for exKind, ex := range p.existing[s] {
+		if exKind == d.Kind {
 			continue
 		}
-		ref, ok := nodeRefs[node]
+		p.plan.Release = append(p.plan.Release, Release{Name: ex.Name, Kind: ex.Kind, Node: d.Node, Interface: iface})
+	}
+
+	ex, ok := p.existing[s][d.Kind]
+	if !ok {
+		return
+	}
+	if ex.Ready {
+		p.plan.Registered++
+		return
+	}
+	p.plan.Pending++
+	msg := fmt.Sprintf("%s: %s", ex.Reason, ex.Message)
+	if iface != "" {
+		msg = interfaceMessage(iface, msg)
+	}
+	p.skip(Skip{Node: d.Node, Interface: iface, Reason: SkipRegistrationPending, Message: msg})
+}
+
+// releaseStale releases the existing objects no slot of this round keeps: those of a Node
+// that is gone from the input or opted out, and interface registrations whose interface is
+// no longer in the spec (for any Node still in the input, even one frozen on an invalid
+// annotation: removing an interface from the spec is deliberate).
+func (p *planner) releaseStale(nodeRefs map[string]NodeRef, wanted map[string]bool) {
+	specIfaces := make(map[string]bool, len(p.in.Policy.Spec.AdditionalInterfaces))
+	for _, e := range p.in.Policy.Spec.AdditionalInterfaces {
+		specIfaces[e.Name] = true
+	}
+
+	for s, byKind := range p.existing {
+		if wanted[s.node] && (s.iface == "" || specIfaces[s.iface]) {
+			continue
+		}
+		ref, ok := nodeRefs[s.node]
 		if !ok {
-			ref = NodeRef{Name: node}
+			ref = NodeRef{Name: s.node}
 		}
 		for _, ex := range byKind {
-			plan.Release = append(plan.Release, Release{Name: ex.Name, Kind: ex.Kind, Node: ref})
+			p.plan.Release = append(p.plan.Release, Release{Name: ex.Name, Kind: ex.Kind, Node: ref, Interface: s.iface})
 		}
 	}
+}
 
-	sort.Slice(plan.Ensure, func(i, j int) bool { return plan.Ensure[i].Node.Name < plan.Ensure[j].Node.Name })
+// sort puts the plan in a deterministic order.
+func (p *planner) sort() {
+	plan := &p.plan
+	sort.Slice(plan.Ensure, func(i, j int) bool {
+		if plan.Ensure[i].Node.Name != plan.Ensure[j].Node.Name {
+			return plan.Ensure[i].Node.Name < plan.Ensure[j].Node.Name
+		}
+		return plan.Ensure[i].Name < plan.Ensure[j].Name
+	})
 	sort.Slice(plan.Release, func(i, j int) bool {
 		if plan.Release[i].Node.Name != plan.Release[j].Node.Name {
 			return plan.Release[i].Node.Name < plan.Release[j].Node.Name
@@ -197,34 +347,58 @@ func Compute(in PlanInput) Plan {
 		return plan.Release[i].Name < plan.Release[j].Name
 	})
 	sort.Slice(plan.Skips, func(i, j int) bool {
-		if plan.Skips[i].Node.Name != plan.Skips[j].Node.Name {
-			return plan.Skips[i].Node.Name < plan.Skips[j].Node.Name
+		a, b := plan.Skips[i], plan.Skips[j]
+		if a.Node.Name != b.Node.Name {
+			return a.Node.Name < b.Node.Name
 		}
-		return plan.Skips[i].Reason < plan.Skips[j].Reason
+		if a.Reason != b.Reason {
+			return a.Reason < b.Reason
+		}
+		if a.Interface != b.Interface {
+			return a.Interface < b.Interface
+		}
+		return a.Message < b.Message
 	})
-
-	return plan
 }
 
-// buildDesired assembles the DesiredRegistration for one Node view already known to
+// interfaceMessage prefixes msg with the interface it is about.
+func interfaceMessage(iface, msg string) string {
+	return fmt.Sprintf("interface %s: %s", iface, msg)
+}
+
+// registrationTarget is what one generated object registers: the primary registration of a
+// Node or the one of an additional interface.
+type registrationTarget struct {
+	name     string
+	iface    string // additionalInterfaces entry name; empty for the primary registration
+	address  string
+	mac      string
+	hostname string
+	space    uddiv1alpha1.ObjectRef
+	comment  string
+}
+
+// buildDesired assembles the DesiredRegistration for one target of a Node already known to
 // want a registration of kind.
-func buildDesired(p *uddiv1alpha1.HostRegistrationPolicy, v NodeView, kind RegistrationKind) DesiredRegistration {
+func buildDesired(p *uddiv1alpha1.HostRegistrationPolicy, node NodeRef, kind RegistrationKind, t registrationTarget) DesiredRegistration {
 	tags := make(map[string]string, len(p.Spec.Tags)+1)
 	for k, val := range p.Spec.Tags {
 		tags[k] = val
 	}
-	tags[TagSource] = v.Ref.String()
-
-	comment := fmt.Sprintf("Registered by HostRegistrationPolicy %s/%s for Node %s", p.Namespace, p.Name, v.Ref.Name)
+	tags[TagSource] = node.String()
 
 	d := DesiredRegistration{
-		Name: RegistrationName(p.Name, v.Ref.Name),
-		Kind: kind,
-		Node: v.Ref,
+		Name:      t.name,
+		Kind:      kind,
+		Node:      node,
+		Interface: t.iface,
 		Labels: map[string]string{
 			LabelPolicy: p.Name,
-			LabelNode:   v.Ref.Name,
+			LabelNode:   node.Name,
 		},
+	}
+	if t.iface != "" {
+		d.Labels[LabelInterface] = t.iface
 	}
 
 	switch kind {
@@ -235,13 +409,13 @@ func buildDesired(p *uddiv1alpha1.HostRegistrationPolicy, v NodeView, kind Regis
 				Tags:          tags,
 				Lifecycle:     p.Spec.Lifecycle,
 			},
-			SpaceRef:    p.Spec.SpaceRef,
-			Address:     v.Address,
+			SpaceRef:    t.space,
+			Address:     t.address,
 			MatchType:   "mac",
-			MatchValue:  v.MAC,
-			Name:        v.Hostname,
-			Hostname:    v.Hostname,
-			Comment:     comment,
+			MatchValue:  t.mac,
+			Name:        t.hostname,
+			Hostname:    t.hostname,
+			Comment:     t.comment,
 			DHCPOptions: p.Spec.Register.DHCPOptions,
 		}
 	case KindAddress:
@@ -251,13 +425,13 @@ func buildDesired(p *uddiv1alpha1.HostRegistrationPolicy, v NodeView, kind Regis
 				Tags:          tags,
 				Lifecycle:     p.Spec.Lifecycle,
 			},
-			SpaceRef: p.Spec.SpaceRef,
-			Address:  v.Address,
-			Names:    []uddiv1alpha1.AddressName{{Name: v.Hostname, Type: "user"}},
-			Comment:  comment,
+			SpaceRef: t.space,
+			Address:  t.address,
+			Names:    []uddiv1alpha1.AddressName{{Name: t.hostname, Type: "user"}},
+			Comment:  t.comment,
 		}
-		if v.MAC != "" {
-			spec.HWAddr = v.MAC
+		if t.mac != "" {
+			spec.HWAddr = t.mac
 		}
 		d.AddressSpec = spec
 	}
