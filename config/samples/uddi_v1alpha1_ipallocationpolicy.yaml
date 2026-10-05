@@ -1,7 +1,10 @@
 # Allocates a Universal DDI address from the "lb-pool" Range for every LoadBalancer
 # Service in this namespace labelled lb: uddi that also carries the
 # uddi.infoblox.com/allocate: "true" annotation, and writes the result into MetalLB's
-# metallb.io/loadBalancerIPs annotation.
+# metallb.io/loadBalancerIPs annotation. A dual-stack Service gets one address per IP
+# family: its IPv6 address comes from the "lb-pool-v6" Range, and the annotation carries
+# both addresses comma-separated. The pools are mirrored into MetalLB IPAddressPools
+# (autoAssign false) so MetalLB announces the assigned addresses.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: IPAllocationPolicy
 metadata:
@@ -12,6 +15,8 @@ metadata:
 spec:
   connectionRef:
     name: default
+  targets:
+    - Service
   selector:
     matchLabels:
       lb: uddi
@@ -19,9 +24,15 @@ spec:
   allocateFrom:
     rangeRef:
       name: lb-pool
+  allocateFromIPv6:
+    rangeRef:
+      name: lb-pool-v6
   assignVia:
     mode: Annotation
     annotation: metallb.io/loadBalancerIPs
+  metallb:
+    mirrorPools: true
+    namespace: metallb-system
   tags:
     team: platform
   addressLifecycle:

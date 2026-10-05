@@ -101,30 +101,14 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 	svcByName := make(map[string]*corev1.Service, len(svcList.Items))
-	views := make([]ipalloc.ServiceView, 0, len(svcList.Items))
+	claims := make([]ipalloc.Claim, 0, len(svcList.Items))
 	for i := range svcList.Items {
 		svc := &svcList.Items[i]
 		svcByName[svc.Name] = svc
-		views = append(views, ipalloc.ViewService(svc, via, ""))
+		claims = append(claims, ipalloc.ViewService(svc, via, ""))
 	}
 
-	// Step 4: Pools. The policy's own pool plus every distinct per-Service override.
-	poolRefs := map[ipalloc.PoolRef]bool{ipalloc.PolicyPool(policy): true}
-	for _, v := range views {
-		if v.Pool != nil {
-			poolRefs[*v.Pool] = true
-		}
-	}
-	pools := make(map[ipalloc.PoolRef]ipalloc.PoolState, len(poolRefs))
-	for ref := range poolRefs {
-		state, err := r.resolvePool(ctx, policy.Namespace, ref)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		pools[ref] = state
-	}
-
-	// Step 5: Addresses this policy already owns.
+	// Step 4: Addresses this policy already owns.
 	var addrList uddiv1alpha1.AddressList
 	if err := r.List(ctx, &addrList, client.InNamespace(policy.Namespace),
 		client.MatchingLabels{ipalloc.LabelPolicy: policy.Name}); err != nil {
@@ -135,28 +119,28 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 	for i := range addrList.Items {
 		a := &addrList.Items[i]
 		priorAddressNames[a.Name] = true
-		st := ipalloc.AddressState{
-			Name:    a.Name,
-			Service: a.Labels[ipalloc.LabelService],
-			Address: a.Status.Address,
+		existing = append(existing, ipalloc.AddressStateOf(a))
+	}
+
+	// Step 5: Pools. The policy's pools, every distinct per-Service override and the
+	// pools existing Addresses were allocated from.
+	poolRefs := ipalloc.PoolRefs(policy, claims, existing)
+	pools := make(map[ipalloc.PoolRef]ipalloc.PoolState, len(poolRefs))
+	for _, ref := range poolRefs {
+		state, err := r.resolvePool(ctx, policy.Namespace, ref)
+		if err != nil {
+			return ctrl.Result{}, err
 		}
-		if cond := meta.FindStatusCondition(a.Status.Conditions, uddiv1alpha1.ConditionReady); cond != nil {
-			st.Ready = cond.Status == metav1.ConditionTrue
-			if !st.Ready {
-				st.Reason = cond.Reason
-				st.Message = cond.Message
-			}
-		}
-		existing = append(existing, st)
+		pools[ref] = state
 	}
 
 	// Step 6: plan.
-	plan := ipalloc.Compute(ipalloc.PlanInput{Policy: policy, Services: views, Pools: pools, Existing: existing})
+	plan := ipalloc.Compute(ipalloc.PlanInput{Policy: policy, Claims: claims, Pools: pools, Existing: existing})
 
 	// Step 7: Ensure.
 	for _, da := range plan.Ensure {
-		svc, ok := svcByName[da.Service.Name]
-		if !ok {
+		svc, ok := svcByName[da.Target.Name]
+		if da.Target.Kind != ipalloc.TargetService || !ok {
 			// The Service disappeared between the List above and now; the next
 			// reconcile (woken by the delete) releases it instead.
 			continue
@@ -170,45 +154,51 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 		if !priorAddressNames[da.Name] {
 			r.Runtime.Eventf(policy, svc, corev1.EventTypeNormal, "Allocated", uddisync.ActionAllocate,
-				"allocated Address %s for Service %s", da.Name, da.Service.Name)
+				"allocated Address %s for Service %s", da.Name, da.Target.Name)
 		}
 	}
 
 	// Step 8: Assign.
 	for _, as := range plan.Assign {
-		svc, ok := svcByName[as.Service.Name]
-		if !ok {
+		svc, ok := svcByName[as.Target.Name]
+		if as.Target.Kind != ipalloc.TargetService || !ok {
 			continue
 		}
-		if err := r.Patch(ctx, svc, client.RawPatch(types.MergePatchType, ipalloc.AssignmentPatch(via, as.Value))); err != nil {
+		if err := r.Patch(ctx, svc, client.RawPatch(types.MergePatchType, ipalloc.AssignmentPatch(via, as.Value()))); err != nil {
 			return ctrl.Result{}, err
 		}
 		r.Runtime.Eventf(policy, svc, corev1.EventTypeNormal, "Assigned", uddisync.ActionAssign,
-			"assigned %s to Service %s", as.Value, as.Service.Name)
+			"assigned %s to Service %s", as.Value(), as.Target.Name)
 	}
 
-	// Step 9: Release.
-	for _, rel := range plan.Release {
+	// Step 9: Release. First clear the assignment of every target released as a whole,
+	// if it still holds only its own addresses, then delete the Addresses.
+	for _, un := range plan.Unassign {
+		if un.Target.Kind != ipalloc.TargetService {
+			continue
+		}
 		var svc corev1.Service
-		err := r.Get(ctx, client.ObjectKey{Namespace: policy.Namespace, Name: rel.Service.Name}, &svc)
+		err := r.Get(ctx, client.ObjectKey{Namespace: policy.Namespace, Name: un.Target.Name}, &svc)
 		switch {
 		case apierrors.IsNotFound(err):
 			// The Service is gone; nothing left to clear.
 		case err != nil:
 			return ctrl.Result{}, err
 		default:
-			if ipalloc.AssignmentMatches(&svc, via, rel.ClearValue) {
+			if un.Applies(ipalloc.CurrentAssignmentValues(&svc, via)) {
 				if err := r.Patch(ctx, &svc, client.RawPatch(types.MergePatchType, ipalloc.ClearAssignmentPatch(via))); err != nil {
 					return ctrl.Result{}, err
 				}
 			}
 		}
+	}
+	for _, rel := range plan.Release {
 		addr := &uddiv1alpha1.Address{ObjectMeta: metav1.ObjectMeta{Name: rel.AddressName, Namespace: policy.Namespace}}
 		if err := r.Delete(ctx, addr); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
 		r.Runtime.Eventf(policy, nil, corev1.EventTypeNormal, "Released", uddisync.ActionRelease,
-			"released Address %s for Service %s", rel.AddressName, rel.Service.Name)
+			"released Address %s for Service %s", rel.AddressName, rel.Target.Name)
 	}
 
 	r.emitSkipEvents(policy, plan.Skips)
@@ -297,8 +287,8 @@ func desiredAddressApplyConfiguration(
 }
 
 // resolvePool reads the Subnet, Range or AddressBlock CR a PoolRef names in namespace
-// and builds the ipalloc.PoolState the planner needs. A missing CR is Ready: false with
-// a zero SpaceRef, per DESIGN.md section 4.7 step 3.
+// and builds the ipalloc.PoolState the planner needs, family included. A missing CR is
+// Ready: false with a zero SpaceRef, per DESIGN.md section 4.7 step 3.
 func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespace string, ref ipalloc.PoolRef) (ipalloc.PoolState, error) {
 	key := client.ObjectKey{Namespace: namespace, Name: ref.Name}
 	switch ref.Kind {
@@ -310,7 +300,7 @@ func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespac
 		case err != nil:
 			return ipalloc.PoolState{}, err
 		default:
-			return ipalloc.PoolState{Ref: ref, Ready: s.Status.ID != "", SpaceRef: s.Spec.SpaceRef}, nil
+			return ipalloc.SubnetPoolState(&s), nil
 		}
 	case ipalloc.PoolRange:
 		var rg uddiv1alpha1.Range
@@ -320,7 +310,7 @@ func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespac
 		case err != nil:
 			return ipalloc.PoolState{}, err
 		default:
-			return ipalloc.PoolState{Ref: ref, Ready: rg.Status.ID != "", SpaceRef: rg.Spec.SpaceRef}, nil
+			return ipalloc.RangePoolState(&rg), nil
 		}
 	case ipalloc.PoolAddressBlock:
 		var b uddiv1alpha1.AddressBlock
@@ -330,7 +320,7 @@ func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespac
 		case err != nil:
 			return ipalloc.PoolState{}, err
 		default:
-			return ipalloc.PoolState{Ref: ref, Ready: b.Status.ID != "", SpaceRef: b.Spec.SpaceRef}, nil
+			return ipalloc.AddressBlockPoolState(&b), nil
 		}
 	default:
 		return ipalloc.PoolState{Ref: ref}, nil
@@ -360,7 +350,7 @@ func toSkippedServices(skips []ipalloc.Skip) []uddiv1alpha1.SkippedService {
 	out := make([]uddiv1alpha1.SkippedService, 0, len(skips))
 	for _, sk := range skips {
 		out = append(out, uddiv1alpha1.SkippedService{
-			Service: sk.Service.Name,
+			Service: sk.Target.Name,
 			Reason:  string(sk.Reason),
 			Message: sk.Message,
 		})
@@ -399,7 +389,7 @@ func exampleServices(skips []ipalloc.Skip, max int) []string {
 	seen := make(map[string]bool, max)
 	out := make([]string, 0, max)
 	for _, sk := range skips {
-		s := sk.Service.String()
+		s := sk.Target.String()
 		if seen[s] {
 			continue
 		}

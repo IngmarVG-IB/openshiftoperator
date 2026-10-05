@@ -18,30 +18,43 @@ limitations under the License.
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // IPAllocationPolicySpecApplyConfiguration represents a declarative configuration of the IPAllocationPolicySpec type for use
 // with apply.
 //
-// IPAllocationPolicySpec selects which Services get a Universal DDI IPAM address
-// allocated and written back. See DESIGN.md section 4.7 for the full pipeline.
+// IPAllocationPolicySpec selects which Services and EgressIPs get Universal DDI IPAM
+// addresses allocated and written back. See DESIGN.md section 4.7 for the full pipeline.
 type IPAllocationPolicySpecApplyConfiguration struct {
 	// ConnectionRef names the Connection used by every Address this policy
 	// generates. Empty means the Connection called "default" in this namespace.
 	ConnectionRef *ConnectionRefApplyConfiguration `json:"connectionRef,omitempty"`
-	// Selector selects the Services in this namespace this policy considers. Empty
-	// selects every Service in the namespace.
+	// Targets selects which kinds of objects claim addresses: Service (type
+	// LoadBalancer Services in this namespace) and EgressIP (cluster-scoped
+	// OVN-Kubernetes EgressIPs). Defaults to Service only. Addresses already allocated
+	// for a kind that is removed from this list are left in place.
+	Targets []apiv1alpha1.TargetKind `json:"targets,omitempty"`
+	// Selector selects the Services in this namespace, and the EgressIPs, this policy
+	// considers. Empty selects every one.
 	Selector *v1.LabelSelectorApplyConfiguration `json:"selector,omitempty"`
 	// RequireAnnotation, when true (the default), only allocates for Services that
 	// carry the uddi.infoblox.com/allocate: "true" annotation. When false, every
 	// selected type: LoadBalancer Service is allocated for unless it opts out with
-	// uddi.infoblox.com/allocate: "false".
+	// uddi.infoblox.com/allocate: "false". EgressIPs always need the annotation.
 	RequireAnnotation *bool `json:"requireAnnotation,omitempty"`
-	// AllocateFrom selects the pool this policy allocates Addresses from.
+	// AllocateFrom selects the pool this policy allocates Addresses from. IPv4 slots
+	// use it, and IPv6 slots too when it is an IPv6 pool and allocateFromIPv6 is unset.
 	AllocateFrom *AllocateFromApplyConfiguration `json:"allocateFrom,omitempty"`
+	// AllocateFromIPv6 selects the pool IPv6 slots (the IPv6 address of a dual-stack
+	// Service) are allocated from. Optional: without it IPv6 slots use allocateFrom
+	// when that is an IPv6 pool.
+	AllocateFromIPv6 *AllocateFromApplyConfiguration `json:"allocateFromIPv6,omitempty"`
 	// AssignVia selects how the allocated address is written back onto a Service.
 	AssignVia *AssignViaApplyConfiguration `json:"assignVia,omitempty"`
+	// MetalLB configures mirroring of this policy's pools into MetalLB IPAddressPools.
+	MetalLB *MetalLBMirrorApplyConfiguration `json:"metallb,omitempty"`
 	// Tags are merged into every generated Address's spec.tags.
 	Tags map[string]string `json:"tags,omitempty"`
 	// AddressLifecycle is copied onto every generated Address's spec.lifecycle.
@@ -59,6 +72,16 @@ func IPAllocationPolicySpec() *IPAllocationPolicySpecApplyConfiguration {
 // If called multiple times, the ConnectionRef field is set to the value of the last call.
 func (b *IPAllocationPolicySpecApplyConfiguration) WithConnectionRef(value *ConnectionRefApplyConfiguration) *IPAllocationPolicySpecApplyConfiguration {
 	b.ConnectionRef = value
+	return b
+}
+
+// WithTargets adds the given value to the Targets field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Targets field.
+func (b *IPAllocationPolicySpecApplyConfiguration) WithTargets(values ...apiv1alpha1.TargetKind) *IPAllocationPolicySpecApplyConfiguration {
+	for i := range values {
+		b.Targets = append(b.Targets, values[i])
+	}
 	return b
 }
 
@@ -86,11 +109,27 @@ func (b *IPAllocationPolicySpecApplyConfiguration) WithAllocateFrom(value *Alloc
 	return b
 }
 
+// WithAllocateFromIPv6 sets the AllocateFromIPv6 field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AllocateFromIPv6 field is set to the value of the last call.
+func (b *IPAllocationPolicySpecApplyConfiguration) WithAllocateFromIPv6(value *AllocateFromApplyConfiguration) *IPAllocationPolicySpecApplyConfiguration {
+	b.AllocateFromIPv6 = value
+	return b
+}
+
 // WithAssignVia sets the AssignVia field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the AssignVia field is set to the value of the last call.
 func (b *IPAllocationPolicySpecApplyConfiguration) WithAssignVia(value *AssignViaApplyConfiguration) *IPAllocationPolicySpecApplyConfiguration {
 	b.AssignVia = value
+	return b
+}
+
+// WithMetalLB sets the MetalLB field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MetalLB field is set to the value of the last call.
+func (b *IPAllocationPolicySpecApplyConfiguration) WithMetalLB(value *MetalLBMirrorApplyConfiguration) *IPAllocationPolicySpecApplyConfiguration {
+	b.MetalLB = value
 	return b
 }
 

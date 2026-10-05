@@ -27,7 +27,8 @@ import (
 // with apply.
 //
 // IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
-// Services and writes them back as a Service annotation or spec.loadBalancerIP.
+// Services, one per IP family, and OVN-Kubernetes EgressIPs, and writes them back as a
+// Service annotation, spec.loadBalancerIP or the EgressIP's spec.egressIPs.
 type IPAllocationPolicyApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`

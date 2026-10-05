@@ -1,0 +1,49 @@
+# Hand-written, minimal stand-in for the OVN-Kubernetes EgressIP CRD
+# (egressips.k8s.ovn.org), used by internal/egressip's envtest suite and by any
+# IPAllocationPolicy controller envtest that needs a real EgressIP resource. It is not
+# copied from upstream: IPAllocationPolicy reads EgressIPs as unstructured data and only
+# touches metadata and spec.egressIPs, so this declares just the group, version, kind,
+# cluster scope and the parts of the upstream schema that matter to it: spec.egressIPs
+# is a list of strings and, as upstream, spec requires egressIPs and namespaceSelector
+# (an EgressIP waiting for addresses carries egressIPs: []). Everything else in spec and
+# status is left open.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: egressips.k8s.ovn.org
+spec:
+  group: k8s.ovn.org
+  names:
+    kind: EgressIP
+    listKind: EgressIPList
+    plural: egressips
+    singular: egressip
+  scope: Cluster
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - egressIPs
+                - namespaceSelector
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                egressIPs:
+                  type: array
+                  items:
+                    type: string
+                namespaceSelector:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                podSelector:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
