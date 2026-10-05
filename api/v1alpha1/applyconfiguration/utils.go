@@ -33,6 +33,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 	// Group=uddi.infoblox.com, Version=v1alpha1
 	case v1alpha1.SchemeGroupVersion.WithKind("AAAARData"):
 		return &apiv1alpha1.AAAARDataApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AdditionalInterface"):
+		return &apiv1alpha1.AdditionalInterfaceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Address"):
 		return &apiv1alpha1.AddressApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AddressBlock"):
@@ -123,6 +125,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.LifecycleApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MACSource"):
 		return &apiv1alpha1.MACSourceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("Metal3Source"):
+		return &apiv1alpha1.Metal3SourceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MXRData"):
 		return &apiv1alpha1.MXRDataApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NextAvailableFrom"):

@@ -43,6 +43,9 @@ type HostRegistrationPolicySpecApplyConfiguration struct {
 	Register *RegisterApplyConfiguration `json:"register,omitempty"`
 	// MACSource selects where a Node's MAC address comes from.
 	MACSource *MACSourceApplyConfiguration `json:"macSource,omitempty"`
+	// AdditionalInterfaces registers further addresses of each selected Node, one
+	// registration per entry, using register.mode. At most 8, unique by name.
+	AdditionalInterfaces []AdditionalInterfaceApplyConfiguration `json:"additionalInterfaces,omitempty"`
 	// Tags are merged into every generated object's spec.tags.
 	Tags map[string]string `json:"tags,omitempty"`
 	// Lifecycle is copied onto every generated object's spec.lifecycle.
@@ -100,6 +103,19 @@ func (b *HostRegistrationPolicySpecApplyConfiguration) WithRegister(value *Regis
 // If called multiple times, the MACSource field is set to the value of the last call.
 func (b *HostRegistrationPolicySpecApplyConfiguration) WithMACSource(value *MACSourceApplyConfiguration) *HostRegistrationPolicySpecApplyConfiguration {
 	b.MACSource = value
+	return b
+}
+
+// WithAdditionalInterfaces adds the given value to the AdditionalInterfaces field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the AdditionalInterfaces field.
+func (b *HostRegistrationPolicySpecApplyConfiguration) WithAdditionalInterfaces(values ...*AdditionalInterfaceApplyConfiguration) *HostRegistrationPolicySpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithAdditionalInterfaces")
+		}
+		b.AdditionalInterfaces = append(b.AdditionalInterfaces, *values[i])
+	}
 	return b
 }
 

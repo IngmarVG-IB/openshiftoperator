@@ -105,9 +105,9 @@ func NodeAddress(node *corev1.Node, t AddressType) string {
 // spec.macSource.nodeAnnotation, independent of prefix). Annotations are validated in the
 // fixed order register, address, mac, hostname; the first invalid one stops further
 // annotation parsing and is reported in Invalid, naming that annotation. MAC/MACFrom are
-// only ever set here from the annotation ("annotation"); a NodeNetworkState-sourced MAC
-// ("nmstate") is filled in afterwards by the caller, which is why this function does not
-// itself decide when nmstate applies. node.Annotations may be nil; reading from a nil map
+// only ever set here from the annotation (MACFromAnnotation); the NodeNetworkState and
+// Metal3 sources are consulted afterwards by ResolveMAC, which is why this function does
+// not itself decide when they apply. node.Annotations may be nil; reading from a nil map
 // is safe in Go and never panics.
 func ViewNode(node *corev1.Node, t AddressType, src MACSource, prefix string) NodeView {
 	if prefix == "" {
@@ -150,7 +150,7 @@ func ViewNode(node *corev1.Node, t AddressType, src MACSource, prefix string) No
 			return v
 		}
 		v.MAC = mac
-		v.MACFrom = "annotation"
+		v.MACFrom = MACFromAnnotation
 	}
 
 	if raw, ok := annotations[prefix+"/"+AnnotationHostname]; ok {

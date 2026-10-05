@@ -1,0 +1,65 @@
+# Hand-written minimal stand-in for the Metal3 BareMetalHost CRD (baremetalhosts.metal3.io),
+# for envtest only. It is not copied from the baremetal-operator project: the real CRD
+# spells out the whole provisioning and inspection schema, none of which this operator
+# reads (DESIGN.md 4.7: BareMetalHosts are read as unstructured data). This file declares
+# the right group/version/kind, namespaced scope and a status subresource, and types only
+# the fields internal/metal3api and internal/hostreg read, matching the upstream API
+# (https://github.com/metal3-io/baremetal-operator/blob/main/config/base/crds/bases/metal3.io_baremetalhosts.yaml):
+#   spec.bootMACAddress
+#   status.hardware.hostname
+#   status.hardware.nics[].{name,mac,ip}
+# Everything else is preserved unvalidated, so tests can write any shape. It does not
+# reject malformed hosts the way the real CRD would.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: baremetalhosts.metal3.io
+spec:
+  group: metal3.io
+  names:
+    kind: BareMetalHost
+    listKind: BareMetalHostList
+    plural: baremetalhosts
+    singular: baremetalhost
+    shortNames:
+      - bmh
+      - bmhost
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                bootMACAddress:
+                  type: string
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                hardware:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    hostname:
+                      type: string
+                    nics:
+                      type: array
+                      items:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        properties:
+                          name:
+                            type: string
+                          mac:
+                            type: string
+                          ip:
+                            type: string
