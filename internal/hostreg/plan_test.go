@@ -238,7 +238,7 @@ func TestCompute_FixedAddressModeNoMAC(t *testing.T) {
 	if len(plan.Ensure) != 0 {
 		t.Fatalf("expected no ensured registration, got %d", len(plan.Ensure))
 	}
-	want := "mode FixedAddress needs a MAC; no annotation and no NodeNetworkState"
+	want := "mode FixedAddress needs a MAC; no annotation, NodeNetworkState or Metal3 BareMetalHost provides one"
 	if len(plan.Skips) != 1 || plan.Skips[0].Reason != SkipNoMAC || plan.Skips[0].Message != want {
 		t.Fatalf("expected one NoMAC skip %q, got %+v", want, plan.Skips)
 	}

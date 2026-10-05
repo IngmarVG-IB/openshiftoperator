@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -31,23 +32,30 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	uddiapply "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/hostreg"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/metal3api"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/nmstateapi"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 )
 
+// maxSkipMessage is the longest message HostRegistrationPolicy.status.skipped[] accepts.
+const maxSkipMessage = 512
+
 // HostRegistrationPolicyReconciler turns a HostRegistrationPolicy into the Addresses and
 // FixedAddresses described by DESIGN.md section 4.7: it views the selected Nodes (and,
-// when available, their NodeNetworkState) through internal/hostreg, calls
-// hostreg.Compute, applies the resulting objects with server-side apply, releases
-// registrations that are no longer wanted, and reports status.
+// when available, their NodeNetworkState and the Metal3 BareMetalHosts) through
+// internal/hostreg, calls hostreg.Compute, applies the resulting objects with server-side
+// apply, releases registrations that are no longer wanted, and reports status.
 type HostRegistrationPolicyReconciler struct {
 	client.Client
 	// Runtime carries the event recorder shared by every object-layer controller. Its
@@ -60,6 +68,11 @@ type HostRegistrationPolicyReconciler struct {
 	// When false, MAC resolution never reads NodeNetworkState even when a policy's
 	// spec.macSource.nmstate.enabled is true.
 	NMStateAvailable bool
+	// Metal3Available reports whether the cluster serves the metal3.io/v1alpha1
+	// BareMetalHost API (metal3api.Available, checked once at manager startup). When
+	// false, MAC resolution never lists BareMetalHosts even when a policy's
+	// spec.macSource.metal3.enabled is true.
+	Metal3Available bool
 }
 
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=hostregistrationpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -70,6 +83,7 @@ type HostRegistrationPolicyReconciler struct {
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=ipspaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=nmstate.io,resources=nodenetworkstates,verbs=get;list;watch
+// +kubebuilder:rbac:groups=metal3.io,resources=baremetalhosts,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -91,22 +105,40 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, nil
 	}
 
-	// Step 2: space.
-	space, err := r.resolveSpace(ctx, policy)
+	// Step 2: spaces. The policy's own, and every other IPSpace an additionalInterfaces
+	// entry names in its spaceRef.
+	space, spaces, err := r.resolveSpaces(ctx, policy)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Step 3: MAC source.
-	nmstateEnabled := true
+	// Step 3: MAC source. An absent enabled switch means true, as the CRD defaults say.
+	nmstateEnabled, metal3Enabled := true, true
 	if e := policy.Spec.MACSource.NMState.Enabled; e != nil {
 		nmstateEnabled = *e
+	}
+	if e := policy.Spec.MACSource.Metal3.Enabled; e != nil {
+		metal3Enabled = *e
 	}
 	src := hostreg.MACSource{
 		NodeAnnotation:   policy.Spec.MACSource.NodeAnnotation,
 		NMState:          nmstateEnabled,
 		NMStateAvailable: r.NMStateAvailable,
 		NMStateInterface: policy.Spec.MACSource.NMState.Interface,
+		Metal3:           metal3Enabled,
+		Metal3Available:  r.Metal3Available,
+		Metal3Namespace:  policy.Spec.MACSource.Metal3.Namespace,
+	}
+
+	// The BareMetalHosts are listed once per reconcile and shared by every Node. hw stays a
+	// nil interface (not an empty Index) when Metal3 is not a source, which is how
+	// hostreg.ResolveMAC and ResolveInterfaces know to leave it out.
+	var hw hostreg.Metal3Hardware
+	if src.UseMetal3() {
+		hw, err = r.metal3Hardware(ctx, src.Metal3NamespaceOrDefault())
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	addrType := hostreg.AddressType(policy.Spec.AddressType)
@@ -133,16 +165,23 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 		node := &nodeList.Items[i]
 		nodeByName[node.Name] = node
 		view := hostreg.ViewNode(node, addrType, src, "")
-		if view.MAC == "" && src.NMState && src.NMStateAvailable {
-			mac, ok, err := r.macFromNMState(ctx, node.Name, src.NMStateInterface, view.Address)
+		if view.OptOut || view.Invalid != "" {
+			// The planner skips these without looking at a MAC or an interface.
+			views = append(views, view)
+			continue
+		}
+
+		// The NodeNetworkState is read once per Node, and only when something needs it: a
+		// MAC the annotation did not supply, or an additional interface.
+		var nns map[string]interface{}
+		if src.UseNMState() && (view.MAC == "" || len(policy.Spec.AdditionalInterfaces) > 0) {
+			nns, err = r.nodeNetworkState(ctx, node.Name)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			if ok {
-				view.MAC = mac
-				view.MACFrom = "nmstate"
-			}
 		}
+		view = hostreg.ResolveMAC(view, src, nns, hw)
+		view.Interfaces = hostreg.ResolveInterfaces(policy.Spec.AdditionalInterfaces, node, view.Hostname, nns, hw)
 		views = append(views, view)
 	}
 
@@ -153,7 +192,7 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// Step 6: plan.
-	plan := hostreg.Compute(hostreg.PlanInput{Policy: policy, Nodes: views, Space: space, Existing: existing})
+	plan := hostreg.Compute(hostreg.PlanInput{Policy: policy, Nodes: views, Space: space, Spaces: spaces, Existing: existing})
 
 	// Step 7: ensure.
 	prior := make(map[registrationKey]bool, len(existing))
@@ -175,7 +214,7 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 		if !prior[registrationKey{d.Kind, d.Name}] {
 			created++
 			r.Runtime.Eventf(policy, nodeByName[d.Node.Name], corev1.EventTypeNormal, "Registered", uddisync.ActionRegister,
-				"registered %s %s for Node %s", d.Kind, d.Name, d.Node.Name)
+				"registered %s %s for Node %s%s", d.Kind, d.Name, d.Node.Name, interfaceSuffix(d.Interface))
 		}
 	}
 
@@ -185,7 +224,7 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 			return ctrl.Result{}, err
 		}
 		r.Runtime.Eventf(policy, nil, corev1.EventTypeNormal, "Released", uddisync.ActionRelease,
-			"released %s %s for Node %s", rel.Kind, rel.Name, rel.Node.Name)
+			"released %s %s for Node %s%s", rel.Kind, rel.Name, rel.Node.Name, interfaceSuffix(rel.Interface))
 	}
 
 	r.emitSkipEvents(policy, plan.Skips)
@@ -198,11 +237,16 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 	policy.Status.Skipped = toSkippedNodes(plan.Skips)
 
 	cond := metav1.Condition{Type: uddiv1alpha1.ConditionReady, ObservedGeneration: policy.Generation}
+	notReady := spacesNotReady(space, spaces)
 	switch {
-	case !space.Ready:
+	case len(notReady) > 0:
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = uddiv1alpha1.ReasonSpaceNotReady
-		cond.Message = fmt.Sprintf("space %s has no status.id yet", space.Name)
+		msgs := make([]string, 0, len(notReady))
+		for _, name := range notReady {
+			msgs = append(msgs, fmt.Sprintf("space %s has no status.id yet", name))
+		}
+		cond.Message = strings.Join(msgs, "; ")
 	case pending > 0:
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = uddiv1alpha1.ReasonRegistrationsPending
@@ -231,13 +275,12 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 	return ctrl.Result{}, nil
 }
 
-// resolveSpace reads the IPSpace CR spec.spaceRef.name names in the policy's namespace
-// and builds the hostreg.SpaceState the planner needs. A missing CR is Ready: false,
-// per DESIGN.md section 4.7 step 2.
-func (r *HostRegistrationPolicyReconciler) resolveSpace(ctx context.Context, policy *uddiv1alpha1.HostRegistrationPolicy) (hostreg.SpaceState, error) {
-	name := policy.Spec.SpaceRef.Name
+// resolveSpace reads the IPSpace CR called name in the policy's namespace and builds the
+// hostreg.SpaceState the planner needs. A missing CR is Ready: false, per DESIGN.md
+// section 4.7 step 2.
+func (r *HostRegistrationPolicyReconciler) resolveSpace(ctx context.Context, namespace, name string) (hostreg.SpaceState, error) {
 	var space uddiv1alpha1.IPSpace
-	switch err := r.Get(ctx, client.ObjectKey{Namespace: policy.Namespace, Name: name}, &space); {
+	switch err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &space); {
 	case apierrors.IsNotFound(err):
 		return hostreg.SpaceState{Name: name}, nil
 	case err != nil:
@@ -247,26 +290,90 @@ func (r *HostRegistrationPolicyReconciler) resolveSpace(ctx context.Context, pol
 	}
 }
 
-// macFromNMState reads the NodeNetworkState named after node (as unstructured data, per
-// DESIGN.md 4.7 step 3) and extracts the MAC of iface, or of the interface carrying
-// address when iface is empty. A missing NodeNetworkState is not an error: ok is simply
-// false, and the caller's Node keeps whatever MAC (if any) it already had.
-func (r *HostRegistrationPolicyReconciler) macFromNMState(ctx context.Context, nodeName, iface, address string) (mac string, ok bool, err error) {
+// resolveSpaces resolves the policy's own IPSpace and every other IPSpace its
+// additionalInterfaces entries name in their spaceRef (hostreg.AdditionalSpaceNames),
+// keyed by name.
+func (r *HostRegistrationPolicyReconciler) resolveSpaces(ctx context.Context, policy *uddiv1alpha1.HostRegistrationPolicy) (hostreg.SpaceState, map[string]hostreg.SpaceState, error) {
+	space, err := r.resolveSpace(ctx, policy.Namespace, policy.Spec.SpaceRef.Name)
+	if err != nil {
+		return hostreg.SpaceState{}, nil, err
+	}
+	names := hostreg.AdditionalSpaceNames(policy)
+	if len(names) == 0 {
+		return space, nil, nil
+	}
+	spaces := make(map[string]hostreg.SpaceState, len(names))
+	for _, name := range names {
+		st, err := r.resolveSpace(ctx, policy.Namespace, name)
+		if err != nil {
+			return hostreg.SpaceState{}, nil, err
+		}
+		spaces[name] = st
+	}
+	return space, spaces, nil
+}
+
+// spacesNotReady names, sorted, the IPSpaces the policy depends on that are missing or have
+// no status.id yet.
+func spacesNotReady(space hostreg.SpaceState, spaces map[string]hostreg.SpaceState) []string {
+	var out []string
+	if !space.Ready {
+		out = append(out, space.Name)
+	}
+	for name, st := range spaces {
+		if !st.Ready {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// nodeNetworkState reads the status.currentState of the NodeNetworkState named after node
+// (as unstructured data, per DESIGN.md 4.7 step 3). A Node with no NodeNetworkState, or one
+// without a currentState yet, gives a nil map and no error: the caller's Node keeps whatever
+// MAC (if any) it already had.
+func (r *HostRegistrationPolicyReconciler) nodeNetworkState(ctx context.Context, nodeName string) (map[string]interface{}, error) {
 	nns := &unstructured.Unstructured{}
 	nns.SetGroupVersionKind(nmstateapi.GVK)
-	switch getErr := r.Get(ctx, client.ObjectKey{Name: nodeName}, nns); {
-	case apierrors.IsNotFound(getErr):
-		return "", false, nil
-	case getErr != nil:
-		return "", false, getErr
+	switch err := r.Get(ctx, client.ObjectKey{Name: nodeName}, nns); {
+	case apierrors.IsNotFound(err):
+		return nil, nil
+	case err != nil:
+		return nil, err
 	}
 
 	cs, ok := nmstateapi.CurrentState(nns)
 	if !ok {
-		return "", false, nil
+		return nil, nil
 	}
-	mac, _, ok = hostreg.MACFromNodeNetworkState(cs, iface, address)
-	return mac, ok, nil
+	return cs, nil
+}
+
+// metal3Hardware lists the BareMetalHosts in namespace (as unstructured data, per DESIGN.md
+// 4.7 milestone 7) and indexes them for the MAC lookups. A cluster that stopped serving the
+// BareMetalHost API since startup gives a nil answer and no error, like a Node without a
+// NodeNetworkState: there is simply no Metal3 inventory to ask.
+func (r *HostRegistrationPolicyReconciler) metal3Hardware(ctx context.Context, namespace string) (hostreg.Metal3Hardware, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(metal3api.ListGVK)
+	if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		if meta.IsNoMatchError(err) {
+			logf.Log.WithName("hostregistrationpolicy").Info("the BareMetalHost API is no longer served, ignoring Metal3 as a MAC source")
+			return nil, nil
+		}
+		return nil, fmt.Errorf("listing BareMetalHosts in %s: %w", namespace, err)
+	}
+	return metal3api.NewIndex(list.Items), nil
+}
+
+// interfaceSuffix is the " interface <name>" an event appends for the registration of an
+// additional interface, and nothing for a Node's primary registration.
+func interfaceSuffix(iface string) string {
+	if iface == "" {
+		return ""
+	}
+	return " interface " + iface
 }
 
 // listExisting lists the Addresses and FixedAddresses this policy already owns
@@ -402,10 +509,14 @@ func toSkippedNodes(skips []hostreg.Skip) []uddiv1alpha1.SkippedNode {
 	}
 	out := make([]uddiv1alpha1.SkippedNode, 0, len(skips))
 	for _, sk := range skips {
+		msg := sk.Message
+		if len(msg) > maxSkipMessage {
+			msg = msg[:maxSkipMessage-3] + "..."
+		}
 		out = append(out, uddiv1alpha1.SkippedNode{
 			Node:    sk.Node.Name,
 			Reason:  string(sk.Reason),
-			Message: sk.Message,
+			Message: msg,
 		})
 	}
 	return out
@@ -442,7 +553,7 @@ func exampleNodes(skips []hostreg.Skip, max int) []string {
 	seen := make(map[string]bool, max)
 	out := make([]string, 0, max)
 	for _, sk := range skips {
-		s := sk.Node.String()
+		s := sk.Node.String() + interfaceSuffix(sk.Interface)
 		if seen[s] {
 			continue
 		}
@@ -455,11 +566,12 @@ func exampleNodes(skips []hostreg.Skip, max int) []string {
 	return out
 }
 
-// enqueueClusterHostRegistrationPolicies maps a changed cluster-scoped object (a Node,
-// or a NodeNetworkState) onto every HostRegistrationPolicy in the cluster: Nodes carry
-// no namespace to match against, and a policy's selector is not evaluated here, so the
-// change simply wakes every policy, which then decides for itself whether the Node is
-// still relevant.
+// enqueueClusterHostRegistrationPolicies maps a changed Node, NodeNetworkState or
+// BareMetalHost onto every HostRegistrationPolicy in the cluster: Nodes carry no namespace
+// to match against, a BareMetalHost's namespace is only matched against each policy's
+// macSource.metal3.namespace by the reconcile, and a policy's selector is not evaluated
+// here, so the change simply wakes every policy, which then decides for itself whether the
+// object is still relevant.
 func enqueueClusterHostRegistrationPolicies(c client.Client) handler.MapFunc {
 	return func(ctx context.Context, _ client.Object) []reconcile.Request {
 		var list uddiv1alpha1.HostRegistrationPolicyList
@@ -487,17 +599,51 @@ func enqueueForHostRegistrationPolicyLabel() handler.MapFunc {
 	}
 }
 
-// SetupWithManager registers the controller, the spaceRef dependency index, and the
-// watches DESIGN.md section 4.7 lists: Nodes and (when the API is present)
-// NodeNetworkStates mapped to every HostRegistrationPolicy in the cluster, owned
-// Addresses and FixedAddresses mapped to their policy, and the IPSpace through the
-// dependency index.
+// hostRegistrationSpaceNames lists the IPSpace names a policy depends on: its spaceRef and
+// the spaceRef of every additionalInterfaces entry that sets one.
+func hostRegistrationSpaceNames(p *uddiv1alpha1.HostRegistrationPolicy) []string {
+	refs := make([]*uddiv1alpha1.ObjectRef, 0, 1+len(p.Spec.AdditionalInterfaces))
+	refs = append(refs, &p.Spec.SpaceRef)
+	for i := range p.Spec.AdditionalInterfaces {
+		refs = append(refs, p.Spec.AdditionalInterfaces[i].SpaceRef)
+	}
+	return RefNames(refs...)
+}
+
+// bareMetalHostMACInputsChanged lets a BareMetalHost update through only when something the
+// MAC lookups read changed, spec.bootMACAddress or status.hardware. A BareMetalHost's status
+// otherwise changes all the time (provisioning state, heartbeat timestamps), and every one of
+// those changes would wake every HostRegistrationPolicy in the cluster. Creates and deletes
+// always pass.
+func bareMetalHostMACInputsChanged() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return !reflect.DeepEqual(bareMetalHostMACInputs(e.ObjectOld), bareMetalHostMACInputs(e.ObjectNew))
+		},
+	}
+}
+
+// bareMetalHostMACInputs returns the parts of a BareMetalHost the MAC lookups read.
+func bareMetalHostMACInputs(obj client.Object) []interface{} {
+	u, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return nil
+	}
+	boot, _, _ := unstructured.NestedFieldNoCopy(u.Object, "spec", "bootMACAddress")
+	hardware, _, _ := unstructured.NestedFieldNoCopy(u.Object, "status", "hardware")
+	return []interface{}{boot, hardware}
+}
+
+// SetupWithManager registers the controller, the dependency index on every spaceRef, and the
+// watches DESIGN.md section 4.7 lists: Nodes and (when the APIs are present)
+// NodeNetworkStates and Metal3 BareMetalHosts mapped to every HostRegistrationPolicy in the
+// cluster, owned Addresses and FixedAddresses mapped to their policy, and the IPSpaces
+// through the dependency index.
 func (r *HostRegistrationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
 	if err := RegisterDependencyIndex(ctx, mgr, &uddiv1alpha1.HostRegistrationPolicy{}, func(o client.Object) []string {
-		p := o.(*uddiv1alpha1.HostRegistrationPolicy)
-		return RefNames(&p.Spec.SpaceRef)
+		return hostRegistrationSpaceNames(o.(*uddiv1alpha1.HostRegistrationPolicy))
 	}); err != nil {
 		return err
 	}
@@ -520,6 +666,14 @@ func (r *HostRegistrationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) er
 		nns := &unstructured.Unstructured{}
 		nns.SetGroupVersionKind(nmstateapi.GVK)
 		bldr = bldr.Watches(nns, toClusterPolicies)
+	}
+	if r.Metal3Available {
+		// The BareMetalHost namespace is per policy (macSource.metal3.namespace), so the
+		// watch maps to every policy, like Nodes do, and the reconcile decides whether the
+		// host matters.
+		bmh := &unstructured.Unstructured{}
+		bmh.SetGroupVersionKind(metal3api.GVK)
+		bldr = bldr.Watches(bmh, toClusterPolicies, builder.WithPredicates(bareMetalHostMACInputsChanged()))
 	}
 
 	return bldr.Named("hostregistrationpolicy").Complete(r)

@@ -45,6 +45,7 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/clusterid"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/controller"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/metal3api"
 	uddimetrics "github.com/IngmarVG-IB/openshiftoperator/internal/metrics"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/nmstateapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/routeapi"
@@ -370,10 +371,23 @@ func main() {
 	}
 	setupLog.Info("discovered NMState API availability", "nmstateAvailable", nmstateAvailable)
 
+	// BareMetalHost (metal3.io/v1alpha1) is only served on bare-metal clusters, so its
+	// presence is checked once too; without it the Metal3 MAC source stays inert.
+	metal3Available, err := metal3api.Available(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to determine whether the Metal3 BareMetalHost API is available")
+		os.Exit(1)
+	}
+	setupLog.Info("discovered Metal3 BareMetalHost API availability", "metal3Available", metal3Available)
+	if !metal3Available {
+		setupLog.Info("the Metal3 BareMetalHost API is not served; Metal3 MAC discovery is inert")
+	}
+
 	if err := (&controller.HostRegistrationPolicyReconciler{
 		Client:           mgr.GetClient(),
 		Runtime:          runtimeCtx,
 		NMStateAvailable: nmstateAvailable,
+		Metal3Available:  metal3Available,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HostRegistrationPolicy")
 		os.Exit(1)
