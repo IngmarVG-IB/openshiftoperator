@@ -266,6 +266,7 @@ type HostRegistrationPolicyStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=uddihostreg
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="the policy name becomes a label value on every generated Address and FixedAddress, so it is limited to 63 characters"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Registered",type=integer,JSONPath=`.status.registered`
 // +kubebuilder:printcolumn:name="Pending",type=integer,JSONPath=`.status.pending`

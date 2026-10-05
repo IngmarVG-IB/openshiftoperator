@@ -234,6 +234,7 @@ type IPAllocationPolicyStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=uddiipalloc
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="the policy name becomes a label value on every generated Address, so it is limited to 63 characters"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Allocated",type=integer,JSONPath=`.status.allocated`
 // +kubebuilder:printcolumn:name="Assigned",type=integer,JSONPath=`.status.assigned`
