@@ -767,6 +767,9 @@ Verified 2026-09-14:
 | github.com/openshift/api | pseudo-version from master | untagged module; `go get github.com/openshift/api@master` |
 | opm | v1.74.0 | file-based catalog tooling |
 | envtest | 1.29.x lane plus latest | 1.29 lane enforces the 4.16 floor |
+| Go toolchain | go1.26.8 (go.mod `toolchain`, updated 2026-10-04) | patch level clears the standard library vulnerabilities govulncheck reported; the image keeps Red Hat's bundled go-toolset |
+| controller-gen | v0.20.1 (updated 2026-10-04) | v0.18 generates unusable apply configurations for this layout; v0.21 and later break on the `Range` kind |
+| golangci-lint | v2.14.0 (updated 2026-10-04) | v2.1.0's prebuilt binary is built with Go 1.24 and refuses a Go 1.26 module |
 
 Decision: scaffold with operator-sdk v1.42.3 to get the OLM `bundle`, `bundle-build`,
 `catalog-build` and scorecard targets, then bump controller-runtime to v0.24.1 (and the

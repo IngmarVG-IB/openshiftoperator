@@ -10,6 +10,13 @@ section of [usage.md](usage.md)). Metrics answer the questions around them: is a
 Ready anywhere, is Universal DDI healthy from the operator's side, and is the operator itself
 failing.
 
+Events are written through the `events.k8s.io/v1` API. Each carries a reason (unchanged from
+earlier releases, so alerts and scripts that match on reasons keep working) and an action
+such as `Create`, `Update`, `Delete`, `Publish`, `Allocate` or `Register`. Allocation and
+registration events name the Service or Node involved as the related object. A message
+longer than 1024 bytes, such as a long Universal DDI error, is cut to fit and ends in `...`,
+because the API server drops longer events entirely.
+
 - [Enable monitoring](#enable-monitoring)
 - [What Prometheus sees](#what-prometheus-sees)
 - [Metric reference](#metric-reference)

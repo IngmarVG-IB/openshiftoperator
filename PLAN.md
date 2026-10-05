@@ -97,20 +97,15 @@ Owned by the second wave 3 agent:
 
 ### Known limitations
 
-- **Tag removal on upgrade:** When upgrading from a version that does not record
-  `status.appliedTags`, the first sync records which keys were applied but removes none.
-  If a tag key is dropped from `spec.tags` in the same sync as the upgrade, the key stays
-  on the Universal DDI object until a second reconcile after the upgrade completes. This
-  avoids accidentally stripping tags the operator might not own.
+- **Tag removal on upgrade.** When upgrading from a version that does not record
+  `status.appliedTags`, the first sync records which keys were applied but removes none,
+  so it never strips tags the operator might not own. A key dropped from `spec.tags` in
+  that same sync is never recorded, so it stays on the Universal DDI object until it is
+  removed by hand.
 - **Deleting a CR whose Connection CR is already gone orphans the Universal DDI object.**
   The finalizer is removed so the CR can go away, a `ConnectionMissing` Warning event
   says what happened, and the object stays behind with its ownership tags. Delete
   Connections after the objects that use them, or re-adopt with a new CR.
-- **Events use the legacy recorder API.** controller-runtime v0.24 deprecates
-  `GetEventRecorderFor`; the object layer and its tests still use `record.EventRecorder`,
-  so the three call sites carry a nolint until the Runtime moves to `events.EventRecorder`.
-- **Generated Records use the deprecated `client.Apply` patch.** controller-runtime v0.24
-  deprecates it in favour of the apply-configuration API; the call site carries a nolint.
 - **DHCP option names are exact and only checked through the Connection.** `optionName`
   matches case-sensitively, and a name that later stops resolving turns an existing object
   `Ready=False/DependencyNotReady` until it resolves again.
@@ -166,7 +161,7 @@ below is the contract its agent builds against; DESIGN.md carries the same seman
 
 ### Wave 1 (parallel)
 
-- [ ] **A. Tag removal and correctness items.**
+- [x] **A. Tag removal and correctness items.**
   - `ObjectStatus.appliedTags` (sorted list of keys): the tag keys the operator wrote at the
     last successful sync, meaning ownership tags, Connection `defaultTags` and `spec.tags`.
     It is written only together with `Synced=True` for the current generation.
@@ -185,7 +180,7 @@ below is the contract its agent builds against; DESIGN.md carries the same seman
   - DNSPublishPolicy: a second condition type `ZonesResolved`, True when every zoneRef names
     an existing AuthZone CR, otherwise False with reason `ZoneNotFound` and the missing
     names in the message, plus a Warning event `ZoneNotFound`. Ready logic is unchanged.
-- [ ] **B. API client behaviour**, confined to `internal/uddi`.
+- [x] **B. API client behaviour**, confined to `internal/uddi`.
   - Pagination: every SDK List helper pages through all results when `ListOptions.Limit`
     is 0, following the page token when the response carries one and otherwise using
     offset and limit pages of 1000. More than 100 pages is an error, never an endless loop.
@@ -198,7 +193,7 @@ below is the contract its agent builds against; DESIGN.md carries the same seman
   - Metrics: `uddi_operator_api_retries_total{connection,domain,method,code}` and the
     histogram `uddi_operator_api_ratelimit_wait_seconds{connection}` for time spent waiting
     on the client-side limiter.
-- [ ] **C. Observability.**
+- [x] **C. Observability.**
   - `internal/metrics`: a Prometheus collector that reads the manager's cache at scrape time,
     so the reconcile loop does not change. It exports
     `uddi_operator_objects{kind,namespace,ready}` for Connection and the nine object-layer
@@ -216,7 +211,7 @@ below is the contract its agent builds against; DESIGN.md carries the same seman
     and an OpenShift console dashboard ConfigMap.
   - Rules pass `promtool check rules` locally and in a new CI step.
   - `docs/observability.md`: metric reference and one runbook section per alert.
-- [ ] **F. Deployment hardening.**
+- [x] **F. Deployment hardening.**
   - Manager pod: `runAsNonRoot`, seccomp `RuntimeDefault`, no privilege escalation,
     read-only root filesystem, all capabilities dropped, explicit requests and limits.
   - `config/ha` overlay: two replicas, a PodDisruptionBudget with `maxUnavailable: 1` and
@@ -229,17 +224,17 @@ below is the contract its agent builds against; DESIGN.md carries the same seman
 
 ### Wave 2 (after wave 1 merges)
 
-- [ ] **D. controller-runtime modernisation.** Events go through `events.EventRecorder` from
+- [x] **D. controller-runtime modernisation.** Events go through `events.EventRecorder` from
   `mgr.GetEventRecorder`, and the policies' generated Records, Addresses and FixedAddresses
   are applied with generated apply configurations through the client's `Apply` method. The
   nolint suppressions and the matching known limitations go away.
-- [ ] **E. DHCP option codes by name.** `DHCPOption` gains `optionName` and an optional
+- [x] **E. DHCP option codes by name.** `DHCPOption` gains `optionName` and an optional
   `optionSpace` as an alternative to `optionCode`; exactly one of the two is set for type
   `option`. A new `ListOptionCodes` on the DHCP client interface, a per-Connection cache
   with a 10-minute TTL, and resolution in `Adapter.Resolve`, which therefore receives the
   Universal DDI client. A name that does not resolve reports `DependencyNotReady` with the
   name and space in the message, and is retried.
-- [ ] **G. Documentation pass**: API reference and usage guide for `appliedTags`,
+- [x] **G. Documentation pass**: API reference and usage guide for `appliedTags`,
   `optionName` and `ZonesResolved`; API notes for retries and pagination; known
   limitations updated.
 
@@ -249,6 +244,6 @@ and the bundle regenerated.
 ## Milestones 5 and beyond
 
 Planned in [ROADMAP.md](ROADMAP.md): proving the operator on a real tenant and cluster
-(5), hardening the object layer (6, in progress above), completing the integration layer (7), API maturity
+(5), hardening the object layer (6, complete above), completing the integration layer (7), API maturity
 with `v1beta1` (8), distribution through OperatorHub and certification (9), and operating
 at scale (10). Each milestone moves here as a checklist when it starts.
