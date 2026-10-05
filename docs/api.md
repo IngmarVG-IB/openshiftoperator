@@ -27,7 +27,7 @@ This document describes the custom resources of the `uddi.infoblox.com/v1alpha1`
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `adoptExisting` | bool | No | false | Allow taking over an existing Universal DDI object matching the natural key but without this operator's ownership tags. When false, such an object is reported as a conflict (`Ready=False/AlreadyExists`). |
+| `adoptExisting` | bool | No | false | Allow taking over an existing Universal DDI object matching the natural key but without this operator's ownership tags. When false, such an object is reported as a conflict (`Ready=False/AlreadyExists`). Even when true, it never takes over an object that another CR manages (one that carries the managed marker and another CR's uid tag): that is `Ready=False/AlreadyExists` too, naming the other owner. To share an object across namespaces, adopt it in one and reference it from the others by id. |
 | `deletionPolicy` | string | No | Delete | `Delete` (deletes the Universal DDI object, guarded by the ownership uid tag) or `Orphan` (leaves the Universal DDI object in place). |
 
 ### DHCPOption
@@ -67,7 +67,7 @@ All object-layer kinds report these conditions:
 - `True/Synced`: The Universal DDI object matches spec.
 - `False/ConnectionNotReady`: The referenced Connection is missing or not verified.
 - `False/DependencyNotReady`: A referenced object-layer CR has no `status.id` yet.
-- `False/AlreadyExists`: An untagged object exists under the natural key and `lifecycle.adoptExisting=false`.
+- `False/AlreadyExists`: An untagged object exists under the natural key and `lifecycle.adoptExisting=false`, or, whatever `adoptExisting` says, the object is already managed by another CR (the message names it).
 - `False/Creating`: The Universal DDI object is being created.
 - Adoption of an existing Universal DDI object is reported through an `Adopted` event; the condition then reads `True/Synced` like a created object.
 - `False/APIError`: A Universal DDI API call failed.
@@ -649,6 +649,8 @@ A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Service
 
 **Purpose:** Create a DNSPublishPolicy CR to automatically publish cluster ingress endpoints as DNS records in Universal DDI. The policy handles hostname-to-zone matching, target extraction (Auto mode selects CNAME for routes and hostnames, A/AAAA for IPs), and Record lifecycle including adoption and deletion.
 
+Three further source kinds are opt-in through `sources`: cluster `Node`s, the OpenShift ingress operator's `DNSRecord`s (the router wildcard) and Gateway API `HTTPRoute`s. A policy can also publish into zones in other namespaces by naming them with `zoneRefs[].id` and `zoneRefs[].fqdn` (see [ZoneRef](#zoneref)), and it supports wildcard hostnames, `createPtr`, and interoperability with external-dns annotations. See [docs/dns-publishing.md](dns-publishing.md) for behaviour.
+
 **Short name:** `uddipublish`
 
 **Print columns:**
@@ -664,9 +666,9 @@ A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Service
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Record. |
-| `sources` | []SourceKind | No | [Route, Ingress, Service] | Source object kinds to watch: any combination of `Route`, `Ingress`, or `Service` (means LoadBalancer Services). MinItems 1. |
-| `selector` | *metav1.LabelSelector | No | — | Label selector to filter source objects in the namespace. Empty selects all. |
-| `zoneRefs` | []ObjectRef | Yes | — | AuthZone CRs in this namespace that define the target zones. Only `name` is supported (CEL: every entry must have `name` set and not empty). MinItems 1. |
+| `sources` | []SourceKind | No | [Route, Ingress, Service] | Source object kinds to watch: any combination of `Route`, `Ingress`, `Service` (means LoadBalancer Services), `Node`, `DNSRecord` or `HTTPRoute`; the last three are opt-in. MinItems 1, a set. |
+| `selector` | *metav1.LabelSelector | No | — | Label selector to filter source objects: in the policy's namespace for Route, Ingress, Service and HTTPRoute, cluster-wide for Node, and in `dnsRecordNamespace` for DNSRecord. Empty selects all. |
+| `zoneRefs` | []ZoneRef | Yes | — | Zones considered for the generated Records: AuthZone CRs in this namespace (`name`) or Universal DDI zones addressed directly (`id` plus `fqdn`). See [ZoneRef](#zoneref). MinItems 1, atomic. |
 | `target` | DNSPublishTarget | No | — | DNS record type selection. |
 | `target.mode` | TargetMode | No | Auto | `Auto` (CNAME for routes and load balancer hostnames, A/AAAA for IPs), `CNAME` (keep only CNAME targets), or `A` (keep only A/AAAA targets). |
 | `target.addresses` | []string | No | — | Static A/AAAA targets (IPv4 or IPv6 literals). Each entry must be a valid IPv4 or IPv6 address. Used by mode A and by Auto mode for Routes. |
@@ -674,6 +676,11 @@ A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Service
 | `ttl` | *int32 | No | 300 | Default TTL in seconds for generated Records. Minimum 1. Per-source annotations override. |
 | `tags` | map[string]string | No | — | Tags merged into every generated Record's `spec.tags`. |
 | `recordLifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated Records (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
+| `createPtr` | bool | No | false | Sets `createPtr: true` on every A and AAAA Record the policy generates, so Universal DDI creates the matching PTR record. CNAME Records never carry it. |
+| `compatibility` | DNSPublishCompatibility | No | — | Interoperability with other DNS publishers. |
+| `compatibility.externalDNS` | bool | No | false | Also read `external-dns.alpha.kubernetes.io/hostname`, `/ttl` and `/target` as fallbacks on every source kind. The `uddi.infoblox.com/` annotation wins when both are set. |
+| `nodeAddressType` | NodeAddressType | No | InternalIP | Which Node addresses the `Node` source publishes: `InternalIP` or `ExternalIP`. |
+| `dnsRecordNamespace` | string | No | openshift-ingress-operator | Namespace the `DNSRecord` source reads. A DNS-1123 label, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max 63 characters. |
 
 ### SourceKind (enum)
 
@@ -682,6 +689,31 @@ A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Service
 | `Route` | OpenShift Route |
 | `Ingress` | Kubernetes Ingress |
 | `Service` | Kubernetes Service of type LoadBalancer |
+| `Node` | Cluster-scoped Node: the Node name when it contains a dot, plus the hostname annotation, pointing at the Node addresses of `nodeAddressType`. |
+| `DNSRecord` | OpenShift ingress operator DNSRecord (`ingress.operator.openshift.io/v1`) in `dnsRecordNamespace`, usually the default router wildcard. |
+| `HTTPRoute` | Gateway API HTTPRoute (`gateway.networking.k8s.io/v1`), accepted by a parent Gateway. |
+
+### NodeAddressType (enum)
+
+| Value | Meaning |
+| --- | --- |
+| `InternalIP` | Publish the Node's `InternalIP` addresses (A for IPv4, AAAA for IPv6). |
+| `ExternalIP` | Publish the Node's `ExternalIP` addresses. |
+
+### ZoneRef
+
+`ZoneRef` is one entry of `zoneRefs`. It names either an AuthZone CR in the policy's namespace (`name`), or a Universal DDI zone directly (`id` plus `fqdn`, both required together). A zone given by id counts as ready and resolved, is matched through the given `fqdn`, and the generated Records reference it as `zoneRef.id`. That lets policies in many namespaces publish into one zone that is adopted once, in a platform namespace.
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `name` | string | One of `name` and `id` | — | Name of an AuthZone CR in this namespace. 1 to 253 characters. |
+| `id` | string | One of `name` and `id` | — | Universal DDI auth zone id, for example "dns/auth_zone/2c1a...". Set it together with `fqdn`. 1 to 256 characters. |
+| `fqdn` | string | Yes with `id`, not allowed without | — | Canonical DNS name of the zone behind `id`, with or without the trailing dot. Hostnames are matched against it, so it must equal the zone's real fqdn. The operator lower-cases it and adds a trailing dot. 1 to 256 characters, pattern `^([A-Za-z0-9_]([-A-Za-z0-9_]{0,61}[A-Za-z0-9_])?)(\.[A-Za-z0-9_]([-A-Za-z0-9_]{0,61}[A-Za-z0-9_])?)*\.?$`. |
+
+CEL validation on each entry:
+
+- `has(self.name) != has(self.id)`: `exactly one of name or id must be set`.
+- `has(self.id) == has(self.fqdn)`: `fqdn is required with id, and only valid with id`.
 
 ### TargetMode (enum)
 
@@ -715,10 +747,10 @@ A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Service
 **Ready** (summary condition)
 - `True/Published`: Every desired Record is Ready and no `ZoneNotReady` skip remains.
 - `False/RecordsNotReady`: Some desired Records have `Ready=False` (still being created).
-- `False/ZonesNotReady`: No `zoneRef` resolves to a CR with `status.id`.
+- `False/ZonesNotReady`: No `zoneRef` resolves to a CR with `status.id`. A zone given by `id` always counts as resolved, so a policy with one never reports this reason.
 
 **ZonesResolved**
-- `True/ZonesFound`: Every `zoneRef` names an existing AuthZone CR (its `status.id` need not be set yet).
+- `True/ZonesFound`: Every `zoneRef` names an existing AuthZone CR (its `status.id` need not be set yet), or is given by `id` (which always counts as found).
 - `False/ZoneNotFound`: At least one `zoneRef` names no existing AuthZone CR. The message lists the missing zone names. This condition is independent of `Ready`, so a typo in a zoneRef next to working ones does not take the policy out of service; it only reports the error for correction.
 
 ### Source Annotations
@@ -728,6 +760,18 @@ All annotations are prefixed `uddi.infoblox.com/`. They override policy settings
 - `hostname` — comma-separated hostnames (adds or replaces computed hostnames; required for LoadBalancer Services).
 - `ttl` — integer seconds, overrides policy default TTL.
 - `target` — comma-separated addresses and/or canonical names, overrides computed targets.
+
+With `compatibility.externalDNS: true`, `external-dns.alpha.kubernetes.io/hostname`, `/ttl` and `/target` are read as fallbacks for the matching annotations, on every source kind. The external-dns `ttl` may be an integer number of seconds or a duration such as `5m`; the `uddi.infoblox.com/ttl` annotation is integer seconds only.
+
+### DNSPublishPolicy Validation
+
+| Rule | Where | Message |
+| --- | --- | --- |
+| `size(self.metadata.name) <= 63` | The policy | `the policy name becomes a label value on every generated Record, so it is limited to 63 characters` |
+| `has(self.name) != has(self.id)` | Each `zoneRefs` entry | `exactly one of name or id must be set` |
+| `has(self.id) == has(self.fqdn)` | Each `zoneRefs` entry | `fqdn is required with id, and only valid with id` |
+
+Further constraints come from the schema: `sources` and `zoneRefs` have `MinItems` 1, `ttl` has a minimum of 1, each `target.addresses` entry must be an IPv4 or IPv6 literal, `dnsRecordNamespace` is a DNS-1123 label of at most 63 characters, and `sources`, `nodeAddressType` and `target.mode` are enums.
 
 ### DNSPublishPolicy Example
 
@@ -757,6 +801,34 @@ spec:
     deletionPolicy: Delete
 ```
 
+A policy that uses the opt-in sources, publishes into a zone adopted elsewhere, creates PTR records and reads external-dns annotations:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata:
+  name: platform
+  namespace: team-a
+spec:
+  connectionRef:
+    name: default
+  sources:
+    - Route
+    - Node
+    - DNSRecord
+    - HTTPRoute
+  zoneRefs:
+    - id: dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d
+      fqdn: apps.example.com.
+    - name: cluster-zone
+  createPtr: true
+  compatibility:
+    externalDNS: true
+  nodeAddressType: InternalIP
+  dnsRecordNamespace: openshift-ingress-operator
+  ttl: 300
+```
+
 Reference: [DESIGN.md](../DESIGN.md) section 4.7.
 
 ---
@@ -766,6 +838,8 @@ Reference: [DESIGN.md](../DESIGN.md) section 4.7.
 An IPAllocationPolicy watches LoadBalancer Services and automatically generates Address CRs that allocate IPs from a Universal DDI pool. The policy selects Services by namespace and label, allocates from a pool (Subnet, Range, or AddressBlock), and assigns the allocated IP to the Service via an annotation (MetalLB, Cilium, kube-vip) or `spec.loadBalancerIP`.
 
 **Purpose:** Create an IPAllocationPolicy CR to automatically allocate LoadBalancer Service IPs from Universal DDI, integrating IP management with Kubernetes service discovery.
+
+Allocation works on *claims* made of *slots*, one Address each. A dual-stack Service claims one address per IP family, and an OVN-Kubernetes EgressIP claims the number of addresses it asks for with the `count` annotation (`targets`). `allocateFromIPv6` names the pool for IPv6 slots, and `metallb` mirrors the pools the policy uses into MetalLB IPAddressPools so MetalLB announces what Universal DDI allocates. Pool CRs must live in the policy's namespace. See [docs/ip-allocation.md](ip-allocation.md) for behaviour.
 
 **Short name:** `uddiipalloc`
 
@@ -782,15 +856,20 @@ An IPAllocationPolicy watches LoadBalancer Services and automatically generates 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Address. |
-| `selector` | *metav1.LabelSelector | No | — | Label selector to filter Services in the namespace. Empty selects all. |
-| `requireAnnotation` | *bool | No | true | When true, only Services annotated `uddi.infoblox.com/allocate: "true"` are allocated. When false, all matching Services are allocated by default. |
-| `allocateFrom` | AllocateFrom | Yes | — | The pool CR to allocate from: exactly one of `subnetRef`, `rangeRef`, or `addressBlockRef` (CEL: exactly one of subnetRef, rangeRef or addressBlockRef must be set). |
-| `allocateFrom.subnetRef` | *ObjectRef | No (one required) | — | Subnet CR or Universal DDI subnet id to allocate from. |
-| `allocateFrom.rangeRef` | *ObjectRef | No (one required) | — | Range CR or Universal DDI range id to allocate from. |
-| `allocateFrom.addressBlockRef` | *ObjectRef | No (one required) | — | AddressBlock CR or Universal DDI address block id to allocate from. |
+| `targets` | []TargetKind | No | [Service] | Kinds of object that claim addresses: `Service` (type LoadBalancer Services in the policy's namespace) and `EgressIP` (cluster-scoped OVN-Kubernetes EgressIPs). MinItems 1, MaxItems 2, a set. Addresses already allocated for a kind removed from the list are left in place. |
+| `selector` | *metav1.LabelSelector | No | — | Label selector to filter Services in the namespace and EgressIPs (cluster-wide). Empty selects all. |
+| `requireAnnotation` | *bool | No | true | When true, only Services annotated `uddi.infoblox.com/allocate: "true"` are allocated. When false, all matching Services are allocated by default. EgressIPs always need the annotation. |
+| `allocateFrom` | AllocateFrom | Yes | — | The pool CR to allocate from: exactly one of `subnetRef`, `rangeRef`, or `addressBlockRef` (CEL: exactly one of subnetRef, rangeRef or addressBlockRef must be set). IPv4 slots use it, and IPv6 slots too when it is an IPv6 pool and `allocateFromIPv6` is unset. The pool CR must be in the policy's namespace. |
+| `allocateFrom.subnetRef` | *ObjectRef | No (one required) | — | Subnet CR in this namespace to allocate from. Only `name` is accepted (CEL: `subnetRef must set name`). |
+| `allocateFrom.rangeRef` | *ObjectRef | No (one required) | — | Range CR in this namespace to allocate from. Only `name` is accepted (CEL: `rangeRef must set name`). |
+| `allocateFrom.addressBlockRef` | *ObjectRef | No (one required) | — | AddressBlock CR in this namespace to allocate from. Only `name` is accepted (CEL: `addressBlockRef must set name`). |
+| `allocateFromIPv6` | *AllocateFrom | No | — | Pool for IPv6 slots, the IPv6 address of a dual-stack Service. Same shape and rules as `allocateFrom`. Without it, IPv6 slots use `allocateFrom` when that is an IPv6 pool. |
 | `assignVia` | AssignVia | No | — | How to write the allocated IP into the Service (default: Annotation mode with `metallb.io/loadBalancerIPs`). |
 | `assignVia.mode` | AssignMode | No | Annotation | `Annotation` (write to a Service annotation, default) or `LoadBalancerIP` (write to `spec.loadBalancerIP`). |
 | `assignVia.annotation` | string | No | metallb.io/loadBalancerIPs | The annotation key to write when mode is Annotation. Defaults to MetalLB key; also supports `lbipam.cilium.io/ips`, `kube-vip.io/loadbalancerIPs`, and legacy `metallb.universe.tf/loadBalancerIPs`. Pattern: valid annotation key format. Max 317 characters. |
+| `metallb` | *MetalLBMirror | No | — | Mirroring of the pools this policy uses into MetalLB IPAddressPools. Off when unset. |
+| `metallb.mirrorPools` | bool | No | false | Mirror every pool this policy uses into a `metallb.io/v1beta1 IPAddressPool` with `autoAssign: false`. While on, the policy carries the finalizer `uddi.infoblox.com/metallb-pools`. |
+| `metallb.namespace` | string | No | metallb-system | Namespace the mirrored IPAddressPools are created in. 1 to 63 characters, a DNS-1123 label (`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`). |
 | `tags` | map[string]string | No | — | Tags merged into every generated Address's `spec.tags`. |
 | `addressLifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated Addresses (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
 
@@ -800,17 +879,28 @@ An IPAllocationPolicy watches LoadBalancer Services and automatically generates 
 | --- | --- | --- |
 | `observedGeneration` | int64 | The `metadata.generation` the status was last computed from. |
 | `conditions` | []metav1.Condition | Conditions: `Ready` (summary). |
-| `allocated` | int32 | Number of Services with an Address CR. |
-| `assigned` | int32 | Of those, how many have the IP written to the assignment field. |
-| `skipped` | []SkippedService | Services not allocated (bounded to 50 entries, sorted by service name). |
+| `allocated` | int32 | Number of claims, Services and EgressIPs, that have their Address CRs. A dual-stack Service counts once, however many slots it has. |
+| `assigned` | int32 | Of those, how many carry every slot's Ready address in the assignment field (the Service annotation or `spec.loadBalancerIP`, or the EgressIP's `spec.egressIPs`). |
+| `skipped` | []SkippedService | Services and EgressIPs not allocated or not assigned, and pools not mirrored into MetalLB (bounded to 50 entries, sorted by `service` then reason). None of the MetalLB or API skips changes `Ready`. |
 
 ### SkippedService
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `service` | string | Service name. Max 253 characters. |
-| `reason` | string | Machine-readable skip reason: `NotLoadBalancer`, `InvalidAnnotation`, `PoolNotReady`, `ManuallyAssigned`, or `AddressPending`. Max 64 characters. |
+| `service` | string | What was skipped: a Service by its bare name, `EgressIP/<name>` for an EgressIP, `<Kind>/<name>` (for example `Range/lb-pool`) for a pool that cannot be mirrored into MetalLB, or `EgressIP` or `IPAddressPool` alone when the cluster does not serve that API. Max 266 characters (`AddressBlock/` plus a 253 character name). |
+| `reason` | string | Machine-readable skip reason: `NotLoadBalancer`, `InvalidAnnotation`, `PoolNotReady`, `ManuallyAssigned`, `AddressPending`, `NoPoolForFamily`, `DualStackUnsupported`, `NameConflict`, `APIUnavailable`, `MetalLBPoolInvalid`, or `MetalLBPoolConflict`. Max 64 characters. |
 | `message` | string | Human-readable explanation. Max 512 characters. |
+
+The reasons added with dual-stack, EgressIP and MetalLB support:
+
+| Reason | Entry | Meaning |
+| --- | --- | --- |
+| `NoPoolForFamily` | Service | A wanted IP family has no pool (`SingleStack` or `RequireDualStack` without one, an `allocate-from` pool serving none of the wanted families, or `PreferDualStack` that would drop a family the Service already holds). |
+| `DualStackUnsupported` | Service | `assignVia.mode: LoadBalancerIP` carries one address but the Service is `RequireDualStack`. |
+| `NameConflict` | Service | The Address name a new slot would get belongs to another target's slot (slot 1 of `web` and slot 0 of `web-1` are both `<policy>-web-1`). The existing Address is never taken over. |
+| `APIUnavailable` | `EgressIP` or `IPAddressPool` | `targets` lists `EgressIP` but `k8s.ovn.org/v1 EgressIP` is not served, or `metallb.mirrorPools` is on but `metallb.io/v1beta1 IPAddressPool` is not. That target or the mirroring is inert. |
+| `MetalLBPoolInvalid` | `<Kind>/<name>` | A pool the policy uses cannot be mirrored, for example a Subnet whose address is not known yet. |
+| `MetalLBPoolConflict` | `<Kind>/<name>` | The IPAddressPool the pool would be mirrored into already exists without this policy's labels; it is left alone. |
 
 ### IPAllocationPolicy Conditions
 
@@ -826,6 +916,48 @@ All annotations are prefixed `uddi.infoblox.com/`. They override policy settings
 - `allocate-from: <pool-spec>` — override the policy pool with `subnet/<name>`, `range/<name>`, or `addressblock/<name>`.
 - `address: <ip>` — reserve a specific IP instead of allocating next-available.
 - `hostname: <name>` — the hostname registered on the Address (default `<service>.<namespace>`).
+
+For a dual-stack Service, `address` takes one IP per wanted family, comma-separated (for example `10.0.10.50,2001:db8:10::50`); two addresses of one family, or one of a family the Service does not want, is an `InvalidAnnotation`. In `Annotation` mode the assignment annotation holds the slot addresses comma-joined in slot order.
+
+### EgressIP Annotations
+
+EgressIPs are matched by `selector` against their labels and take part only with `uddi.infoblox.com/allocate: "true"`, whatever `requireAnnotation` says. Prefix `uddi.infoblox.com/`:
+- `allocate: "true"` or `"false"` — opt in (required) or out.
+- `count: <n>` — the number of addresses, an integer from 1 to 16 (default 1). Any other value is an `InvalidAnnotation`.
+- `allocate-from: <pool-spec>` — override the policy pool with `subnet/<name>`, `range/<name>` or `addressblock/<name>`.
+
+### TargetKind (enum)
+
+| Value | Meaning |
+| --- | --- |
+| `Service` | Services of type LoadBalancer in the policy's namespace, one address per IP family. |
+| `EgressIP` | OVN-Kubernetes EgressIPs (`k8s.ovn.org/v1`), `count` addresses each, written to `spec.egressIPs`. |
+
+### Generated Objects and Names
+
+| Item | Value |
+| --- | --- |
+| Address name, Service slot 0 | `<policy>-<service>` |
+| Address name, Service slot `n` above 0 | `<policy>-<service>-<n>` |
+| Address name, EgressIP slot `n` | `<policy>-egressip-<name>-<n>` |
+| Labels | `uddi.infoblox.com/policy`, `uddi.infoblox.com/service` (Service slots), `uddi.infoblox.com/target-kind`, `uddi.infoblox.com/target-name`, `uddi.infoblox.com/slot` |
+| Field manager (Addresses) | `uddi-operator/ipallocationpolicy` |
+| Mirrored IPAddressPool name | `uddi-<policy namespace>-<policy>-<pool kind>-<pool name>` (kind in lower case) |
+| Mirrored IPAddressPool labels | `uddi.infoblox.com/policy`, `uddi.infoblox.com/policy-namespace`, `app.kubernetes.io/managed-by: uddi-operator` |
+| Field manager (IPAddressPools) | `uddi-operator/ipallocationpolicy-metallb` |
+| Policy finalizer while mirroring | `uddi.infoblox.com/metallb-pools` |
+
+Names above 253 characters replace the target or pool name with 10 hex digits of its sha256. A target name too long for a label value is shortened in the `target-name` label, and the annotation `uddi.infoblox.com/target-name` carries the full name.
+
+### IPAllocationPolicy Validation
+
+| Rule | Where | Message |
+| --- | --- | --- |
+| `size(self.metadata.name) <= 63` | The policy | `the policy name becomes a label value on every generated Address, so it is limited to 63 characters` |
+| exactly one of `subnetRef`, `rangeRef`, `addressBlockRef` | `allocateFrom`, `allocateFromIPv6` | `exactly one of subnetRef, rangeRef or addressBlockRef must be set` |
+| `name` set and non-empty | `subnetRef`, `rangeRef`, `addressBlockRef` | `subnetRef must set name`, `rangeRef must set name`, `addressBlockRef must set name` |
+
+Further constraints: `targets` has `MinItems` 1 and `MaxItems` 2, `metallb.namespace` is a DNS-1123 label of 1 to 63 characters, and `assignVia.annotation` must be a valid annotation key of at most 317 characters.
 
 ### IPAllocationPolicy Example
 
@@ -854,6 +986,37 @@ spec:
     deletionPolicy: Delete
 ```
 
+A policy for dual-stack Services and EgressIPs that mirrors its pools into MetalLB:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: IPAllocationPolicy
+metadata:
+  name: lb
+  namespace: team-a
+spec:
+  connectionRef:
+    name: default
+  targets:
+    - Service
+    - EgressIP
+  selector:
+    matchLabels:
+      allocate-ip: "true"
+  allocateFrom:
+    rangeRef:
+      name: lb-pool            # Range CR in team-a
+  allocateFromIPv6:
+    rangeRef:
+      name: lb-pool-v6         # Range CR in team-a
+  assignVia:
+    mode: Annotation
+    annotation: metallb.io/loadBalancerIPs
+  metallb:
+    mirrorPools: true
+    namespace: metallb-system
+```
+
 Reference: [DESIGN.md](../DESIGN.md) section 4.7.
 
 ---
@@ -861,6 +1024,8 @@ Reference: [DESIGN.md](../DESIGN.md) section 4.7.
 ## HostRegistrationPolicy
 
 A HostRegistrationPolicy watches cluster Nodes and automatically generates Address or FixedAddress CRs that register them in Universal DDI. The policy selects Nodes by label, discovers MAC addresses from annotations or NMState, and generates registration objects (Address for hostname-based reservations, FixedAddress for DHCP MAC-based reservations). Generated objects are owned by the Node, so deleting a Node releases its reservation. The policy supports three modes: `Auto` (chooses based on MAC availability), `Address` (always IPAM), and `FixedAddress` (always DHCP, requires MAC).
+
+Two extensions build on this. Metal3 `BareMetalHost`s are a third source of MAC addresses, after the annotation and NodeNetworkState (`macSource.metal3`). And `additionalInterfaces` registers one more address per entry for each selected Node, for example on a storage network, each as its own Address or FixedAddress in its own IPSpace. See [docs/host-registration.md](host-registration.md) for behaviour.
 
 **Purpose:** Create a HostRegistrationPolicy CR to automatically register cluster Nodes as DHCP or IPAM reservations in Universal DDI, integrating node infrastructure with Infoblox IP management.
 
@@ -880,7 +1045,7 @@ A HostRegistrationPolicy watches cluster Nodes and automatically generates Addre
 | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Address or FixedAddress. |
 | `selector` | *metav1.LabelSelector | No | — | Label selector to filter Nodes. Empty selects all. |
-| `spaceRef` | ObjectRef | Yes | — | IPSpace CR in this namespace that contains the node networks. Must be Ready (have a `status.id`). |
+| `spaceRef` | ObjectRef | Yes | — | IPSpace CR in this namespace that contains the node networks. Must be Ready (have a `status.id`). Only `name` is accepted (CEL: `spaceRef must set name`). |
 | `addressType` | AddressType | No | InternalIP | The type of Node address to register: `InternalIP` or `ExternalIP`. |
 | `register` | Register | No | — | Registration mode and options. |
 | `register.mode` | RegisterMode | No | Auto | `Auto` (FixedAddress when MAC known, Address otherwise), `Address` (always IPAM), or `FixedAddress` (always DHCP, requires MAC). |
@@ -889,6 +1054,9 @@ A HostRegistrationPolicy watches cluster Nodes and automatically generates Addre
 | `macSource.nodeAnnotation` | string | No | uddi.infoblox.com/mac | Annotation key on Nodes holding the MAC address. Pattern: valid annotation key format. Max 317 characters. |
 | `macSource.nmstate.enabled` | \*bool | No | true | Read NodeNetworkState from the NMState operator when the API is present. |
 | `macSource.nmstate.interface` | string | No | — | Interface name to read the MAC from. Empty means the interface carrying the registered address. Max 256 characters. |
+| `macSource.metal3.enabled` | \*bool | No | true | Read Metal3 `BareMetalHost`s (`metal3.io/v1alpha1`) for the MAC when the API is present. The last source consulted, after the annotation and NodeNetworkState. |
+| `macSource.metal3.namespace` | string | No | openshift-machine-api | Namespace the BareMetalHosts are read from. A DNS-1123 label, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max 63 characters. |
+| `additionalInterfaces` | []AdditionalInterface | No | — | Further addresses of each selected Node to register, one registration per entry, using `register.mode`. MaxItems 8, unique by `name` (a map list). See [AdditionalInterface](#additionalinterface). |
 | `tags` | map[string]string | No | — | Tags merged into every generated Address or FixedAddress's `spec.tags`. |
 | `lifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated objects (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
 
@@ -898,24 +1066,62 @@ A HostRegistrationPolicy watches cluster Nodes and automatically generates Addre
 | --- | --- | --- |
 | `observedGeneration` | int64 | The `metadata.generation` the status was last computed from. |
 | `conditions` | []metav1.Condition | Conditions: `Ready` (summary). |
-| `registered` | int32 | Number of Nodes whose registration object is Ready. |
+| `registered` | int32 | Number of registration objects that are Ready: one per Node, plus one per additional interface of each Node. |
 | `pending` | int32 | Number of registration objects that exist but are not Ready. |
-| `skipped` | []SkippedNode | Nodes not registered (bounded to 50 entries, sorted by node name). |
+| `skipped` | []SkippedNode | Nodes, and additional interfaces of Nodes, not registered (bounded to 50 entries, sorted by node name then reason). |
 
 ### SkippedNode
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `node` | string | Node name. Max 253 characters. |
-| `reason` | string | Machine-readable skip reason: `Excluded`, `NoAddress`, `NoMAC`, `InvalidAnnotation`, `SpaceNotReady`, or `RegistrationPending`. Max 64 characters. |
-| `message` | string | Human-readable explanation. Max 512 characters. |
+| `node` | string | Node name. Max 253 characters. For an additional interface this is the Node it belongs to. |
+| `reason` | string | Machine-readable skip reason: `Excluded`, `NoAddress`, `NoMAC`, `InvalidAnnotation`, `SpaceNotReady`, `RegistrationPending`, `InvalidInterface`, or `NameConflict`. Max 64 characters. |
+| `message` | string | Human-readable explanation. For an additional interface it starts with `interface <name>: `. Max 512 characters. |
+
+The reasons added with additional interfaces:
+
+| Reason | Meaning |
+| --- | --- |
+| `InvalidInterface` | An `additionalInterfaces` entry cannot be resolved for the Node: its `cidr` does not parse, or inserting its `hostnameSuffix` does not give a valid DNS name. |
+| `NameConflict` | The registration would get the same object name as another registration of this policy: the primary registration of Node `<n>-<iface>` and interface `<iface>` of Node `<n>` are both `<policy>-<n>-<iface>`. The primary registration wins, between interfaces the first Node in name order wins, and the message names the holder. |
+
+`NoMAC` now reads "no annotation, NodeNetworkState or Metal3 BareMetalHost provides one" for a primary registration. `NoAddress`, `NoMAC`, `SpaceNotReady` and `RegistrationPending` also apply to interfaces, with the interface named at the start of the message.
 
 ### HostRegistrationPolicy Conditions
 
 **Ready** (summary condition)
 - `True/Registered`: Every selected Node is registered, and no `SpaceNotReady` skip remains.
 - `False/RegistrationsPending`: Some Nodes have pending registration objects (not Ready yet).
-- `False/SpaceNotReady`: The IPSpace CR is missing or has no `status.id` yet.
+- `False/SpaceNotReady`: The IPSpace CR is missing or has no `status.id` yet. This covers the policy's `spaceRef` and the `spaceRef` of every additional interface; the message names each space that is not ready.
+
+### AdditionalInterface
+
+One entry of `additionalInterfaces`. Each entry registers the first Node address, or NodeNetworkState interface address, that lies inside `cidr`, as its own object named `<policy>-<node>-<name>` with the label `uddi.infoblox.com/interface: <name>`.
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `name` | string | Yes | — | Identifies the interface within the policy. Part of the generated object names and the value of the `uddi.infoblox.com/interface` label. 1 to 63 characters, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`. Unique within the list. |
+| `cidr` | string | Yes | — | IPv4 or IPv6 CIDR selecting the interface's address: the first address inside it among the Node's `status.addresses`, then among the NodeNetworkState interface addresses. Max 43 characters. |
+| `spaceRef` | *ObjectRef | No | the policy's `spaceRef` | IPSpace CR, in this namespace, that holds the interface address. Only `name` is accepted (CEL: `spaceRef must set name`). |
+| `hostnameSuffix` | string | No | — | Inserted after the first label of the Node's registered hostname: `-storage` turns `node1.example.com` into `node1-storage.example.com`. A single-label hostname gets the suffix appended; empty keeps the hostname unchanged. Letters, digits and `-` (`^[A-Za-z0-9-]*$`), max 63 characters. |
+
+### HostRegistrationPolicy Validation
+
+| Rule | Where | Message |
+| --- | --- | --- |
+| `size(self.metadata.name) <= 63` | The policy | `the policy name becomes a label value on every generated Address and FixedAddress, so it is limited to 63 characters` |
+| `size(self.name) > 0` | `spaceRef` | `spaceRef must set name` |
+| `has(self.name) && size(self.name) > 0` | `additionalInterfaces[].spaceRef` | `spaceRef must set name` |
+
+Further constraints: `additionalInterfaces` has `MaxItems` 8 and is a map list keyed by `name`, `macSource.metal3.namespace` is a DNS-1123 label of at most 63 characters, and `addressType` and `register.mode` are enums.
+
+### Labels on Generated Objects
+
+| Label | Value |
+| --- | --- |
+| `uddi.infoblox.com/policy` | Policy name |
+| `uddi.infoblox.com/node` | Node name, or for a name over 63 characters its first characters plus `-` and 10 hex digits of the sha256 |
+| `uddi.infoblox.com/interface` | `additionalInterfaces` entry name; absent on a Node's primary registration |
 
 ### Node Annotations
 
@@ -953,6 +1159,37 @@ spec:
     role: node
   lifecycle:
     deletionPolicy: Delete
+```
+
+A policy that also reads MACs from Metal3 and registers each Node's storage address:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: HostRegistrationPolicy
+metadata:
+  name: workers
+spec:
+  connectionRef:
+    name: default
+  selector:
+    matchLabels:
+      node-role.kubernetes.io/worker: ""
+  spaceRef:
+    name: cluster
+  register:
+    mode: Auto
+  macSource:
+    nmstate:
+      enabled: true
+    metal3:
+      enabled: true
+      namespace: openshift-machine-api
+  additionalInterfaces:
+    - name: storage
+      cidr: 10.20.0.0/16
+      spaceRef:
+        name: storage
+      hostnameSuffix: -storage
 ```
 
 Reference: [DESIGN.md](../DESIGN.md) section 4.7.

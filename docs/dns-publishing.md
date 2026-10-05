@@ -14,6 +14,8 @@ A DNSPublishPolicy watches Routes, Ingresses, and LoadBalancer Services in a nam
 
 Records are garbage-collected by the policy's ownerReference, so deleting the policy removes all its generated records (which then remove themselves from Universal DDI via their finalizers).
 
+The default sources are `Route`, `Ingress` and `Service`. Three more kinds are opt-in through `spec.sources`: cluster `Node`s, the OpenShift ingress operator's `DNSRecord`s (the router wildcard), and Gateway API `HTTPRoute`s. They are described under [How Targets Are Chosen](#how-targets-are-chosen). A policy can also publish into zones that live in another namespace, see [Zones by ID](#zones-by-id).
+
 ## Prerequisites
 
 Before creating a DNSPublishPolicy, you need:
@@ -44,6 +46,8 @@ Check that the zone is ready:
 kubectl get authzone apps-zone -o jsonpath='{.status.id}'
 # dns/auth_zone/... (non-empty means ready)
 ```
+
+An AuthZone CR is not the only way to name a zone. A `zoneRefs` entry can also carry a Universal DDI zone `id` together with its `fqdn`, which needs no AuthZone CR in the policy's namespace. That is how several namespaces publish into one zone; see [Zones by ID](#zones-by-id).
 
 ## Complete Example
 
@@ -221,6 +225,103 @@ spec:
       targetPort: 8443
 ```
 
+### Node Sources
+
+The `Node` source publishes cluster Nodes. It is opt-in: list `Node` in `spec.sources`.
+
+Nodes are cluster-scoped, so the policy reads every Node in the cluster that matches `spec.selector` (a label selector on the Node's labels), whichever namespace the policy lives in. If two policies in different namespaces select the same Nodes, both generate Records for them and the second set reports `Ready=False/AlreadyExists`; keep the selectors apart.
+
+- **Hostnames:** the Node's name when it contains a dot (a short name such as `worker-0` is not usable DNS), plus any names in the `uddi.infoblox.com/hostname` annotation. A Node with neither is skipped with `NoHostname`.
+- **Targets:** every Node address of the type in `spec.nodeAddressType`, `InternalIP` (the default) or `ExternalIP`. IPv4 addresses become A Records and IPv6 addresses AAAA Records, so a dual-stack Node gets both. `spec.target.addresses` is not used for Nodes. A `target` annotation on the Node replaces the computed targets.
+- **Mode:** `target.mode: A` or `Auto` keeps the address targets. `CNAME` filters every address out, so the Node is skipped with `NoTarget` unless its `target` annotation names a CNAME.
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata:
+  name: nodes
+  namespace: uddi-system
+spec:
+  sources:
+    - Node
+  selector:
+    matchLabels:
+      node-role.kubernetes.io/worker: ""
+  zoneRefs:
+    - name: cluster-zone      # AuthZone for ocp1.example.com.
+  nodeAddressType: InternalIP
+  createPtr: true
+  ttl: 300
+```
+
+A Node named `worker-0.ocp1.example.com` gets an A Record `worker-0` in `ocp1.example.com.`, and an AAAA Record too when it also has an IPv6 InternalIP. A Node whose name is not inside any `zoneRefs` zone is skipped with `NoMatchingZone`. For a Node with a short name, set the hostname by annotation:
+
+```bash
+kubectl annotate node worker-0 uddi.infoblox.com/hostname=worker-0.ocp1.example.com
+```
+
+### DNSRecord Sources (the router wildcard)
+
+The OpenShift ingress operator keeps a `DNSRecord` (`ingress.operator.openshift.io/v1`) for the default router wildcard, named `default-wildcard`, in the `openshift-ingress-operator` namespace. With `DNSRecord` in `spec.sources`, the policy turns those objects into Records, so `*.apps.<cluster>.` is published without a hand-written Record.
+
+- **Where it reads:** the namespace in `spec.dnsRecordNamespace` (default `openshift-ingress-operator`), not the policy's own namespace. `spec.selector` matches the DNSRecord's labels; leave it unset to take every DNSRecord there, or select one ingress controller's record.
+- **Hostname:** `spec.dnsName`, kept with its leading `*.` label (see [Wildcard Hostnames](#wildcard-hostnames)), plus any names in the hostname annotation. A DNSRecord without a `dnsName` is skipped with `NoHostname`, and one whose name is not a valid DNS name with `Unsupported`.
+- **Targets:** `spec.targets`, typed by `spec.recordType`. `A` takes IPv4 addresses, `AAAA` IPv6 addresses and `CNAME` names (a trailing dot is added). Any other record type, or a target that does not fit the type, is `Unsupported`. The CRD shipped by openshift/api currently allows only `A` and `CNAME`. A `target` annotation replaces the computed targets, and `target.mode` filters them as for the other sources.
+- **TTL:** the `uddi.infoblox.com/ttl` annotation on the DNSRecord first, then `spec.recordTTL` when it is positive, then the policy's `ttl`. The ingress operator fills `recordTTL` itself (its CRD describes a default of 30 seconds), so a published wildcard normally carries that short TTL rather than the policy's.
+- **Management policy:** `spec.dnsManagementPolicy` is not consulted. It tells the ingress operator whether it manages the cloud provider's DNS; it does not stop this policy from publishing.
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata:
+  name: router
+  namespace: uddi-system
+spec:
+  sources:
+    - DNSRecord
+  zoneRefs:
+    - name: apps-zone         # AuthZone for apps.ocp1.example.com.
+  # dnsRecordNamespace defaults to openshift-ingress-operator
+```
+
+With the default wildcard record (`dnsName: "*.apps.ocp1.example.com."`, one A target) and the zone `apps.ocp1.example.com.`, the policy generates one Record named `*` in that zone. With only the zone `ocp1.example.com.`, the name would be `*.apps`. The skip is reported as `DNSRecord/default-wildcard`.
+
+If the cluster does not serve the DNSRecord API (kind, or a cluster without the ingress operator), the manager logs that once at startup and the source stays inert: no error, no skips, no Records.
+
+**Running with `WATCH_NAMESPACE`.** When the operator is installed in `OwnNamespace`, `SingleNamespace` or `MultiNamespace` mode, its cache covers only the watched namespaces. The DNSRecord namespace must be one of them, or listing the DNSRecords fails and the policy keeps retrying with an error. Add `openshift-ingress-operator` (or the namespace in `dnsRecordNamespace`) to the OperatorGroup's `targetNamespaces`, or install in `AllNamespaces` mode.
+
+### HTTPRoute Sources (Gateway API)
+
+The `HTTPRoute` source publishes Gateway API routes (`gateway.networking.k8s.io/v1`). It is opt-in. The operator reads HTTPRoutes and Gateways as unstructured data, so it carries no Gateway API module dependency, and it checks once at startup whether the API is served.
+
+- **Where it reads:** HTTPRoutes in the policy's namespace that match `spec.selector`. The Gateways they point at may live in any namespace.
+- **Hostnames:** `spec.hostnames` (wildcards such as `*.example.com` are kept) plus any names in the hostname annotation. A route with neither is skipped with `NoHostname`: a route without hostnames matches every host, so there is nothing to publish. An entry that is neither a DNS name nor a `*.` wildcard is `Unsupported`.
+- **Accepted by a Gateway:** the route needs a `status.parents` entry with `Accepted=True` whose parent is a Gateway (group `gateway.networking.k8s.io` or unset, kind `Gateway` or unset). Without one, every hostname is skipped with `NotAdmitted`.
+- **Targets:** the union of `status.addresses` of every accepted parent Gateway, deduplicated. An `IPAddress` becomes an A or AAAA target and a `Hostname` becomes a CNAME; other address types are ignored. The Gateway is looked up in the parentRef's namespace (the route's namespace when unset), and one that does not exist contributes nothing. Accepted Gateways with no usable address give `NoTarget`. A `target` annotation replaces the computed targets, and `target.mode` filters them.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: team-a
+spec:
+  parentRefs:
+    - name: public
+      namespace: gateways
+  hostnames:
+    - shop.apps.example.com
+    - "*.shop.apps.example.com"
+  rules:
+    - backendRefs:
+        - name: shop
+          port: 8080
+```
+
+With a policy that lists `HTTPRoute` and a zone for `apps.example.com.`, the policy generates Records for `shop` and `*.shop` pointing at the addresses of the `gateways/public` Gateway, once that Gateway reports the route as accepted.
+
+Changes to an HTTPRoute wake the policies in its namespace that list `HTTPRoute`; changes to any Gateway wake every policy that lists it.
+
 ## Source Annotations
 
 All annotations are prefixed with `uddi.infoblox.com/`. The policy's `target.mode` and `target.addresses` apply by default; source annotations override on a per-source basis.
@@ -267,6 +368,178 @@ metadata:
 
 A malformed annotation value emits a `Skipped` event with reason `InvalidAnnotation`.
 
+These annotations are read on every source kind, the new ones included (`Node`, `DNSRecord` and `HTTPRoute`). The `hostname` annotation adds names to what the source already provides; for a Service, which has no name of its own, it is the only source of hostnames.
+
+## external-dns Compatibility
+
+Teams that already label their objects for [external-dns](https://github.com/kubernetes-sigs/external-dns) can move to the operator without relabelling. Switch it on per policy:
+
+```yaml
+spec:
+  compatibility:
+    externalDNS: true
+```
+
+With it on, three external-dns annotations are read as fallbacks, on every source kind:
+
+| external-dns annotation | Read as | Notes |
+| --- | --- | --- |
+| `external-dns.alpha.kubernetes.io/hostname` | `uddi.infoblox.com/hostname` | Comma-separated hostnames. |
+| `external-dns.alpha.kubernetes.io/ttl` | `uddi.infoblox.com/ttl` | An integer number of seconds (`300`) or a duration (`5m`, `1h30m`), as external-dns allows. A duration is truncated to whole seconds and must come to at least one. |
+| `external-dns.alpha.kubernetes.io/target` | `uddi.infoblox.com/target` | Comma-separated; IPs become A/AAAA, names become CNAME, and they replace the computed targets. |
+
+The `uddi.infoblox.com/` annotation wins whenever both are present, annotation by annotation: the two values are never merged. A malformed external-dns value gives `InvalidAnnotation`, and the message names the external-dns key. No other external-dns annotation is read, and there is no external-dns counterpart of `publish: "false"`.
+
+A Route that only carries the external-dns annotations keeps publishing after the policy turns the switch on:
+
+```yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: legacy
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: legacy.apps.example.com
+    external-dns.alpha.kubernetes.io/ttl: "5m"
+spec:
+  host: legacy.apps.example.com
+  to:
+    kind: Service
+    name: legacy
+```
+
+The record gets a 300-second TTL. Once every object carries the `uddi.infoblox.com/` annotations, switch compatibility off again.
+
+## Wildcard Hostnames
+
+A hostname that starts with `*.` is published as a wildcard Record. Wildcards arrive from an HTTPRoute's `spec.hostnames`, a DNSRecord's `spec.dnsName` (the router wildcard), an Ingress rule host, or the `hostname` annotation of any source (one leading `*.` label is accepted). Targets can never be wildcards.
+
+Zone matching ignores the wildcard label: the labels after `*.` are matched against the `zoneRefs` fqdns like any other hostname, and the longest matching zone wins. The Record's name in the zone is `*` when those labels are the zone itself, and `*.<labels>` below it:
+
+| Hostname | Zone fqdn | Record name in zone |
+| --- | --- | --- |
+| `*.apps.ocp1.example.com` | `apps.ocp1.example.com.` | `*` |
+| `*.apps.ocp1.example.com` | `ocp1.example.com.` | `*.apps` |
+| `*.shop.apps.example.com` | `apps.example.com.` | `*.shop` |
+
+Because the name is `*` or `*.<labels>`, never `@`, a wildcard never lands on the zone apex and the `ApexCNAME` rule does not apply to it. A wildcard hostname that matches no zone is skipped with `NoMatchingZone`.
+
+## Dual-Stack Targets
+
+A source that exposes both an IPv4 and an IPv6 address yields one A Record and one AAAA Record for each hostname. This holds for Ingresses and LoadBalancer Services whose `status.loadBalancer.ingress` lists both addresses, for Nodes with both address families, for HTTPRoutes whose Gateway reports both, and for a Route whose `target.addresses` mixes the families.
+
+- The A and AAAA Records are separate Record CRs with the same name in the zone; their CR names differ because the hash covers the type and the target.
+- `target.mode: A` keeps both, since it means "address targets", not "IPv4 only".
+- When `createPtr` is set, both the A and the AAAA Record carry it.
+- A load balancer that reports IP addresses is published by address; its hostname is used (as a single CNAME) only when it reports no IP at all.
+
+If the IPv6 address shows up later, the policy adds the AAAA Record and leaves the A Record alone.
+
+## PTR Records with createPtr
+
+`spec.createPtr: true` sets `createPtr: true` on every A and AAAA Record the policy generates; CNAME Records never carry it. The Record controller passes the `create_ptr` option when it creates the DNS record in Universal DDI, and Universal DDI creates the matching PTR record.
+
+```yaml
+spec:
+  sources:
+    - Node
+  createPtr: true
+```
+
+The option belongs to the create call, so turning it on for a policy whose Records already exist does not change those Records. The usual use is the Node source, which gives every Node an A record and its reverse entry; host registration stays an IPAM and DHCP concern (see [docs/patterns.md](patterns.md)).
+
+## Zones by ID
+
+A `zoneRefs` entry names a zone in one of two ways:
+
+```yaml
+spec:
+  zoneRefs:
+    - name: apps-zone                                        # an AuthZone CR in this namespace
+    - id: dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d   # a Universal DDI zone, addressed directly
+      fqdn: apps.example.com.
+```
+
+The rules, which the CRD enforces:
+
+- Exactly one of `name` or `id` is set (`exactly one of name or id must be set`).
+- `fqdn` is required with `id` and valid only with `id` (`fqdn is required with id, and only valid with id`). It is a DNS name with or without the trailing dot.
+
+How a zone given by id behaves:
+
+- **Matching** uses the `fqdn` from the spec, lower-cased with a trailing dot added when missing. It must equal the zone's real fqdn; the operator does not check it. Zones by name and by id compete in one list and the longest matching fqdn wins.
+- **It is always ready and resolved.** The policy does not read anything for it: no AuthZone CR is needed, and `ZoneNotReady` cannot happen for it. A policy with at least one zone by id never reports `ZonesNotReady`, and the `ZonesResolved` condition counts the entry as found. Only entries by `name` can make `ZonesResolved` go `False/ZoneNotFound`.
+- **A wrong id shows late.** Nothing validates the id when the policy reconciles, so a mistyped id only shows when the generated Records fail to sync: each Record reports the API error on its own `Ready` condition and the policy stays `Ready=False/RecordsNotReady`.
+- **Records reference the zone as `zoneRef.id`** instead of `zoneRef.name`.
+- **Moving a policy between the two forms replaces Records.** A Record's `zoneRef` and its name in the zone cannot change in place. When a desired Record keeps its CR name but lands in another zone or under another name (for example a zoneRef moved from an AuthZone name to the zone id, or a longer zone now matches), the policy deletes the old Record and creates its replacement. The Record's `lifecycle.deletionPolicy` decides what happens to the DNS record in between, so with `Delete` there is a short gap.
+- There is no CR behind a zone given by id, so the policy has nothing to wait for or watch: the zone is taken as given.
+
+### Publishing from many namespaces into one zone
+
+Policies only see objects in their own namespace, and Universal DDI objects are adopted once. The zone is therefore adopted in a platform namespace, and every team references it by id and fqdn. First the platform namespace:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: AuthZone
+metadata:
+  name: apps-zone
+  namespace: uddi-system
+spec:
+  fqdn: apps.example.com.
+  viewRef:
+    name: default
+  primaryType: cloud
+  lifecycle:
+    adoptExisting: true
+    deletionPolicy: Orphan
+```
+
+Read the id once the zone is ready:
+
+```bash
+kubectl get authzone apps-zone -n uddi-system -o jsonpath='{.status.id}'
+# dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d
+```
+
+Each team namespace then has its own Connection (Records use the Connection of their own namespace) and a policy that names the zone by id:
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata:
+  name: public
+  namespace: team-a
+spec:
+  connectionRef:
+    name: default
+  sources:
+    - Route
+    - Ingress
+  zoneRefs:
+    - id: dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d
+      fqdn: apps.example.com.
+  tags:
+    team: team-a
+---
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: DNSPublishPolicy
+metadata:
+  name: public
+  namespace: team-b
+spec:
+  connectionRef:
+    name: default
+  sources:
+    - Route
+    - Ingress
+  zoneRefs:
+    - id: dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d
+      fqdn: apps.example.com.
+  tags:
+    team: team-b
+```
+
+Do not adopt the zone again in `team-a` or `team-b`. `lifecycle.adoptExisting` only takes over an object that no other CR manages, so a second AuthZone CR for the same zone is refused with `Ready=False/AlreadyExists` and a message that names the first owner (for example `uddi-system/AuthZone/apps-zone`). Without that guard, two CRs would keep rewriting the zone's ownership tags, and deleting either could remove a zone the other still uses. Referencing the zone by id is the supported way to share it. To hand a zone over to another CR instead, remove its `uddi_operator_*` tags in Universal DDI.
+
 ## Generated Record Naming and Labeling
 
 The policy generates Record CRs with names based on a hash of the source and target, so they are stable and unique:
@@ -282,8 +555,8 @@ Generated Records carry these labels (used for listing and filtering):
 | Label | Value |
 | --- | --- |
 | `uddi.infoblox.com/policy` | Policy name (e.g., `public`) |
-| `uddi.infoblox.com/source-kind` | `Route`, `Ingress`, or `Service` |
-| `uddi.infoblox.com/source-name` | Source object name |
+| `uddi.infoblox.com/source-kind` | `Route`, `Ingress`, `Service`, `Node`, `DNSRecord`, or `HTTPRoute` |
+| `uddi.infoblox.com/source-name` | Source object name (see below for long names) |
 
 And these annotations:
 
@@ -291,6 +564,13 @@ And these annotations:
 | --- | --- |
 | `uddi.infoblox.com/hostname` | The published hostname |
 | `uddi.infoblox.com/target` | The target (address or CNAME) |
+
+Label values are limited to 63 characters, so two rules keep the labels valid:
+
+- **The policy name is limited to 63 characters.** It is a label value on every generated Record. The CRD rejects a longer name with the message `the policy name becomes a label value on every generated Record, so it is limited to 63 characters`.
+- **Long source names are shortened in the label.** A source name can be up to 253 characters. When it does not fit, the `source-name` label holds its first characters followed by `-` and 10 hex digits of the name's sha256, 63 characters at most. The full name stays in the `uddi_operator_source` tag of the DNS record (`Node/<name>` for the cluster-scoped Node source, `<Kind>/<namespace>/<name>` for the others).
+
+Each Record's comment reads `Published by DNSPublishPolicy <namespace>/<policy> from <Kind> <name>`.
 
 List all records generated by a policy:
 
@@ -342,6 +622,25 @@ Each Skip entry has:
 | `Unsupported` | A Route uses `spec.subdomain` without `spec.host` (not yet supported). | Use `spec.host` instead, or publish via an Ingress. |
 | `InvalidAnnotation` | A malformed `ttl` or `target` annotation (e.g., `ttl: "abc"` or an invalid address). | Fix the annotation value. |
 
+### The Same Reasons for the Node, DNSRecord and HTTPRoute Sources
+
+The new sources add no skip reasons. They reuse the ones above, and the entry's `source` reads `Node/<name>`, `DNSRecord/<name>` or `HTTPRoute/<name>`:
+
+| Reason | Source | Cause |
+| --- | --- | --- |
+| `NoHostname` | Node | The Node name has no dot and there is no `hostname` annotation. Annotate the Node with a fully qualified name. |
+| `NoHostname` | DNSRecord | The DNSRecord has no `spec.dnsName` and no `hostname` annotation. |
+| `NoHostname` | HTTPRoute | The route has no `spec.hostnames` and no `hostname` annotation. |
+| `NotAdmitted` | HTTPRoute | No parent Gateway has `Accepted=True` for the route yet. Check `kubectl get httproute <name> -o yaml` for the parent's conditions. |
+| `NoTarget` | Node | The Node has no address of `nodeAddressType` (it may not be Ready yet), or `target.mode: CNAME` filtered the addresses out. |
+| `NoTarget` | DNSRecord | `target.mode` filtered every target out, for example mode `CNAME` for an `A` record. |
+| `NoTarget` | HTTPRoute | The accepted Gateways report no usable address in `status.addresses`, or `target.mode` filtered them out. |
+| `Unsupported` | DNSRecord | `spec.recordType` is not `A`, `AAAA` or `CNAME`, `spec.dnsName` is not a valid DNS name, or a target does not fit the record type. |
+| `Unsupported` | HTTPRoute | An entry of `spec.hostnames` is neither a DNS name nor a `*.` wildcard. |
+| `InvalidAnnotation` | any | A malformed `uddi.infoblox.com/` annotation, or with `compatibility.externalDNS` a malformed external-dns annotation; the message names the key. |
+
+The `ZonesResolved` condition sits next to `Ready`. It is `True/ZonesFound` while every `zoneRefs` entry by `name` names an existing AuthZone CR (entries by `id` always count as found) and `False/ZoneNotFound`, with the missing names in the message, otherwise. It never changes `Ready`.
+
 Example: view skipped sources and troubleshoot:
 
 ```bash
@@ -391,9 +690,9 @@ Re-create the policy later and set `recordLifecycle.adoptExisting: true` to re-a
 
 ## Limitations
 
-### Wildcard Router Record
+### Wildcard Router Record Without a DNSRecord
 
-The operator does not yet publish the ingress operator's default wildcard route (`*.apps.<cluster>`). A hand-written Record CR covers wildcard DNS for now:
+The ingress operator's default wildcard (`*.apps.<cluster>`) is published by the [DNSRecord source](#dnsrecord-sources-the-router-wildcard) wherever the ingress operator creates a `DNSRecord` for it. Some clusters have none, typically bare-metal setups where the ingress operator has no DNS zone to manage, and then there is nothing for the source to read. On those clusters a hand-written Record CR still covers wildcard DNS:
 
 ```yaml
 apiVersion: uddi.infoblox.com/v1alpha1
@@ -436,6 +735,18 @@ spec:
 ### Route API Not Available on Plain Kubernetes
 
 DNSPublishPolicy watches the OpenShift Route API (`route.openshift.io/v1`). On a plain Kubernetes cluster (kind, minikube, etc.) without OpenShift, the Route API is not registered and the Route source is inert (a warning is logged at startup). Ingresses and LoadBalancer Services continue to work.
+
+### Other Optional APIs
+
+The same holds for the two APIs behind the newer sources. The manager checks once at startup, with discovery, whether the cluster serves the ingress operator's `DNSRecord` API and the Gateway API (`Gateway` and `HTTPRoute`). When one is missing it logs `the DNSRecord API is not served, so the DNSRecord source of DNSPublishPolicy is inert` (or the HTTPRoute equivalent) and that source publishes nothing, without errors or skip entries. Installing the API later takes effect after the manager restarts. The Node source needs no optional API.
+
+### Namespaces the Operator Watches
+
+If the operator runs with `WATCH_NAMESPACE` set, the DNSRecord source can only read a namespace the operator watches. The default `openshift-ingress-operator` is usually outside a single-namespace install, so add it to the watched namespaces; see [DNSRecord Sources](#dnsrecord-sources-the-router-wildcard). Nodes are cluster-scoped and are not affected.
+
+### Record Replacement Has a Gap
+
+A Record cannot move to another zone or name in place. When a policy change moves one (see [Zones by ID](#zones-by-id)), the old Record is deleted and recreated, and with `deletionPolicy: Delete` the DNS record is briefly absent.
 
 ---
 

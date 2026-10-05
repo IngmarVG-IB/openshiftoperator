@@ -419,16 +419,106 @@ spec:
 
 Services on the cluster can opt into IP allocation and DNS publishing via annotations. MetalLB reads the allocated IP from the service annotation and announces it.
 
+A policy only sees objects in its own namespace: the Services it selects, the pool CRs it allocates from, and the AuthZone CRs it names. A `web` Service in `team-a` is therefore served by policies that live in `team-a`, not by policies in `uddi-system`. The platform team keeps the shared foundations from section 2 in `uddi-system` (the Connection, View, AuthZones, IPSpace, Subnets and the platform's own Ranges). Each tenant namespace adds a small set of its own objects, which this section builds for `team-a`:
+
+| In `team-a` | Why it cannot be shared |
+| --- | --- |
+| Secret and Connection | A Connection is resolved in the namespace of the object that uses it. |
+| Range, inside the platform subnet | The pool CR for `allocateFrom` must be in the policy's namespace. |
+| IPAllocationPolicy | It only sees Services in its own namespace. |
+| DNSPublishPolicy | It only sees Routes, Ingresses and Services in its own namespace. |
+
+Section 2's objects are created once, in `uddi-system`. The tenant objects that need one of them (the Range needs the IPSpace, the DNS policy needs the zone) refer to it by Universal DDI id, not by name, which is the supported way to share an object across namespaces.
+
+### Tenant Namespace: Secret and Connection
+
+Create the namespace, the credential Secret and the Connection. The tenant can use the same API key as the platform or one of its own:
+
+```bash
+kubectl create namespace team-a
+kubectl create secret generic uddi-api-key --from-literal=apiKey=<your Infoblox API key> -n team-a
+```
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Connection
+metadata:
+  name: default
+  namespace: team-a
+spec:
+  cspURL: https://csp.infoblox.com
+  secretRef:
+    name: uddi-api-key
+    key: apiKey
+  clientName: uddi-operator
+  defaultTags:
+    cluster: ocp1
+    team: team-a
+  resyncInterval: 10m
+```
+
+```bash
+kubectl get connection default -n team-a -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# True
+```
+
+### Tenant Pools: a Range Inside the Platform Subnet
+
+`team-a` gets its own slice of the node network `10.10.0.0/24` (the `node-network` Subnet in section 2) and of the IPv6 network. Each slice is a Range CR in `team-a`. The Range's `spaceRef` names the platform's IPSpace by id, because the `cluster` IPSpace CR lives in `uddi-system` and a name is only resolved in the Range's own namespace. Read the id once:
+
+```bash
+kubectl get ipspace cluster -n uddi-system -o jsonpath='{.status.id}'
+# ipam/ip_space/5d2f8a10-7c3e-4b69-9a14-0e8b6c1d3f27
+```
+
+```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Range
+metadata:
+  name: lb-pool
+  namespace: team-a
+spec:
+  connectionRef:
+    name: default
+  spaceRef:
+    id: ipam/ip_space/5d2f8a10-7c3e-4b69-9a14-0e8b6c1d3f27
+  start: 10.10.0.100
+  end: 10.10.0.119
+  name: team-a-lb-pool
+  comment: LoadBalancer addresses for team-a
+---
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Range
+metadata:
+  name: lb-pool-v6
+  namespace: team-a
+spec:
+  connectionRef:
+    name: default
+  spaceRef:
+    id: ipam/ip_space/5d2f8a10-7c3e-4b69-9a14-0e8b6c1d3f27
+  start: fd00:10::1:1
+  end: fd00:10::1:ff
+  name: team-a-lb-pool-v6
+  comment: IPv6 LoadBalancer addresses for team-a
+```
+
+The slices must not overlap the platform's own Ranges (`10.10.0.200` to `10.10.0.250`, and `fd00:10::1` to `fd00:10::ffff`) or each other, so the platform team hands out the boundaries. The IPSpace is not adopted a second time: the Ranges are new objects, and only name the space by id. Check that both are ready:
+
+```bash
+kubectl get range -n team-a -o custom-columns=NAME:.metadata.name,ID:.status.id,READY:.status.conditions[?(@.type=="Ready")].status
+```
+
 ### IP Allocation Policy
 
-Allocate IPs from the MetalLB pool to all LoadBalancer Services that opt in:
+Allocate IPs from `team-a`'s own pools to the LoadBalancer Services in `team-a` that opt in:
 
 ```yaml
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: IPAllocationPolicy
 metadata:
   name: lb
-  namespace: uddi-system
+  namespace: team-a
 spec:
   connectionRef:
     name: default
@@ -438,10 +528,10 @@ spec:
     - Service
   allocateFrom:
     rangeRef:
-      name: metallb-pool
+      name: lb-pool          # the Range CRs in team-a, created above
   allocateFromIPv6:
     rangeRef:
-      name: metallb-pool-v6
+      name: lb-pool-v6
   assignVia:
     mode: Annotation
     annotation: metallb.io/loadBalancerIPs
@@ -455,9 +545,11 @@ spec:
 ```
 
 This policy:
-- Allocates dual-stack (IPv4 and IPv6) addresses to Services with `uddi.infoblox.com/allocate: "true"`
-- Mirrors the MetalLB pools into MetalLB's IPAddressPool objects so MetalLB announces them
+- Allocates dual-stack (IPv4 and IPv6) addresses to Services in `team-a` with `uddi.infoblox.com/allocate: "true"`, from `team-a`'s two Ranges
+- Mirrors those two Ranges into MetalLB's IPAddressPool objects (`uddi-team-a-lb-range-lb-pool` and `uddi-team-a-lb-range-lb-pool-v6` in `metallb-system`, with `autoAssign: false`) so MetalLB announces them
 - Writes the allocated IPs to `metallb.io/loadBalancerIPs` for MetalLB to use
+
+The platform team's own Ranges in `uddi-system` are unaffected: a policy in `uddi-system` would serve only Services in `uddi-system`.
 
 ### Dual-Stack LoadBalancer Service Example
 
@@ -490,11 +582,18 @@ spec:
 
 When the Service is created:
 
-1. **IPAllocationPolicy** creates an Address CR named `lb-web` allocating the next IPv4 address from the pool and another CR `lb-web-1` for IPv6
-2. Once both are Ready, the policy patches the Service with `metallb.io/loadBalancerIPs: 10.10.0.201,fd00:10::1`
+1. **IPAllocationPolicy** creates an Address CR named `lb-web` in `team-a`, allocating the next IPv4 address from `lb-pool`, and another CR `lb-web-1` for IPv6 from `lb-pool-v6`
+2. Once both are Ready, the policy patches the Service with `metallb.io/loadBalancerIPs: 10.10.0.100,fd00:10::1:1`
 3. MetalLB reads the annotation and announces both IPs
 
 ### DNS Publishing for Services
+
+The `apps.ocp1.example.com.` zone is adopted once, as the `apps-zone` AuthZone in `uddi-system` (section 2). `team-a` does not adopt it again. Its policy names the zone by Universal DDI id and fqdn, so the generated Records reference the zone directly and no AuthZone CR is needed in `team-a`. Read the id from the platform's CR:
+
+```bash
+kubectl get authzone apps-zone -n uddi-system -o jsonpath='{.status.id}'
+# dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d
+```
 
 Publish the service hostname to its allocated IPs:
 
@@ -503,7 +602,7 @@ apiVersion: uddi.infoblox.com/v1alpha1
 kind: DNSPublishPolicy
 metadata:
   name: services
-  namespace: uddi-system
+  namespace: team-a
 spec:
   connectionRef:
     name: default
@@ -511,7 +610,8 @@ spec:
     - Service
   selector: {}
   zoneRefs:
-    - name: apps-zone
+    - id: dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d
+      fqdn: apps.ocp1.example.com.
   target:
     mode: A
   ttl: 300
@@ -522,7 +622,11 @@ spec:
     deletionPolicy: Delete
 ```
 
-This policy reads the `uddi.infoblox.com/hostname` annotation from every LoadBalancer Service and creates A and AAAA records pointing to the allocated IP. The flow:
+The `id` and `fqdn` go together: `fqdn` is what hostnames are matched against, so it must equal the zone's real fqdn, and the operator does not check the id. A mistyped id only shows when the Records fail to sync.
+
+**Why `team-a` must not adopt the zone again.** It is tempting to give `team-a` its own AuthZone CR for `apps.ocp1.example.com.` with `adoptExisting: true`, as the platform did. That is refused. `adoptExisting` only takes over an object that no other CR manages, and the zone carries the ownership tags of the platform's `apps-zone`. The `team-a` AuthZone would sit at `Ready=False/AlreadyExists`, with a message like `Universal DDI AuthZone dns/auth_zone/... is already managed by uddi-system/AuthZone/apps-zone; adoptExisting only takes over objects no other CR manages`. The refusal protects the zone: two CRs adopting it would keep rewriting its ownership tags, and deleting either CR could remove a zone the other still publishes into. Referencing the zone by id, as above, gives `team-a` what it needs without a second owner. To hand the zone to another CR on purpose, remove its `uddi_operator_*` tags in Universal DDI first.
+
+This policy reads the `uddi.infoblox.com/hostname` annotation from every LoadBalancer Service in `team-a` and creates A and AAAA records pointing to the allocated IP. The flow:
 
 1. Service gets an IP from IPAllocationPolicy → stored in `metallb.io/loadBalancerIPs`
 2. DNSPublishPolicy reads the hostname annotation and the IP from `status.loadBalancer.ingress`
@@ -534,18 +638,21 @@ Check the allocation and DNS status:
 ```bash
 # Check service annotation for allocated IPs
 kubectl get service web -n team-a -o jsonpath='{.metadata.annotations.metallb\.io/loadBalancerIPs}'
-# 10.10.0.201,fd00:10::1
+# 10.10.0.100,fd00:10::1:1
 
 # Check generated Address CRs
-kubectl get address -l uddi.infoblox.com/service=web -n uddi-system
+kubectl get address -l uddi.infoblox.com/service=web -n team-a
 
 # Check generated Record CRs
-kubectl get record -l uddi.infoblox.com/source-kind=Service -n uddi-system
+kubectl get record -l uddi.infoblox.com/source-kind=Service -n team-a
+
+# Check the policies
+kubectl get ipallocationpolicy,dnspublishpolicy -n team-a
 ```
 
 ## 6. Migrating from external-dns
 
-If you are migrating from external-dns, enable compatibility mode to read existing `external-dns.alpha.kubernetes.io/` annotations on Routes, Ingresses, and Services:
+If you are migrating from external-dns, enable compatibility mode to read existing `external-dns.alpha.kubernetes.io/` annotations on Routes, Ingresses, and Services. The policy lives in `team-a` next to the objects it publishes, and it uses the Connection created for `team-a` in section 5. As there, it names the platform's `apps.ocp1.example.com.` zone by id and fqdn instead of adopting it again; the id is the one read from `uddi-system/apps-zone` in section 5:
 
 ```yaml
 apiVersion: uddi.infoblox.com/v1alpha1
@@ -561,7 +668,8 @@ spec:
     - Ingress
     - Service
   zoneRefs:
-    - name: apps-zone
+    - id: dns/auth_zone/2c1a9f0e-5b7d-4c9a-a1e2-3d4f5a6b7c8d
+      fqdn: apps.ocp1.example.com.
   target:
     mode: Auto
   compatibility:
@@ -575,9 +683,11 @@ spec:
 ```
 
 With `compatibility.externalDNS: true`:
-- The policy reads `external-dns.alpha.kubernetes.io/hostname` in addition to `uddi.infoblox.com/hostname`
-- The `uddi.infoblox.com` annotation wins when both are set
+- The policy reads `external-dns.alpha.kubernetes.io/hostname`, `/ttl` and `/target` in addition to the matching `uddi.infoblox.com/` annotations, on every source kind
+- The external-dns `ttl` may be an integer number of seconds or a duration such as `5m`
+- The `uddi.infoblox.com` annotation wins when both are set, annotation by annotation (the values are never merged)
 - Existing external-dns users can migrate without relabelling objects
+- `recordLifecycle.adoptExisting: true` lets the Records take over DNS records external-dns already created, as long as no other CR manages them
 
 Example: a Route with an existing external-dns annotation will continue to publish without modification:
 
@@ -635,7 +745,7 @@ kubectl describe dnspublishpolicy nodes -n uddi-system  # check published count 
 kubectl get record -n uddi-system -o wide
 
 # List Records from a specific policy
-kubectl get record -l uddi.infoblox.com/policy=services -n uddi-system
+kubectl get record -l uddi.infoblox.com/policy=services -n team-a
 
 # Check a Record's status
 kubectl describe record <record-name> -n uddi-system
@@ -645,11 +755,11 @@ kubectl describe record <record-name> -n uddi-system
 
 ```bash
 # View policy status
-kubectl get ipallocationpolicy lb -n uddi-system
-kubectl describe ipallocationpolicy lb -n uddi-system
+kubectl get ipallocationpolicy lb -n team-a
+kubectl describe ipallocationpolicy lb -n team-a
 
 # List all allocated Addresses
-kubectl get address -l uddi.infoblox.com/policy=lb -n uddi-system
+kubectl get address -l uddi.infoblox.com/policy=lb -n team-a
 
 # Check MetalLB pools created by mirroring
 kubectl get ipaddresspool -n metallb-system -o wide
