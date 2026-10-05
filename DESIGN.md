@@ -337,7 +337,7 @@ status: { id: dhcp/fixed_address/<uuid>, ... }
 ```yaml
 dhcpOptions:
   - type: option
-    optionCode: dhcp/option_code/<uuid>   # opaque resource id in v1alpha1; name lookup is a later convenience
+    optionCode: dhcp/option_code/<uuid>   # by id, or optionName: routers (plus optional optionSpace)
     optionValue: "10.0.10.1"
   - type: group
     group: dhcp/option_group/<uuid>

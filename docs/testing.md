@@ -129,6 +129,10 @@ covers:
    replaces the map` (or "merges into the map" if the API does not replace) so the
    operator knows whether the tag removal strategy in `internal/tags.ForPatch` works.
 8. `Get` on a deleted id returns 404.
+9. Option codes: `test/integration/optioncodes_test.go` lists the tenant's DHCP option
+   codes and logs the id prefixes of option codes and option spaces (DESIGN.md open
+   question 8), the default DHCPv4 option space id, whether `routers` resolves
+   unambiguously, and whether a `_filter` on `name` works for option codes.
 
 It also incidentally exercises a handful of client-layer behaviours worth knowing about
 regardless of their outcome: `dnsconfig.View.Name` and `ipam.IPSpace.Name` (and
@@ -137,9 +141,9 @@ regardless of their outcome: `dnsconfig.View.Name` and `ipam.IPSpace.Name` (and
 the generated client, so every patch must carry the current value forward or risk
 renaming/corrupting the object on an unrelated field's update -- every production adapter
 already does this, and `test/integration`'s own patch tests mirror it. `record_test.go`
-specifically checks whether `dnsdata.Record`'s equivalent gap around `Rdata` (which
-`recordAdapter.Diff` does *not* carry forward on a comment-only patch) actually corrupts
-a record's `rdata` against a real tenant.
+specifically checks whether `dnsdata.Record`'s equivalent gap around `Rdata` corrupts a
+record's `rdata` on a comment-only patch against a real tenant; `recordAdapter.Diff` now
+carries `rdata` on every patch, so the operator is safe either way.
 
 ### Reading `VERDICT:` lines and updating docs/uddi-api-notes.md
 

@@ -32,12 +32,18 @@ This document describes the custom resources of the `uddi.infoblox.com/v1alpha1`
 
 ### DHCPOption
 
-`DHCPOption` maps to the Universal DDI `ipam.OptionItem`. Option codes and option groups are opaque Universal DDI resource ids in v1alpha1 (CEL validation: `self.type == 'option' ? has(self.optionCode) : has(self.group)`).
+`DHCPOption` maps to the Universal DDI `ipam.OptionItem`. An entry of type `option` names its option code either by id (`optionCode`) or by name (`optionName`, optionally narrowed by `optionSpace`). An entry of type `group` references an option group id. CEL validation:
+
+- `self.type == 'option' ? has(self.optionCode) != has(self.optionName) : has(self.group)`: type option takes exactly one of `optionCode` and `optionName`; type group requires `group`.
+- `!has(self.optionSpace) || has(self.optionName)`: `optionSpace` only together with `optionName`.
+- `self.type != 'group' || (!has(self.optionCode) && !has(self.optionName))`: a group takes neither.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `type` | string | No | option | `option` (a single DHCP option code plus value) or `group` (a DHCP option group reference). |
-| `optionCode` | string | No (required if `type=option`) | — | Universal DDI option code id, for example "dhcp/option_code/<uuid>". Max 256 characters. |
+| `optionCode` | string | One of `optionCode` and `optionName` for `type=option` | — | Universal DDI option code id, for example "dhcp/option_code/<uuid>". Max 256 characters. |
+| `optionName` | string | One of `optionCode` and `optionName` for `type=option` | — | Option code name, for example `routers`, matched exactly including case. Resolved to an id through the Connection. 1 to 128 characters. |
+| `optionSpace` | string | No | — | Option space id, for example "dhcp/option_space/<uuid>" or the bare uuid, that `optionName` is looked up in. Needed only when the name exists in several option spaces. 1 to 256 characters. |
 | `optionValue` | string | No | — | Value for the option code. Max 4096 characters. |
 | `group` | string | No (required if `type=group`) | — | Universal DDI option group id, for example "dhcp/option_group/<uuid>". Max 256 characters. |
 

@@ -111,6 +111,9 @@ Owned by the second wave 3 agent:
   so the three call sites carry a nolint until the Runtime moves to `events.EventRecorder`.
 - **Generated Records use the deprecated `client.Apply` patch.** controller-runtime v0.24
   deprecates it in favour of the apply-configuration API; the call site carries a nolint.
+- **DHCP option names are exact and only checked through the Connection.** `optionName`
+  matches case-sensitively, and a name that later stops resolving turns an existing object
+  `Ready=False/DependencyNotReady` until it resolves again.
 - **Unified nameservers are not modelled.** AuthZone carries the legacy `nsgs` /
   `internalSecondaries` / `externalPrimaries` fields only. The API's `nameservers` model
   exists only on the SDK's untagged master branch, so `spec.nameservers` waits for a

@@ -540,7 +540,30 @@ spec:
       optionValue: "node-1.example.com"
 ```
 
-Option codes and option groups are opaque Universal DDI resource ids in v1alpha1. To use an option group:
+Instead of an option code id, an entry can name its option code. The operator looks the name
+up in the tenant's option codes through the Connection and sends the id:
+
+```yaml
+dhcpOptions:
+  - type: option
+    optionName: routers
+    optionValue: "10.0.10.1"
+  - type: option
+    optionName: ntp-servers
+    optionSpace: dhcp/option_space/<uuid>   # only needed when several option spaces define the name
+    optionValue: "10.0.0.123"
+```
+
+Names are matched exactly, case included. Option codes are cached per Connection for 10
+minutes, and a name that is not found triggers at most one refresh per minute, so a code
+created in Universal DDI is picked up within about a minute. A name that does not resolve,
+or that several option spaces define while `optionSpace` is empty, sets the object to
+`Ready=False/DependencyNotReady` with the option name and spaces in the message, and the
+object is retried. Universal DDI stores only the option code id, so the tenant UI shows ids
+rather than names. The same fields work in every `dhcpOptions` list, including
+`HostRegistrationPolicy.spec.register.dhcpOptions`.
+
+To use an option group:
 
 ```yaml
 dhcpOptions:
