@@ -491,7 +491,11 @@ spec:
 DNSRecord and the Gateway API are detected with discovery at startup like Routes; a missing
 API makes that source inert and is logged. Watches: Nodes and DNSRecords map to every
 DNSPublishPolicy that lists the source, cluster-wide; HTTPRoutes map to the policies in
-their namespace; Gateways map to every policy that lists HTTPRoute.
+their namespace; Gateways map to every policy that lists HTTPRoute. A DNSRecord only wakes
+the policies whose `dnsRecordNamespace` is the record's namespace. Because a Record's zone
+and name in zone are immutable, a Record that must move to another zone, after a zoneRef
+change or when a longer zone starts matching, is deleted and created again rather than
+patched.
 
 **IPAllocationPolicy** (milestone 3)
 
@@ -623,6 +627,16 @@ spec:
 EgressIP and MetalLB are detected with discovery at startup; a missing API makes that
 target or the mirroring inert and is reported in status as a skip or a log line.
 
+`status.skipped` names a Service by its bare name, an EgressIP as `EgressIP/<name>` and a
+pool as `<Kind>/<name>`. Pool mirroring adds the reasons `MetalLBPoolInvalid` (the pool CR
+cannot be expressed as an IPAddressPool) and `MetalLBPoolConflict` (an IPAddressPool of
+that name exists and is not this policy's), and a missing API adds an `APIUnavailable`
+entry named `EgressIP` or `IPAddressPool`; none of these change Ready. When a slot's
+Address already exists, its `address`, `nextAvailableFrom` and `spaceRef` are kept from the
+live object, so changing `allocateFrom` or the `address` annotation only affects new slots.
+Mirrored pools are pruned across namespaces by label, so changing `metallb.namespace`
+moves them, and they are not watched: every reconcile repairs drift.
+
 **HostRegistrationPolicy** (milestone 4)
 
 ```yaml
@@ -737,6 +751,13 @@ spec:
 - **PTR records for nodes** come from a DNSPublishPolicy with the Node source and
   `createPtr`; host registration stays an IPAM and DHCP concern. `docs/patterns.md` shows
   the combination.
+- **Name collisions.** A Node named `<node>-<interface>` would get the same object name as
+  interface `<interface>` of Node `<node>`, and dashed interface names can collide across
+  Nodes. Each object name is given to one registration: primary registrations first, then
+  objects frozen slots already hold, then interfaces in Node and interface order; a loser is
+  skipped with `NameConflict` naming the winner. Node names longer than 63 characters are
+  shortened in the `uddi.infoblox.com/node` label. BareMetalHost updates wake policies only
+  when `spec.bootMACAddress` or `status.hardware` changes.
 
 One generic loop, parameterised per kind through a small adapter interface, so all nine
 kinds behave identically:
@@ -895,6 +916,12 @@ with a hard cap so a misbehaving cursor cannot loop forever.
 - API keys live only in Secrets; the operator never writes them to status, events, logs or
   metrics.
 - Leader election on; one active manager per install.
+- Owner references on generated objects set `blockOwnerDeletion` only when the owner is the
+  operator's own policy. OpenShift's `OwnerReferencesPermissionEnforcement` admission
+  plugin rejects `blockOwnerDeletion: true` from a client that cannot update the owner's
+  finalizers, so Addresses and FixedAddresses owned by Services, Nodes and EgressIPs omit
+  it; background garbage collection still removes them with their owner. Policy names are
+  limited to 63 characters because they become label values on generated objects.
 - Pod hardening: seccomp `RuntimeDefault`, no privilege escalation, all capabilities
   dropped, explicit requests and limits. The default is one replica without a
   PodDisruptionBudget; the `config/ha` overlay runs two replicas with a PDB and soft

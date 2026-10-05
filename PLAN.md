@@ -113,6 +113,23 @@ Owned by the second wave 3 agent:
   `internalSecondaries` / `externalPrimaries` fields only. The API's `nameservers` model
   exists only on the SDK's untagged master branch, so `spec.nameservers` waits for a
   tagged SDK (DESIGN.md open question 3).
+- **One CR manages a Universal DDI object at a time.** `adoptExisting` refuses an object
+  another CR manages. To share a zone across namespaces, adopt it once and reference it from
+  other DNSPublishPolicies by `id` and `fqdn`; objects referenced by other kinds still need
+  a CR in the same namespace.
+- **IPAllocationPolicy pools live in the policy namespace.** `allocateFrom` and
+  `allocateFromIPv6` name Subnet, Range or AddressBlock CRs in the policy's namespace, so a
+  team namespace owns its own Range inside a shared subnet rather than sharing one pool CR.
+- **Moving a DNSPublishPolicy zone briefly removes its records.** A Record's zone and name
+  in zone are immutable, so when a zoneRef change or a longer matching zone moves a
+  hostname, the Record is deleted, which removes the DNS record, and created again on the
+  next pass.
+- **`WATCH_NAMESPACE` must include the DNSRecord and BareMetalHost namespaces** when an
+  operator-wide namespace restriction is used together with the DNSRecord source or Metal3
+  MAC discovery, or those reads fail or go unnoticed.
+- **Milestone 7 is proven on envtest only.** Real-cluster scenarios for the new sources,
+  dual-stack, EgressIP, MetalLB mirroring and Metal3 wait for milestone 5, as does checking
+  OpenShift admission behaviour envtest does not run.
 - **Kubernetes 1.29 CEL constraints.** The OpenShift 4.16 floor rules out
   `optionalOldSelf` / `oldSelf.orValue()`, so every "optional field is immutable" rule is
   written at the spec level instead of on the field. New validation must stay inside the
@@ -250,7 +267,7 @@ available yet; milestone 7 is proven on envtest.
 
 ### Wave 1: types and pure logic (parallel)
 
-- [ ] **P1. DNS publishing core.** DNSPublishPolicy spec gains `createPtr`,
+- [x] **P1. DNS publishing core.** DNSPublishPolicy spec gains `createPtr`,
   `compatibility.externalDNS`, `nodeAddressType`, `dnsRecordNamespace` and the source
   kinds Node, DNSRecord and HTTPRoute. `internal/publish`: the Node and DNSRecord
   extractors, external-dns annotation fallbacks in the shared annotation parsing (no
@@ -258,34 +275,34 @@ available yet; milestone 7 is proven on envtest.
   `createPtr` on generated A and AAAA Records, and tests proving dual-stack load balancers
   and Nodes yield A and AAAA. A scheme helper for openshift/api `operatoringress/v1` and the
   DNSRecord CRD fixture for envtest.
-- [ ] **P2. HTTPRoute source.** `internal/gatewayapi`: discovery for
+- [x] **P2. HTTPRoute source.** `internal/gatewayapi`: discovery for
   `gateway.networking.k8s.io/v1`, minimal Gateway and HTTPRoute CRD fixtures, unstructured
   accessors. `internal/publish`: the HTTPRoute extractor in its own file, using the shared
   annotation helpers.
-- [ ] **P3. IP allocation claims.** `internal/ipalloc` generalised to claims and slots:
+- [x] **P3. IP allocation claims.** `internal/ipalloc` generalised to claims and slots:
   dual-stack Services and EgressIP claims with the naming and label compatibility rules,
   pool family detection, comma-joined assignments, `NoPoolForFamily` and
   `DualStackUnsupported`. IPAllocationPolicy spec gains `targets`, `allocateFromIPv6` and
   `metallb`. `internal/egressip`: discovery, a minimal EgressIP CRD fixture and an
   unstructured view.
-- [ ] **P4. MetalLB pool mirroring.** `internal/metallb`: discovery, a minimal IPAddressPool
+- [x] **P4. MetalLB pool mirroring.** `internal/metallb`: discovery, a minimal IPAddressPool
   CRD fixture, and pure builders for the desired pool objects, names, labels and the stale
   set to prune.
-- [ ] **P5. Host registration.** `internal/metal3api`: discovery, a minimal BareMetalHost CRD
+- [x] **P5. Host registration.** `internal/metal3api`: discovery, a minimal BareMetalHost CRD
   fixture and the MAC lookup. `internal/hostreg`: Metal3 in the MAC chain, additional
   interfaces in the view and the planner. HostRegistrationPolicy spec gains
   `macSource.metal3` and `additionalInterfaces`.
-- [ ] **P6. Patterns guide.** `docs/patterns.md`: a bare-metal cluster using all three
+- [x] **P6. Patterns guide.** `docs/patterns.md`: a bare-metal cluster using all three
   policies together.
 
 ### Wave 2: controllers and docs (after wave 1 merges)
 
-- [ ] **C1. DNSPublishPolicy controller** wiring the three new sources, their discovery
+- [x] **C1. DNSPublishPolicy controller** wiring the three new sources, their discovery
   flags, watches and RBAC, with envtest; plus `zoneRefs` by `id` and `fqdn` (type, planner
   and controller), so several namespaces can publish into one zone adopted once.
-- [ ] **C2. IPAllocationPolicy controller** wiring claims for dual-stack Services and
+- [x] **C2. IPAllocationPolicy controller** wiring claims for dual-stack Services and
   EgressIPs and MetalLB mirroring with its finalizer, with envtest.
-- [ ] **C3. HostRegistrationPolicy controller** wiring Metal3 and additional interfaces, with
+- [x] **C3. HostRegistrationPolicy controller** wiring Metal3 and additional interfaces, with
   envtest.
 - [ ] **D1. Documentation** for the three policy guides and the API reference.
 
