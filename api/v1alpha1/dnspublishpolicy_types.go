@@ -257,6 +257,7 @@ type DNSPublishPolicyStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=uddipublish
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="the policy name becomes a label value on every generated Record, so it is limited to 63 characters"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Published",type=integer,JSONPath=`.status.published`
 // +kubebuilder:printcolumn:name="Ready-count",type=integer,JSONPath=`.status.ready`

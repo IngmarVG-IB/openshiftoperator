@@ -267,6 +267,48 @@ var _ = Describe("DNSPublishPolicy controller", func() {
 			Expect(records[0].Spec.Tags).To(HaveKey(publish.TagSource))
 		})
 
+		It("rejects a policy name longer than a label value", func() {
+			policy := &uddiv1alpha1.DNSPublishPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: strings.Repeat("p", 64), Namespace: ns},
+				Spec: uddiv1alpha1.DNSPublishPolicySpec{
+					ZoneRefs: []uddiv1alpha1.ObjectRef{{Name: zone.Name}},
+				},
+			}
+			err := k8sClient.Create(ctx, policy)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("limited to 63 characters"))
+		})
+
+		It("publishes a source whose name is longer than a label value", func() {
+			longName := strings.Repeat("very-long-ingress-name-", 4) + "x"
+			Expect(len(longName)).To(BeNumerically(">", 63))
+			ingress := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: longName, Namespace: ns},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{{Host: "long.apps.example.com"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ingress)).To(Succeed())
+			ingress.Status.LoadBalancer.Ingress = []networkingv1.IngressLoadBalancerIngress{{IP: "192.0.2.42"}}
+			Expect(k8sClient.Status().Update(ctx, ingress)).To(Succeed())
+
+			policy := &uddiv1alpha1.DNSPublishPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "long-source", Namespace: ns},
+				Spec: uddiv1alpha1.DNSPublishPolicySpec{
+					Sources:  []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindIngress},
+					ZoneRefs: []uddiv1alpha1.ObjectRef{{Name: zone.Name}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+			Expect(reconcilePolicy(policy)).To(Succeed())
+
+			records := policyRecords(policy)
+			Expect(records).To(HaveLen(1))
+			label := records[0].Labels[publish.LabelSourceName]
+			Expect(len(label)).To(BeNumerically("<=", 63))
+			Expect(label).To(HavePrefix("very-long-ingress-name-"))
+		})
+
 		It("clears connectionRef and lifecycle on generated Records when the policy stops setting them", func() {
 			// On Kubernetes 1.29 an apply that sent connectionRef: {} after an earlier apply set
 			// connectionRef.name failed with a 422; the envtest floor lane proves it no longer does.

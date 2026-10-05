@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/labelvalue"
 )
 
 // maxNameLength is the Kubernetes object name length limit every generated Record
@@ -288,7 +289,8 @@ func buildRecord(policy *uddiv1alpha1.DNSPublishPolicy, ep Endpoint, t Target, z
 		Labels: map[string]string{
 			LabelPolicy:     policy.Name,
 			LabelSourceKind: string(ep.Source.Kind),
-			LabelSourceName: ep.Source.Name,
+			// Source names can be up to 253 characters; label values only 63.
+			LabelSourceName: labelvalue.For(ep.Source.Name),
 		},
 		Annotations: map[string]string{
 			AnnotationRecordHost: ep.Hostname,
