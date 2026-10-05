@@ -34,7 +34,8 @@ spec:
       openAPIV3Schema:
         description: |-
           IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
-          Services and writes them back as a Service annotation or spec.loadBalancerIP.
+          Services, one per IP family, and OVN-Kubernetes EgressIPs, and writes them back as a
+          Service annotation, spec.loadBalancerIP or the EgressIP's spec.egressIPs.
         properties:
           apiVersion:
             description: |-
@@ -55,8 +56,8 @@ spec:
             type: object
           spec:
             description: |-
-              IPAllocationPolicySpec selects which Services get a Universal DDI IPAM address
-              allocated and written back. See DESIGN.md section 4.7 for the full pipeline.
+              IPAllocationPolicySpec selects which Services and EgressIPs get Universal DDI IPAM
+              addresses allocated and written back. See DESIGN.md section 4.7 for the full pipeline.
             properties:
               addressLifecycle:
                 description: AddressLifecycle is copied onto every generated Address's
@@ -79,8 +80,79 @@ spec:
                     type: string
                 type: object
               allocateFrom:
-                description: AllocateFrom selects the pool this policy allocates Addresses
-                  from.
+                description: |-
+                  AllocateFrom selects the pool this policy allocates Addresses from. IPv4 slots
+                  use it, and IPv6 slots too when it is an IPv6 pool and allocateFromIPv6 is unset.
+                properties:
+                  addressBlockRef:
+                    description: AddressBlockRef names an AddressBlock CR in this
+                      namespace.
+                    properties:
+                      id:
+                        description: ID is a Universal DDI resource id, for example
+                          "dns/view/2c1a...".
+                        maxLength: 256
+                        type: string
+                      name:
+                        description: Name of an object-layer CR in this namespace.
+                        maxLength: 253
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of name or id must be set
+                      rule: has(self.name) != has(self.id)
+                  rangeRef:
+                    description: RangeRef names a Range CR in this namespace.
+                    properties:
+                      id:
+                        description: ID is a Universal DDI resource id, for example
+                          "dns/view/2c1a...".
+                        maxLength: 256
+                        type: string
+                      name:
+                        description: Name of an object-layer CR in this namespace.
+                        maxLength: 253
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of name or id must be set
+                      rule: has(self.name) != has(self.id)
+                  subnetRef:
+                    description: SubnetRef names a Subnet CR in this namespace.
+                    properties:
+                      id:
+                        description: ID is a Universal DDI resource id, for example
+                          "dns/view/2c1a...".
+                        maxLength: 256
+                        type: string
+                      name:
+                        description: Name of an object-layer CR in this namespace.
+                        maxLength: 253
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of name or id must be set
+                      rule: has(self.name) != has(self.id)
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of subnetRef, rangeRef or addressBlockRef must
+                    be set
+                  rule: '[has(self.subnetRef), has(self.rangeRef), has(self.addressBlockRef)].filter(x,
+                    x).size() == 1'
+                - message: subnetRef must set name
+                  rule: '!has(self.subnetRef) || (has(self.subnetRef.name) && size(self.subnetRef.name)
+                    > 0)'
+                - message: rangeRef must set name
+                  rule: '!has(self.rangeRef) || (has(self.rangeRef.name) && size(self.rangeRef.name)
+                    > 0)'
+                - message: addressBlockRef must set name
+                  rule: '!has(self.addressBlockRef) || (has(self.addressBlockRef.name)
+                    && size(self.addressBlockRef.name) > 0)'
+              allocateFromIPv6:
+                description: |-
+                  AllocateFromIPv6 selects the pool IPv6 slots (the IPv6 address of a dual-stack
+                  Service) are allocated from. Optional: without it IPv6 slots use allocateFrom
+                  when that is an IPv6 pool.
                 properties:
                   addressBlockRef:
                     description: AddressBlockRef names an AddressBlock CR in this
@@ -181,18 +253,37 @@ spec:
                     maxLength: 253
                     type: string
                 type: object
+              metallb:
+                description: MetalLB configures mirroring of this policy's pools into
+                  MetalLB IPAddressPools.
+                properties:
+                  mirrorPools:
+                    description: |-
+                      MirrorPools, when true, mirrors every pool this policy uses into a
+                      metallb.io/v1beta1 IPAddressPool with autoAssign false.
+                    type: boolean
+                  namespace:
+                    default: metallb-system
+                    description: |-
+                      Namespace is where the mirrored IPAddressPools are created. Defaults to
+                      metallb-system.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                type: object
               requireAnnotation:
                 default: true
                 description: |-
                   RequireAnnotation, when true (the default), only allocates for Services that
                   carry the uddi.infoblox.com/allocate: "true" annotation. When false, every
                   selected type: LoadBalancer Service is allocated for unless it opts out with
-                  uddi.infoblox.com/allocate: "false".
+                  uddi.infoblox.com/allocate: "false". EgressIPs always need the annotation.
                 type: boolean
               selector:
                 description: |-
-                  Selector selects the Services in this namespace this policy considers. Empty
-                  selects every Service in the namespace.
+                  Selector selects the Services in this namespace, and the EgressIPs, this policy
+                  considers. Empty selects every one.
                 properties:
                   matchExpressions:
                     description: matchExpressions is a list of label selector requirements.
@@ -242,6 +333,25 @@ spec:
                   type: string
                 description: Tags are merged into every generated Address's spec.tags.
                 type: object
+              targets:
+                default:
+                - Service
+                description: |-
+                  Targets selects which kinds of objects claim addresses: Service (type
+                  LoadBalancer Services in this namespace) and EgressIP (cluster-scoped
+                  OVN-Kubernetes EgressIPs). Defaults to Service only. Addresses already allocated
+                  for a kind that is removed from this list are left in place.
+                items:
+                  description: TargetKind names a kind of object an IPAllocationPolicy
+                    allocates addresses for.
+                  enum:
+                  - Service
+                  - EgressIP
+                  type: string
+                maxItems: 2
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
             required:
             - allocateFrom
             type: object
@@ -250,13 +360,13 @@ spec:
               IPAllocationPolicy.
             properties:
               allocated:
-                description: Allocated is the number of Services that have an Address
-                  CR.
+                description: Allocated is the number of Services and EgressIPs that
+                  have their Address CRs.
                 format: int32
                 type: integer
               assigned:
                 description: |-
-                  Assigned is, of those, the number whose assignment field carries the Ready
+                  Assigned is, of those, the number whose assignment field carries every Ready
                   address.
                 format: int32
                 type: integer
@@ -328,12 +438,13 @@ spec:
                 type: integer
               skipped:
                 description: |-
-                  Skipped lists Services not allocated or not assigned, and why. Bounded and
-                  sorted by service then reason.
+                  Skipped lists Services and EgressIPs not allocated or not assigned, and pools not
+                  mirrored into MetalLB, and why. Bounded and sorted by service then reason.
                 items:
                   description: |-
-                    SkippedService is one Service that did not get an address, or did not get its
-                    address assigned, and why. See internal/ipalloc.Skip.
+                    SkippedService is one Service or EgressIP that did not get its addresses, or did not
+                    get them assigned, or one pool that could not be mirrored into MetalLB, and why. See
+                    internal/ipalloc.Skip.
                   properties:
                     message:
                       description: Message is a human-readable explanation.
@@ -345,8 +456,12 @@ spec:
                       maxLength: 64
                       type: string
                     service:
-                      description: Service is the name of the Service that was skipped.
-                      maxLength: 253
+                      description: |-
+                        Service names what was skipped: the name of a Service; "EgressIP/<name>" for an
+                        EgressIP; "<pool kind>/<pool name>" (for example "Range/lb-pool") for a pool that
+                        cannot be mirrored into MetalLB; or "EgressIP" or "IPAddressPool" alone when the
+                        cluster does not serve that API. At most "AddressBlock/" plus a 253 character name.
+                      maxLength: 266
                       type: string
                   type: object
                 maxItems: 50
@@ -354,6 +469,10 @@ spec:
                 x-kubernetes-list-type: atomic
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: the policy name becomes a label value on every generated Address,
+            so it is limited to 63 characters
+          rule: size(self.metadata.name) <= 63
     served: true
     storage: true
     subresources:

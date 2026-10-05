@@ -183,8 +183,9 @@ type DNSPublishPolicySpec struct {
 	// +optional
 	Sources []SourceKind `json:"sources,omitempty"`
 
-	// Selector selects the source objects in this namespace. Empty selects every
-	// object of the configured source kinds.
+	// Selector selects the source objects by label. Routes, Ingresses, Services and
+	// HTTPRoutes are read from the policy's namespace, Nodes cluster-wide, and DNSRecords
+	// from dnsRecordNamespace. Empty selects every object of the configured source kinds.
 	// +optional
 	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 

@@ -271,6 +271,28 @@ func TestCompute_InvalidAnnotationSkipped(t *testing.T) {
 	}
 }
 
+// With requireAnnotation false every Service in the namespace is a claim; a ClusterIP
+// Service without the allocate annotation must not be reported, or status.skipped and the
+// Skipped events would fill with every ordinary Service.
+func TestCompute_NonLoadBalancerWithoutAnnotationIsIgnored(t *testing.T) {
+	policy := rangePoolPolicy(boolPtr(false))
+	plain := Claim{Target: TargetRef{Kind: TargetService, Namespace: "team-a", Name: "plain"}, Eligible: false}
+	formerLB := Claim{Target: TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb}, Eligible: false}
+	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
+
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{plain, formerLB}, Pools: readyPools(), Existing: existing})
+
+	if len(plan.Skips) != 0 {
+		t.Fatalf("expected no skips for Services that did not ask for an address, got %+v", plan.Skips)
+	}
+	if len(plan.Ensure) != 0 {
+		t.Fatalf("expected nothing ensured, got %+v", plan.Ensure)
+	}
+	if len(plan.Release) != 1 || plan.Release[0].AddressName != addrLBWeb {
+		t.Fatalf("expected the Address of the Service that stopped being a LoadBalancer to be released, got %+v", plan.Release)
+	}
+}
+
 func TestCompute_NotLoadBalancer(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
 	v := Claim{

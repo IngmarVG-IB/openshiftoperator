@@ -344,7 +344,13 @@ func (p *planner) claim(c Claim) {
 		return
 	}
 	if !c.Eligible {
-		p.skip(c.Target, SkipNotLoadBalancer, "Service is not of type LoadBalancer")
+		// Only a Service that asked for an address with the allocate annotation is
+		// reported. With requireAnnotation false every Service in the namespace reaches
+		// this point, and a ClusterIP Service without the annotation is simply not a
+		// candidate (DESIGN.md 4.7). Either way any Address it still holds is released.
+		if c.OptIn != nil && *c.OptIn {
+			p.skip(c.Target, SkipNotLoadBalancer, "Service is not of type LoadBalancer")
+		}
 		return
 	}
 	// From here on the claim wants addresses: hold every existing one until the slots

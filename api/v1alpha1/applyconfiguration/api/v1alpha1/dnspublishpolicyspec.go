@@ -36,8 +36,9 @@ type DNSPublishPolicySpecApplyConfiguration struct {
 	// Ingress and Service; Service means type LoadBalancer. Node, DNSRecord and HTTPRoute
 	// are opt-in.
 	Sources []apiv1alpha1.SourceKind `json:"sources,omitempty"`
-	// Selector selects the source objects in this namespace. Empty selects every
-	// object of the configured source kinds.
+	// Selector selects the source objects by label. Routes, Ingresses, Services and
+	// HTTPRoutes are read from the policy's namespace, Nodes cluster-wide, and DNSRecords
+	// from dnsRecordNamespace. Empty selects every object of the configured source kinds.
 	Selector *v1.LabelSelectorApplyConfiguration `json:"selector,omitempty"`
 	// ZoneRefs are the zones considered for the generated Records: AuthZone CRs in this
 	// namespace (name), or Universal DDI zones addressed directly (id plus fqdn).

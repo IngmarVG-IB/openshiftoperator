@@ -135,9 +135,13 @@ metadata:
             "name": "public"
           },
           "spec": {
+            "compatibility": {
+              "externalDNS": true
+            },
             "connectionRef": {
               "name": "default"
             },
+            "createPtr": true,
             "recordLifecycle": {
               "deletionPolicy": "Delete"
             },
@@ -204,6 +208,16 @@ metadata:
             "namespace": "uddi-system"
           },
           "spec": {
+            "additionalInterfaces": [
+              {
+                "cidr": "10.20.0.0/16",
+                "hostnameSuffix": "-storage",
+                "name": "storage",
+                "spaceRef": {
+                  "name": "storage"
+                }
+              }
+            ],
             "addressType": "InternalIP",
             "connectionRef": {
               "name": "default"
@@ -212,6 +226,10 @@ metadata:
               "deletionPolicy": "Delete"
             },
             "macSource": {
+              "metal3": {
+                "enabled": true,
+                "namespace": "openshift-machine-api"
+              },
               "nmstate": {
                 "enabled": true,
                 "interface": ""
@@ -254,12 +272,21 @@ metadata:
                 "name": "lb-pool"
               }
             },
+            "allocateFromIPv6": {
+              "rangeRef": {
+                "name": "lb-pool-v6"
+              }
+            },
             "assignVia": {
               "annotation": "metallb.io/loadBalancerIPs",
               "mode": "Annotation"
             },
             "connectionRef": {
               "name": "default"
+            },
+            "metallb": {
+              "mirrorPools": true,
+              "namespace": "metallb-system"
             },
             "requireAnnotation": true,
             "selector": {
@@ -269,7 +296,10 @@ metadata:
             },
             "tags": {
               "team": "platform"
-            }
+            },
+            "targets": [
+              "Service"
+            ]
           }
         },
         {
@@ -429,7 +459,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: quay.io/ingmarvg-ib/uddi-operator:0.1.0
-    createdAt: "2026-10-05T01:41:00Z"
+    createdAt: "2026-10-05T05:49:13Z"
     olm.skipRange: <0.1.0
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -483,7 +513,8 @@ spec:
       version: v1alpha1
     - description: |-
         IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
-        Services and writes them back as a Service annotation or spec.loadBalancerIP.
+        Services, one per IP family, and OVN-Kubernetes EgressIPs, and writes them back as a
+        Service annotation, spec.loadBalancerIP or the EgressIP's spec.egressIPs.
       displayName: IPAllocation Policy
       kind: IPAllocationPolicy
       name: ipallocationpolicies.uddi.infoblox.com
@@ -585,6 +616,52 @@ spec:
           verbs:
           - get
           - list
+          - watch
+        - apiGroups:
+          - gateway.networking.k8s.io
+          resources:
+          - gateways
+          - httproutes
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - ingress.operator.openshift.io
+          resources:
+          - dnsrecords
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - k8s.ovn.org
+          resources:
+          - egressips
+          verbs:
+          - get
+          - list
+          - patch
+          - watch
+        - apiGroups:
+          - metal3.io
+          resources:
+          - baremetalhosts
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - metallb.io
+          resources:
+          - ipaddresspools
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
           - watch
         - apiGroups:
           - networking.k8s.io

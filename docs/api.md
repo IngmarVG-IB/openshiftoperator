@@ -757,7 +757,7 @@ CEL validation on each entry:
 
 All annotations are prefixed `uddi.infoblox.com/`. They override policy settings per source:
 - `publish: "false"` — exclude the source from publication.
-- `hostname` — comma-separated hostnames (adds or replaces computed hostnames; required for LoadBalancer Services).
+- `hostname` — comma-separated hostnames, added to the computed ones; a LoadBalancer Service has none of its own, so for a Service this annotation supplies them.
 - `ttl` — integer seconds, overrides policy default TTL.
 - `target` — comma-separated addresses and/or canonical names, overrides computed targets.
 

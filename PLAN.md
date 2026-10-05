@@ -304,7 +304,7 @@ available yet; milestone 7 is proven on envtest.
   EgressIPs and MetalLB mirroring with its finalizer, with envtest.
 - [x] **C3. HostRegistrationPolicy controller** wiring Metal3 and additional interfaces, with
   envtest.
-- [ ] **D1. Documentation** for the three policy guides and the API reference.
+- [x] **D1. Documentation** for the three policy guides and the API reference.
 
 Milestone 7 ends with both envtest lanes, lint, govulncheck, the rule checks and the bundle
 validators green and the bundle regenerated.

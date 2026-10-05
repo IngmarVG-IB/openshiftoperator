@@ -525,7 +525,7 @@ Each Skip entry has:
 
 | Reason | Cause | What to Do |
 | --- | --- | --- |
-| `NotLoadBalancer` | The Service's `type` is not `LoadBalancer` and it carries no `uddi.infoblox.com/allocate` annotation (or it is `"false"`). | Set the Service's `spec.type: LoadBalancer` or annotate with `uddi.infoblox.com/allocate: "true"`. |
+| `NotLoadBalancer` | The Service asks for an address with `uddi.infoblox.com/allocate: "true"` but its `type` is not `LoadBalancer`. Services of other types without the annotation are ignored silently, even with `requireAnnotation: false`. | Set the Service's `spec.type: LoadBalancer`, or remove the annotation. |
 | `InvalidAnnotation` | A malformed `allocate-from`, `address`, or `hostname` annotation value (e.g., invalid pool reference or IP address). | Fix the annotation value. Check the message for details. |
 | `PoolNotReady` | The selected pool (from policy or annotation) is missing or has no `status.id` yet (the pool is pending). | Wait for the pool to become Ready; check `kubectl describe <pool-kind> <pool-name>`. Or check that the annotation value (`allocate-from`) is correct. |
 | `ManuallyAssigned` | The assignment field already holds a value that no Address of this policy produced. | This is not an error; it means the IP is set manually. To switch to policy-managed allocation, clear the manual value and toggle the allocate annotation off and back on. |

@@ -338,7 +338,7 @@ metadata:
 
 ### `hostname`
 
-Adds or overrides hostnames (comma-separated). Used to publish a Route or Ingress at multiple names, or to give a Service a hostname.
+Adds hostnames (comma-separated) to the ones a source already has. Used to publish a Route or Ingress at more names, or to give a Service, which has no hostname of its own, a name to publish.
 
 ```yaml
 metadata:
@@ -594,7 +594,7 @@ The policy's `status` reports publication progress:
 | `conditions` | []metav1.Condition | `Ready` condition (summary) |
 
 The `Ready` condition:
-- `True/Published`: All desired Records are Ready and no `ZonesNotReady` skip remains
+- `True/Published`: All desired Records are Ready and no `ZoneNotReady` skip remains
 - `False/RecordsNotReady`: Some desired Records have `Ready=False` (still being created)
 - `False/ZonesNotReady`: No zone reference has `status.id` yet
 
@@ -617,7 +617,7 @@ Each Skip entry has:
 | `NoTarget` | No target could be derived for the policy's `target.mode` (e.g., mode is CNAME but the source yields only IPs). | Change the policy's mode to `Auto`, or add a `target` annotation to the source with a compatible value. |
 | `NoHostname` | A LoadBalancer Service lacks the `uddi.infoblox.com/hostname` annotation (and no default hostname applies). | Add `uddi.infoblox.com/hostname: "svc.apps.example.com"` to the Service. |
 | `NotAdmitted` | A Route has no admitted ingress (no router has picked it up yet). | Check the Route's status condition; typically a hostname conflict or other admission issue. Resolve and the policy will retry. |
-| `NotLoadBalancer` | A Service is not type `LoadBalancer` and carries no `uddi.infoblox.com/hostname` annotation. | Set the Service's `spec.type: LoadBalancer` or add the hostname annotation. |
+| `NotLoadBalancer` | A Service is not type `LoadBalancer` and carries no `uddi.infoblox.com/target` annotation, so there is nothing to point its name at. | Set the Service's `spec.type: LoadBalancer`, or give it a `uddi.infoblox.com/target` annotation. |
 | `ApexCNAME` | The zone apex cannot be a CNAME (DNS rule: apex must be A/AAAA). | Use mode `A` with address targets for the apex, or publish at a subdomain instead. |
 | `Unsupported` | A Route uses `spec.subdomain` without `spec.host` (not yet supported). | Use `spec.host` instead, or publish via an Ingress. |
 | `InvalidAnnotation` | A malformed `ttl` or `target` annotation (e.g., `ttl: "abc"` or an invalid address). | Fix the annotation value. |

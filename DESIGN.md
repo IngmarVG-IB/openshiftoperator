@@ -461,7 +461,8 @@ spec:
 - **DNSRecord** (`ingress.operator.openshift.io/v1`, typed from openshift/api, in
   `dnsRecordNamespace`, matched by `selector`). The hostname is `spec.dnsName`, usually the
   default router wildcard `*.apps.<cluster>.` in the record named `default-wildcard`.
-  Targets are `spec.targets` typed by `spec.recordType` (A, AAAA or CNAME). `spec.recordTTL`
+  Targets are `spec.targets` typed by `spec.recordType` (A or CNAME; AAAA only where the
+  cluster's dual-stack feature gates let the ingress operator create it). `spec.recordTTL`
   is used when positive, after a TTL annotation and before the policy TTL. This closes open
   question 5: the router wildcard is published automatically wherever the ingress operator
   creates DNSRecords, and a hand-written wildcard Record still covers bare-metal setups
@@ -567,7 +568,8 @@ Pipeline per reconcile, pure functions in `internal/ipalloc` plus a thin control
 
 Watches: the policy, Services mapped to every policy in the namespace, Addresses carrying
 the policy label mapped back to their policy, and the pool kinds through a field index on
-`allocateFrom`. One address per Service in this milestone (no dual-stack). Changing
+`allocateFrom`. Milestone 3 allocates one address per Service; the milestone 7 extensions below add
+dual-stack. Changing
 `allocateFrom` does not move already allocated Services; release and re-opt-in to move
 one.
 
@@ -666,7 +668,7 @@ status:
   registered: 5                             # Nodes whose registration object is Ready
   pending: 1                                # registration objects that exist but are not Ready
   skipped:                                  # bounded (50), sorted by node
-    - { node: infra-2, reason: NoMAC, message: "mode FixedAddress needs a MAC; no annotation and no NodeNetworkState" }
+    - { node: infra-2, reason: NoMAC, message: "mode FixedAddress needs a MAC; no annotation, NodeNetworkState or Metal3 BareMetalHost provides one" }
 ```
 
 Pipeline per reconcile, pure functions in `internal/hostreg` plus a thin controller:

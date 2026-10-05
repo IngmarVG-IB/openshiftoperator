@@ -184,7 +184,7 @@ spec:
   spaceRef:
     name: cluster
   address: 10.20.0.0
-  cidr: 16
+  cidr: 24
   name: storage-network
   comment: Storage network for node secondary interfaces
 ---
@@ -204,9 +204,23 @@ spec:
 
 ### IPv6 Range for Dual-Stack Services
 
-Create an IPv6 Range for the dual-stack service pool `fd00:10::/64`:
+Create the IPv6 subnet `fd00:10::/64` and a Range in it for the dual-stack service pool. A
+Range must lie inside an existing subnet, so the Subnet comes first:
 
 ```yaml
+apiVersion: uddi.infoblox.com/v1alpha1
+kind: Subnet
+metadata:
+  name: service-network-v6
+  namespace: uddi-system
+spec:
+  spaceRef:
+    name: cluster
+  address: "fd00:10::"
+  cidr: 64
+  name: service-network-v6
+  comment: IPv6 network for dual-stack LoadBalancer Services
+---
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: Range
 metadata:
@@ -261,7 +275,7 @@ spec:
       namespace: openshift-machine-api
   additionalInterfaces:
     - name: storage
-      cidr: 10.20.0.0/16
+      cidr: 10.20.0.0/24
       spaceRef:
         name: cluster
       hostnameSuffix: -storage
@@ -346,7 +360,10 @@ spec:
   dnsRecordNamespace: openshift-ingress-operator
   selector:
     matchLabels:
-      default-router: "true"
+      # Set by the ingress operator on the DNSRecords of each IngressController. It only
+      # creates the wildcard record when the IngressController publishes through a
+      # LoadBalancer Service.
+      ingresscontroller.operator.openshift.io/owning-ingresscontroller: default
   zoneRefs:
     - name: apps-zone
   target:

@@ -125,8 +125,9 @@ spec:
                 type: object
               selector:
                 description: |-
-                  Selector selects the source objects in this namespace. Empty selects every
-                  object of the configured source kinds.
+                  Selector selects the source objects by label. Routes, Ingresses, Services and
+                  HTTPRoutes are read from the policy's namespace, Nodes cluster-wide, and DNSRecords
+                  from dnsRecordNamespace. Empty selects every object of the configured source kinds.
                 properties:
                   matchExpressions:
                     description: matchExpressions is a list of label selector requirements.
