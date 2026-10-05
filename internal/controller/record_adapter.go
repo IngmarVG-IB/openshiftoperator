@@ -309,8 +309,8 @@ func (recordAdapter) Diff(spec *uddiv1alpha1.RecordSpec, deps uddisync.Deps, t t
 		patch.Disabled = &d
 		changed = true
 	}
-	if merged, tagsChanged := tags.ForPatch(uddi.FromAPITags(current.Tags), t); tagsChanged {
-		patch.Tags = uddi.ToAPITags(merged)
+	if merged, tagsChanged := tags.ForPatchAPI(current.Tags, t); tagsChanged {
+		patch.Tags = merged
 		changed = true
 	}
 	return patch, changed

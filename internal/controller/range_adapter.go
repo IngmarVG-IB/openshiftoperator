@@ -139,8 +139,8 @@ func (rangeAdapter) Diff(spec *uddiv1alpha1.RangeSpec, deps uddisync.Deps, t tag
 		patch.DisableDhcp = &disable
 		changed = true
 	}
-	if merged, tagsChanged := tags.ForPatch(uddi.FromAPITags(current.Tags), t); tagsChanged {
-		patch.Tags = uddi.ToAPITags(merged)
+	if merged, tagsChanged := tags.ForPatchAPI(current.Tags, t); tagsChanged {
+		patch.Tags = merged
 		changed = true
 	}
 	return patch, changed

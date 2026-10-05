@@ -157,6 +157,36 @@ func ForPatch(current map[string]string, d Desired) (map[string]string, bool) {
 	return out, !sameTags(current, out)
 }
 
+// ForPatchAPI is ForPatch over the raw tag map the SDK models carry. Adapters use it so
+// that a tag the operator never wrote is sent back exactly as Universal DDI returned it,
+// whatever its JSON type: converting to strings first would drop a number or boolean
+// value, and because the patch replaces the whole map that tag would be deleted.
+func ForPatchAPI(current map[string]interface{}, d Desired) (map[string]interface{}, bool) {
+	out := make(map[string]interface{}, len(current)+len(d.Want))
+	for k, v := range current {
+		out[k] = v
+	}
+	changed := false
+	for _, k := range d.Remove {
+		if _, wanted := d.Want[k]; wanted {
+			continue
+		}
+		if _, ok := out[k]; ok {
+			delete(out, k)
+			changed = true
+		}
+	}
+	for k, v := range d.Want {
+		// Comparing an interface value with a string never panics: a non-string value of
+		// any type, comparable or not, is simply unequal.
+		if cur, ok := current[k]; !ok || cur != v {
+			changed = true
+		}
+		out[k] = v
+	}
+	return out, changed
+}
+
 // sameTags reports whether two tag maps hold the same keys and values. A nil map and an
 // empty map are the same.
 func sameTags(a, b map[string]string) bool {

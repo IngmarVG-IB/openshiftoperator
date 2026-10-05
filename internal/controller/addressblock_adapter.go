@@ -151,8 +151,8 @@ func (addressblockAdapter) Diff(spec *uddiv1alpha1.AddressBlockSpec, _ uddisync.
 		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
 		changed = true
 	}
-	if merged, tagsChanged := tags.ForPatch(uddi.FromAPITags(current.Tags), t); tagsChanged {
-		patch.Tags = uddi.ToAPITags(merged)
+	if merged, tagsChanged := tags.ForPatchAPI(current.Tags, t); tagsChanged {
+		patch.Tags = merged
 		changed = true
 	}
 	return patch, changed

@@ -280,8 +280,8 @@ func (authzoneAdapter) Diff(spec *uddiv1alpha1.AuthZoneSpec, deps uddisync.Deps,
 		}
 		changed = true
 	}
-	if merged, tagsChanged := tags.ForPatch(uddi.FromAPITags(current.Tags), t); tagsChanged {
-		patch.Tags = uddi.ToAPITags(merged)
+	if merged, tagsChanged := tags.ForPatchAPI(current.Tags, t); tagsChanged {
+		patch.Tags = merged
 		changed = true
 	}
 	return patch, changed
