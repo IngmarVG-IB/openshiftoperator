@@ -117,7 +117,7 @@ func NewSDKClient(cfg Config) (*Client, error) {
 	}
 
 	c := &sdkClient{api: sdk.NewAPIClient(opts...)}
-	return &Client{DNSConfig: c, DNSData: c, IPAM: c, DHCP: c}, nil
+	return &Client{DNSConfig: c, DNSData: c, IPAM: c, DHCP: c, OptionCodes: NewOptionCodeResolver(c)}, nil
 }
 
 // --- listing and pagination ---
@@ -616,6 +616,36 @@ func (c *sdkClient) UpdateFixedAddress(ctx context.Context, id string, patch ipa
 func (c *sdkClient) DeleteFixedAddress(ctx context.Context, id string) error {
 	resp, err := c.api.IPAddressManagementAPI.FixedAddressAPI.Delete(ctx, BareID(id)).Execute()
 	return wrap(DomainDHCP, "DeleteFixedAddress", resp, err)
+}
+
+// --- dhcp: OptionCode ---
+
+// ListOptionCodes lists DHCP option codes. The generated list request has no _tfilter,
+// because option codes carry no tags, so opts.TFilter is ignored.
+func (c *sdkClient) ListOptionCodes(ctx context.Context, opts ListOptions) ([]ipam.OptionCode, error) {
+	return listAll("ListOptionCodes", opts, func(page ListOptions) ([]ipam.OptionCode, error) {
+		req := c.api.IPAddressManagementAPI.OptionCodeAPI.List(ctx)
+		if page.Filter != "" {
+			req = req.Filter(page.Filter)
+		}
+		if page.Fields != "" {
+			req = req.Fields(page.Fields)
+		}
+		if page.OrderBy != "" {
+			req = req.OrderBy(page.OrderBy)
+		}
+		if page.Limit > 0 {
+			req = req.Limit(page.Limit)
+		}
+		if page.Offset > 0 {
+			req = req.Offset(page.Offset)
+		}
+		res, resp, err := req.Execute()
+		if err != nil {
+			return nil, wrap(DomainDHCP, "ListOptionCodes", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func strPtrValue(p *string) string {

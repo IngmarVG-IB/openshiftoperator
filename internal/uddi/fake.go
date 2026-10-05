@@ -55,12 +55,14 @@ type Fake struct {
 	ranges   map[string]ipam.Range
 	adresses map[string]ipam.Address
 	fixed    map[string]ipam.FixedAddress
+	options  map[string]ipam.OptionCode
 
 	errs  map[string][]error
 	calls map[string]int
 }
 
-// NewFake returns an empty Fake wired into a Client.
+// NewFake returns a Fake wired into a Client. It holds no objects except the seeded DHCP
+// option codes (see seedOptionCodes), which Reset restores.
 func NewFake() *Fake {
 	return &Fake{
 		views:    map[string]dnsconfig.View{},
@@ -72,14 +74,17 @@ func NewFake() *Fake {
 		ranges:   map[string]ipam.Range{},
 		adresses: map[string]ipam.Address{},
 		fixed:    map[string]ipam.FixedAddress{},
+		options:  seedOptionCodes(),
 		errs:     map[string][]error{},
 		calls:    map[string]int{},
 	}
 }
 
-// Client returns a Client whose four domain interfaces all point at this Fake.
+// Client returns a Client whose four domain interfaces all point at this Fake. Every call
+// builds a Client with its own option code resolver, the way every Connection's cached
+// client has one, so a test that wants a cold cache asks for a new Client.
 func (f *Fake) Client() *Client {
-	return &Client{DNSConfig: f, DNSData: f, IPAM: f, DHCP: f}
+	return &Client{DNSConfig: f, DNSData: f, IPAM: f, DHCP: f, OptionCodes: NewOptionCodeResolver(f)}
 }
 
 // PushError queues an error to be returned by the next call to the named method, for
@@ -102,7 +107,8 @@ func (f *Fake) CallCount(method string) int {
 	return f.calls[method]
 }
 
-// Reset clears every stored object, queued error and call counter.
+// Reset clears every stored object, queued error and call counter, and puts the seeded
+// DHCP option codes back.
 func (f *Fake) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -116,6 +122,7 @@ func (f *Fake) Reset() {
 	f.ranges = map[string]ipam.Range{}
 	f.adresses = map[string]ipam.Address{}
 	f.fixed = map[string]ipam.FixedAddress{}
+	f.options = seedOptionCodes()
 	f.errs = map[string][]error{}
 	f.calls = map[string]int{}
 }
@@ -1519,6 +1526,120 @@ func (f *Fake) DeleteFixedAddress(ctx context.Context, id string) error {
 	return nil
 }
 
+// --- DHCP option codes ---
+
+// Option space ids of the option codes a new or reset Fake holds. The DHCPv4 space carries
+// the standard codes, the vendor space one code whose name collides with a standard one.
+const (
+	FakeOptionSpaceDHCPv4 = PrefixOptionSpace + "/00000000-0000-4000-9000-000000000004"
+	FakeOptionSpaceVendor = PrefixOptionSpace + "/00000000-0000-4000-9000-0000000000f0"
+)
+
+// FakeOptionCodeID returns the id of the seeded option code with the given DHCP option
+// number, for example FakeOptionCodeID(3) for "routers". Option codes a test adds through
+// CreateOptionCode get ids from the Fake's own counter instead.
+func FakeOptionCodeID(code int64) string {
+	return fmt.Sprintf("%s/00000000-0000-4000-9000-%012x", PrefixOptionCode, code)
+}
+
+// seedOptionCodes builds the option codes every Fake starts with: five standard DHCPv4
+// codes in FakeOptionSpaceDHCPv4, and in FakeOptionSpaceVendor a code 200 named
+// "ntp-servers", so that name exists in two spaces and needs an optionSpace to resolve.
+// The ids do not come from the Fake's counter, so seeding never shifts the ids of the
+// objects a test creates.
+func seedOptionCodes() map[string]ipam.OptionCode {
+	type seed struct {
+		space string
+		code  int64
+		name  string
+		typ   string
+		array bool
+	}
+	const (
+		typeAddress4 = "address4"
+		typeText     = "text"
+		typeFQDN     = "fqdn"
+	)
+	seeds := []seed{
+		{FakeOptionSpaceDHCPv4, 3, "routers", typeAddress4, true},
+		{FakeOptionSpaceDHCPv4, 6, "domain-name-servers", typeAddress4, true},
+		{FakeOptionSpaceDHCPv4, 15, "domain-name", typeText, false},
+		{FakeOptionSpaceDHCPv4, 42, "ntp-servers", typeAddress4, true},
+		{FakeOptionSpaceDHCPv4, 119, "domain-search", typeFQDN, true},
+		{FakeOptionSpaceVendor, 200, "ntp-servers", typeText, false},
+	}
+	out := make(map[string]ipam.OptionCode, len(seeds))
+	for _, s := range seeds {
+		id, source, array := FakeOptionCodeID(s.code), "reserved", s.array
+		out[id] = ipam.OptionCode{
+			Id:          &id,
+			Code:        s.code,
+			Name:        s.name,
+			OptionSpace: s.space,
+			Type:        s.typ,
+			Array:       &array,
+			Source:      &source,
+		}
+	}
+	return out
+}
+
+func optionCodeFields(c ipam.OptionCode) map[string]any {
+	return map[string]any{
+		"id":           strv(c.Id),
+		"code":         c.Code,
+		fieldName:      c.Name,
+		"option_space": c.OptionSpace,
+		"type":         c.Type,
+		"source":       strv(c.Source),
+		fieldComment:   strv(c.Comment),
+	}
+}
+
+// CreateOptionCode adds an option code, the way a test makes a code appear in the tenant
+// after a name failed to resolve. It is not part of the DHCP interface, because the
+// operator only reads option codes. The natural keys are name plus option space and code
+// plus option space.
+func (f *Fake) CreateOptionCode(ctx context.Context, in ipam.OptionCode) (*ipam.OptionCode, error) {
+	if err := f.enter("CreateOptionCode"); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if in.Name == "" || in.OptionSpace == "" || in.Type == "" {
+		return nil, badRequest(DomainDHCP, "CreateOptionCode", "name, option_space and type are required")
+	}
+	for _, c := range f.options {
+		if c.OptionSpace != in.OptionSpace {
+			continue
+		}
+		if c.Name == in.Name {
+			return nil, conflict(DomainDHCP, "CreateOptionCode", "name "+in.Name+" in option space "+in.OptionSpace)
+		}
+		if c.Code == in.Code {
+			return nil, conflict(DomainDHCP, "CreateOptionCode",
+				fmt.Sprintf("code %d in option space %s", in.Code, in.OptionSpace))
+		}
+	}
+	id := f.nextID(PrefixOptionCode)
+	obj := in
+	obj.Id = &id
+	f.options[id] = obj
+	out := obj
+	return &out, nil
+}
+
+// ListOptionCodes lists option codes matching the filters.
+func (f *Fake) ListOptionCodes(ctx context.Context, opts ListOptions) ([]ipam.OptionCode, error) {
+	if err := f.enter("ListOptionCodes"); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return filtered(DomainDHCP, "ListOptionCodes", f.options, opts, optionCodeFields,
+		func(ipam.OptionCode) map[string]interface{} { return nil })
+}
+
 // --- next-available allocation ---
 
 // allocateNextIPLocked returns the lowest free address inside the given parent, which
@@ -1761,4 +1882,6 @@ var (
 	_ DNSData   = (*Fake)(nil)
 	_ IPAM      = (*Fake)(nil)
 	_ DHCP      = (*Fake)(nil)
+
+	_ OptionCodeLister = (*Fake)(nil)
 )

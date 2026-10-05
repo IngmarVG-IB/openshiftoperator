@@ -130,6 +130,11 @@ type DHCP interface {
 	ListFixedAddresses(ctx context.Context, opts ListOptions) ([]ipam.FixedAddress, error)
 	UpdateFixedAddress(ctx context.Context, id string, patch ipam.FixedAddress) (*ipam.FixedAddress, error)
 	DeleteFixedAddress(ctx context.Context, id string) error
+
+	// ListOptionCodes lists the DHCP option codes (/dhcp/option_code) of every option
+	// space. Option codes carry no tags, so ListOptions.TFilter is ignored. Most callers
+	// want Client.OptionCodes instead, which caches the result per Connection.
+	ListOptionCodes(ctx context.Context, opts ListOptions) ([]ipam.OptionCode, error)
 }
 
 // Client groups the four domain interfaces. Both the SDK-backed client and the fake
@@ -139,6 +144,12 @@ type Client struct {
 	DNSData   DNSData
 	IPAM      IPAM
 	DHCP      DHCP
+
+	// OptionCodes resolves DHCP option names to option code ids and caches the lookups.
+	// NewSDKClient and Fake.Client set it, so it lives exactly as long as the Client the
+	// Connection resolver caches for one Connection. A Client built by hand leaves it
+	// nil, which makes a name-based dhcpOptions entry fail rather than panic.
+	OptionCodes *OptionCodeResolver
 }
 
 // Resource id prefixes. Universal DDI ids look like "<domain>/<type>/<uuid>" while the
@@ -153,6 +164,11 @@ const (
 	PrefixRange        = "ipam/range"
 	PrefixAddress      = "ipam/address"
 	PrefixFixedAddress = "dhcp/fixed_address"
+	// PrefixOptionCode and PrefixOptionSpace follow the same "<domain>/<type>" convention.
+	// The option code prefix is inferred, not yet confirmed against a tenant (DESIGN.md
+	// open question 8); test/integration/optioncodes_test.go logs what a tenant returns.
+	PrefixOptionCode  = "dhcp/option_code"
+	PrefixOptionSpace = "dhcp/option_space"
 )
 
 // Next-available address forms. Setting the address field of a create body to a parent

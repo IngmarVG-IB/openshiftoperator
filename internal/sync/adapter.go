@@ -33,8 +33,9 @@ import (
 )
 
 // ErrDependencyNotReady is returned by Adapter.Resolve when a referenced object has no
-// Universal DDI id yet. The loop turns it into Ready=False/DependencyNotReady and
-// requeues instead of failing.
+// Universal DDI id yet, or a name that has to be looked up in Universal DDI (a DHCP
+// option name) does not resolve. The loop turns it into Ready=False/DependencyNotReady
+// with the error text as the message and requeues instead of failing.
 var ErrDependencyNotReady = errors.New("sync: dependency not ready")
 
 // ErrConflict is returned by Adapter.Find when a matching Universal DDI object exists
@@ -78,9 +79,12 @@ type Adapter[S any, U any] interface {
 	// Kind is the CR kind name, used in events, messages and ownership tags.
 	Kind() string
 
-	// Resolve turns the spec's ObjectRefs into Universal DDI ids. It returns an error
-	// wrapping ErrDependencyNotReady when a referenced object has no id yet.
-	Resolve(ctx context.Context, c client.Client, obj client.Object, spec *S) (Deps, error)
+	// Resolve turns the spec's ObjectRefs, and any names it carries that Universal DDI
+	// has to look up (DHCP option names), into Universal DDI ids. uc is the client of the
+	// object's Connection, so Resolve may call Universal DDI; most adapters only read
+	// the cluster and ignore it. It returns an error wrapping ErrDependencyNotReady when
+	// a referenced object has no id yet or a name does not resolve.
+	Resolve(ctx context.Context, c client.Client, uc *uddi.Client, obj client.Object, spec *S) (Deps, error)
 
 	// Find looks the object up by its natural key, for adoption. It returns
 	// (nil, nil) when nothing matches.

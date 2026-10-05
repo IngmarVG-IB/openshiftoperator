@@ -54,7 +54,7 @@ func canonicalFQDN(fqdn string) string {
 }
 
 // Resolve turns spec.viewRef into a Universal DDI view id.
-func (authzoneAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.AuthZoneSpec) (uddisync.Deps, error) {
+func (authzoneAdapter) Resolve(ctx context.Context, c client.Client, _ *uddi.Client, obj client.Object, spec *uddiv1alpha1.AuthZoneSpec) (uddisync.Deps, error) {
 	viewID, err := uddisync.ResolveRef(ctx, c, obj.GetNamespace(), spec.ViewRef, &uddiv1alpha1.View{}, "View")
 	if err != nil {
 		return nil, err

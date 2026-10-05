@@ -40,8 +40,9 @@ func (subnetAdapter) Kind() string { return "Subnet" }
 
 // Resolve turns spaceRef into a Universal DDI ip space id, and parentRef into a
 // Universal DDI address block id when address is omitted (next-available allocation).
-// The parent for a next-available subnet is always an AddressBlock.
-func (subnetAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.SubnetSpec) (uddisync.Deps, error) {
+// The parent for a next-available subnet is always an AddressBlock. It also looks up the
+// option codes that dhcpOptions names by optionName.
+func (subnetAdapter) Resolve(ctx context.Context, c client.Client, uc *uddi.Client, obj client.Object, spec *uddiv1alpha1.SubnetSpec) (uddisync.Deps, error) {
 	deps := uddisync.Deps{}
 
 	spaceID, err := uddisync.ResolveRef(ctx, c, obj.GetNamespace(), spec.SpaceRef, &uddiv1alpha1.IPSpace{}, "IPSpace")
@@ -59,6 +60,10 @@ func (subnetAdapter) Resolve(ctx context.Context, c client.Client, obj client.Ob
 			return nil, err
 		}
 		deps[depParent] = parentID
+	}
+
+	if err := resolveOptionCodes(ctx, uc, spec.DHCPOptions, deps); err != nil {
+		return nil, err
 	}
 	return deps, nil
 }
@@ -114,7 +119,7 @@ func (subnetAdapter) Create(ctx context.Context, uc *uddi.Client, spec *uddiv1al
 	if spec.DHCPHost != "" {
 		in.DhcpHost = &spec.DHCPHost
 	}
-	in.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	in.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 	if spec.DisableDHCP {
 		disable := true
 		in.DisableDhcp = &disable
@@ -131,7 +136,7 @@ func (subnetAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*ipam
 // Diff compares the managed fields and builds a partial patch. Address, cidr and space
 // are immutable (CEL on address and parentRef, always on cidr) and are never patched.
 // dhcpHost, dhcpOptions and disableDhcp, unlike address and cidr, are mutable.
-func (subnetAdapter) Diff(spec *uddiv1alpha1.SubnetSpec, _ uddisync.Deps, t tags.Desired, current *ipam.Subnet) (*ipam.Subnet, bool) {
+func (subnetAdapter) Diff(spec *uddiv1alpha1.SubnetSpec, deps uddisync.Deps, t tags.Desired, current *ipam.Subnet) (*ipam.Subnet, bool) {
 	patch := &ipam.Subnet{}
 	changed := false
 
@@ -150,8 +155,8 @@ func (subnetAdapter) Diff(spec *uddiv1alpha1.SubnetSpec, _ uddisync.Deps, t tags
 		patch.DhcpHost = &host
 		changed = true
 	}
-	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions) {
-		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions, deps) {
+		patch.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 		changed = true
 	}
 	if boolPtr(current.DisableDhcp) != spec.DisableDHCP {

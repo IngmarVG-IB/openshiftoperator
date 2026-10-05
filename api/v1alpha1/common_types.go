@@ -189,19 +189,44 @@ const (
 	DHCPOptionTypeGroup DHCPOptionType = "group"
 )
 
-// DHCPOption maps to the Universal DDI ipam.OptionItem. Option codes and groups are
-// opaque Universal DDI resource ids in v1alpha1; lookup by name is a later convenience.
-// +kubebuilder:validation:XValidation:rule="self.type == 'option' ? has(self.optionCode) : has(self.group)",message="type option requires optionCode, type group requires group"
+// DHCPOption maps to the Universal DDI ipam.OptionItem. Option groups are opaque
+// Universal DDI resource ids. An option code is named either by its Universal DDI
+// resource id (optionCode) or by its name (optionName), which the operator looks up in
+// Universal DDI, optionally narrowed to one option space (optionSpace).
+// +kubebuilder:validation:XValidation:rule="self.type == 'option' ? has(self.optionCode) != has(self.optionName) : has(self.group)",message="type option requires exactly one of optionCode and optionName, type group requires group"
+// +kubebuilder:validation:XValidation:rule="!has(self.optionSpace) || has(self.optionName)",message="optionSpace may only be set together with optionName"
+// +kubebuilder:validation:XValidation:rule="self.type != 'group' || (!has(self.optionCode) && !has(self.optionName))",message="type group takes neither optionCode nor optionName"
 type DHCPOption struct {
 	// Type selects a single option or an option group.
 	// +kubebuilder:default=option
 	Type DHCPOptionType `json:"type"`
 
 	// OptionCode is a Universal DDI option code id, for example "dhcp/option_code/<uuid>".
-	// Required when type is "option".
+	// When type is "option", exactly one of optionCode and optionName is set.
 	// +kubebuilder:validation:MaxLength=256
 	// +optional
 	OptionCode string `json:"optionCode,omitempty"`
+
+	// OptionName is the name of a DHCP option code, for example "routers" or
+	// "domain-name-servers", looked up in Universal DDI instead of giving the option
+	// code id. A name that exists in more than one option space needs optionSpace; a
+	// name that does not resolve keeps the object at Ready=False with reason
+	// DependencyNotReady and is retried, so a code created later is picked up without
+	// editing the object. When type is "option", exactly one of optionCode and
+	// optionName is set.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	OptionName string `json:"optionName,omitempty"`
+
+	// OptionSpace is the Universal DDI option space id, for example
+	// "dhcp/option_space/<uuid>", that optionName is looked up in. It may only be set
+	// together with optionName. Leave it out when the name exists in exactly one option
+	// space.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +optional
+	OptionSpace string `json:"optionSpace,omitempty"`
 
 	// OptionValue is the value for the option code.
 	// +kubebuilder:validation:MaxLength=4096
