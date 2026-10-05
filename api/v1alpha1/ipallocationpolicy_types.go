@@ -88,33 +88,90 @@ type AllocateFrom struct {
 	AddressBlockRef *ObjectRef `json:"addressBlockRef,omitempty"`
 }
 
-// IPAllocationPolicySpec selects which Services get a Universal DDI IPAM address
-// allocated and written back. See DESIGN.md section 4.7 for the full pipeline.
+// TargetKind names a kind of object an IPAllocationPolicy allocates addresses for.
+// +kubebuilder:validation:Enum=Service;EgressIP
+type TargetKind string
+
+const (
+	// TargetKindService allocates for Services of type LoadBalancer, one address per IP
+	// family.
+	TargetKindService TargetKind = "Service"
+	// TargetKindEgressIP allocates for OVN-Kubernetes EgressIPs (k8s.ovn.org/v1), the
+	// number of addresses each one asks for with the uddi.infoblox.com/count annotation.
+	TargetKindEgressIP TargetKind = "EgressIP"
+)
+
+// DefaultMetalLBNamespace is the namespace mirrored MetalLB IPAddressPools are created in
+// when spec.metallb.namespace is empty.
+const DefaultMetalLBNamespace = "metallb-system"
+
+// MetalLBMirror configures mirroring of the pools an IPAllocationPolicy uses into MetalLB
+// IPAddressPools, so MetalLB announces the addresses the policy assigns.
+type MetalLBMirror struct {
+	// MirrorPools, when true, mirrors every pool this policy uses into a
+	// metallb.io/v1beta1 IPAddressPool with autoAssign false.
+	// +optional
+	MirrorPools bool `json:"mirrorPools,omitempty"`
+
+	// Namespace is where the mirrored IPAddressPools are created. Defaults to
+	// metallb-system.
+	// +kubebuilder:default=metallb-system
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// IPAllocationPolicySpec selects which Services and EgressIPs get Universal DDI IPAM
+// addresses allocated and written back. See DESIGN.md section 4.7 for the full pipeline.
 type IPAllocationPolicySpec struct {
 	// ConnectionRef names the Connection used by every Address this policy
 	// generates. Empty means the Connection called "default" in this namespace.
 	// +optional
 	ConnectionRef ConnectionRef `json:"connectionRef,omitempty"`
 
-	// Selector selects the Services in this namespace this policy considers. Empty
-	// selects every Service in the namespace.
+	// Targets selects which kinds of objects claim addresses: Service (type
+	// LoadBalancer Services in this namespace) and EgressIP (cluster-scoped
+	// OVN-Kubernetes EgressIPs). Defaults to Service only. Addresses already allocated
+	// for a kind that is removed from this list are left in place.
+	// +kubebuilder:default={Service}
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=2
+	// +listType=set
+	// +optional
+	Targets []TargetKind `json:"targets,omitempty"`
+
+	// Selector selects the Services in this namespace, and the EgressIPs, this policy
+	// considers. Empty selects every one.
 	// +optional
 	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 
 	// RequireAnnotation, when true (the default), only allocates for Services that
 	// carry the uddi.infoblox.com/allocate: "true" annotation. When false, every
 	// selected type: LoadBalancer Service is allocated for unless it opts out with
-	// uddi.infoblox.com/allocate: "false".
+	// uddi.infoblox.com/allocate: "false". EgressIPs always need the annotation.
 	// +kubebuilder:default=true
 	// +optional
 	RequireAnnotation *bool `json:"requireAnnotation,omitempty"`
 
-	// AllocateFrom selects the pool this policy allocates Addresses from.
+	// AllocateFrom selects the pool this policy allocates Addresses from. IPv4 slots
+	// use it, and IPv6 slots too when it is an IPv6 pool and allocateFromIPv6 is unset.
 	AllocateFrom AllocateFrom `json:"allocateFrom"`
+
+	// AllocateFromIPv6 selects the pool IPv6 slots (the IPv6 address of a dual-stack
+	// Service) are allocated from. Optional: without it IPv6 slots use allocateFrom
+	// when that is an IPv6 pool.
+	// +optional
+	AllocateFromIPv6 *AllocateFrom `json:"allocateFromIPv6,omitempty"`
 
 	// AssignVia selects how the allocated address is written back onto a Service.
 	// +optional
 	AssignVia AssignVia `json:"assignVia,omitempty"`
+
+	// MetalLB configures mirroring of this policy's pools into MetalLB IPAddressPools.
+	// +optional
+	MetalLB *MetalLBMirror `json:"metallb,omitempty"`
 
 	// Tags are merged into every generated Address's spec.tags.
 	// +optional
@@ -157,11 +214,11 @@ type IPAllocationPolicyStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// Allocated is the number of Services that have an Address CR.
+	// Allocated is the number of Services and EgressIPs that have their Address CRs.
 	// +optional
 	Allocated int32 `json:"allocated,omitempty"`
 
-	// Assigned is, of those, the number whose assignment field carries the Ready
+	// Assigned is, of those, the number whose assignment field carries every Ready
 	// address.
 	// +optional
 	Assigned int32 `json:"assigned,omitempty"`
@@ -183,7 +240,8 @@ type IPAllocationPolicyStatus struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // IPAllocationPolicy allocates Universal DDI IPAM addresses for LoadBalancer
-// Services and writes them back as a Service annotation or spec.loadBalancerIP.
+// Services, one per IP family, and OVN-Kubernetes EgressIPs, and writes them back as a
+// Service annotation, spec.loadBalancerIP or the EgressIP's spec.egressIPs.
 type IPAllocationPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

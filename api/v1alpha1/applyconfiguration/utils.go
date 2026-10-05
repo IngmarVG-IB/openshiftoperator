@@ -121,6 +121,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.LifecycleApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MACSource"):
 		return &apiv1alpha1.MACSourceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("MetalLBMirror"):
+		return &apiv1alpha1.MetalLBMirrorApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MXRData"):
 		return &apiv1alpha1.MXRDataApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NextAvailableFrom"):

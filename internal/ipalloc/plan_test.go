@@ -87,7 +87,7 @@ func TestAddressName(t *testing.T) {
 }
 
 func TestDefaultHostname(t *testing.T) {
-	got := DefaultHostname(ServiceRef{Namespace: "team-a", Name: svcWeb})
+	got := DefaultHostname(TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb})
 	if got != "web.team-a" {
 		t.Fatalf("DefaultHostname = %q, want web.team-a", got)
 	}
@@ -134,7 +134,7 @@ func TestWantsAddress(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := &uddiv1alpha1.IPAllocationPolicy{Spec: uddiv1alpha1.IPAllocationPolicySpec{RequireAnnotation: c.require}}
-			v := ServiceView{OptIn: c.optIn}
+			v := Claim{OptIn: c.optIn}
 			if got := WantsAddress(p, v); got != c.want {
 				t.Errorf("WantsAddress = %v, want %v", got, c.want)
 			}
@@ -144,14 +144,14 @@ func TestWantsAddress(t *testing.T) {
 
 func TestCompute_EnsureNextAvailable(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: true,
-		OptIn:          boolPtr(true),
-		Hostname:       "web.team-a",
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
+		OptIn:    boolPtr(true),
+		Hostname: "web.team-a",
 	}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools()})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools()})
 
 	if len(plan.Skips) != 0 {
 		t.Fatalf("expected no skips, got %+v", plan.Skips)
@@ -201,15 +201,15 @@ func TestCompute_EnsureNextAvailable(t *testing.T) {
 
 func TestCompute_ExplicitAddress(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:             ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer:  true,
-		OptIn:           boolPtr(true),
-		ExplicitAddress: "10.0.10.7",
-		Hostname:        "web.team-a",
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
+		OptIn:    boolPtr(true),
+		Slots:    []SlotRequest{{Address: "10.0.10.7"}},
+		Hostname: "web.team-a",
 	}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools()})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools()})
 
 	if len(plan.Ensure) != 1 {
 		t.Fatalf("expected one ensured Address, got %d", len(plan.Ensure))
@@ -226,17 +226,17 @@ func TestCompute_ExplicitAddress(t *testing.T) {
 func TestCompute_PoolOverrideViaAnnotation(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
 	override := PoolRef{Kind: PoolSubnet, Name: "other-subnet"}
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: true,
-		OptIn:          boolPtr(true),
-		Pool:           &override,
-		Hostname:       "web.team-a",
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
+		OptIn:    boolPtr(true),
+		Pool:     &override,
+		Hostname: "web.team-a",
 	}
 	pools := readyPools()
 	pools[override] = PoolState{Ref: override, Ready: true, SpaceRef: uddiv1alpha1.ObjectRef{Name: "other-space"}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: pools})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: pools})
 
 	if len(plan.Ensure) != 1 {
 		t.Fatalf("expected one ensured Address, got %d", len(plan.Ensure))
@@ -252,13 +252,13 @@ func TestCompute_PoolOverrideViaAnnotation(t *testing.T) {
 
 func TestCompute_InvalidAnnotationSkipped(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:     ServiceRef{Namespace: "team-a", Name: svcWeb},
+	v := Claim{
+		Target:  TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
 		Invalid: `invalid allocate-from value "bogus"`,
 	}
 	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
 	if len(plan.Ensure) != 0 {
 		t.Fatalf("expected no ensured Address, got %d", len(plan.Ensure))
@@ -273,19 +273,19 @@ func TestCompute_InvalidAnnotationSkipped(t *testing.T) {
 
 func TestCompute_NotLoadBalancer(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: false,
-		OptIn:          boolPtr(true),
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: false,
+		OptIn:    boolPtr(true),
 	}
 	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
 	if len(plan.Skips) != 1 || plan.Skips[0].Reason != SkipNotLoadBalancer {
 		t.Fatalf("expected one NotLoadBalancer skip, got %+v", plan.Skips)
 	}
-	if len(plan.Release) != 1 || plan.Release[0].AddressName != addrLBWeb || plan.Release[0].ClearValue != assignedIP {
+	if len(plan.Release) != 1 || plan.Release[0].AddressName != addrLBWeb || plan.Release[0].Address != assignedIP {
 		t.Fatalf("expected the stale Address to be released, got %+v", plan.Release)
 	}
 }
@@ -301,14 +301,14 @@ func TestCompute_PoolNotReady(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			policy := rangePoolPolicy(boolPtr(true))
-			v := ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-				IsLoadBalancer: true,
-				OptIn:          boolPtr(true),
+			v := Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+				Eligible: true,
+				OptIn:    boolPtr(true),
 			}
 			existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-			plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: c.pools, Existing: existing})
+			plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: c.pools, Existing: existing})
 
 			if len(plan.Ensure) != 0 {
 				t.Fatalf("expected no ensured Address while the pool is not ready, got %d", len(plan.Ensure))
@@ -326,15 +326,15 @@ func TestCompute_PoolNotReady(t *testing.T) {
 func TestCompute_ManuallyAssignedForeignValue(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
 	policy.Spec.AssignVia = uddiv1alpha1.AssignVia{Mode: uddiv1alpha1.AssignModeAnnotation, Annotation: "metallb.io/loadBalancerIPs"}
-	v := ServiceView{
-		Ref:               ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer:    true,
+	v := Claim{
+		Target:            TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible:          true,
 		OptIn:             boolPtr(true),
-		CurrentAssignment: "10.0.10.9",
+		CurrentAssignment: []string{"10.0.10.9"},
 	}
 
 	// No existing Address at all: any non-empty CurrentAssignment is foreign.
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools()})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools()})
 
 	if len(plan.Ensure) != 0 {
 		t.Fatalf("expected nothing ensured for a manually assigned Service, got %d", len(plan.Ensure))
@@ -348,16 +348,16 @@ func TestCompute_ManuallyAssignedForeignValue(t *testing.T) {
 func TestCompute_ManuallyAssignedLoadBalancerIPMode(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
 	policy.Spec.AssignVia = uddiv1alpha1.AssignVia{Mode: uddiv1alpha1.AssignModeLoadBalancerIP}
-	v := ServiceView{
-		Ref:               ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer:    true,
+	v := Claim{
+		Target:            TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible:          true,
 		OptIn:             boolPtr(true),
-		CurrentAssignment: "10.0.10.9",
+		CurrentAssignment: []string{"10.0.10.9"},
 	}
 	// A different existing address: 10.0.10.9 still doesn't match it, so it is foreign.
 	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
 	want := "spec.loadBalancerIP is already 10.0.10.9"
 	if len(plan.Skips) != 1 || plan.Skips[0].Reason != SkipManuallyAssigned || plan.Skips[0].Message != want {
@@ -372,14 +372,14 @@ func TestCompute_ManuallyAssignedLoadBalancerIPMode(t *testing.T) {
 
 func TestCompute_ManuallyAssignedDefaultAnnotation(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true)) // AssignVia left at its zero value.
-	v := ServiceView{
-		Ref:               ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer:    true,
+	v := Claim{
+		Target:            TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible:          true,
 		OptIn:             boolPtr(true),
-		CurrentAssignment: "10.0.10.9",
+		CurrentAssignment: []string{"10.0.10.9"},
 	}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools()})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools()})
 
 	want := DefaultAssignAnnotation + " is already 10.0.10.9"
 	if len(plan.Skips) != 1 || plan.Skips[0].Message != want {
@@ -389,16 +389,16 @@ func TestCompute_ManuallyAssignedDefaultAnnotation(t *testing.T) {
 
 func TestCompute_AssignedByUs(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:               ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer:    true,
+	v := Claim{
+		Target:            TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible:          true,
 		OptIn:             boolPtr(true),
-		CurrentAssignment: assignedIP,
+		CurrentAssignment: []string{assignedIP},
 		Hostname:          "web.team-a",
 	}
 	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
 	if len(plan.Ensure) != 1 {
 		t.Fatalf("expected the Address to still be ensured (idempotent), got %d", len(plan.Ensure))
@@ -419,18 +419,18 @@ func TestCompute_AssignedByUs(t *testing.T) {
 
 func TestCompute_NeedsAssignment(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: true,
-		OptIn:          boolPtr(true),
-		Hostname:       "web.team-a",
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
+		OptIn:    boolPtr(true),
+		Hostname: "web.team-a",
 		// CurrentAssignment left empty: the Address is Ready but not written back yet.
 	}
 	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
-	if len(plan.Assign) != 1 || plan.Assign[0].Value != assignedIP || plan.Assign[0].Service.Name != svcWeb {
+	if len(plan.Assign) != 1 || plan.Assign[0].Value() != assignedIP || plan.Assign[0].Target.Name != svcWeb {
 		t.Fatalf("expected an Assignment writing 10.0.10.5 to web, got %+v", plan.Assign)
 	}
 	if plan.Assigned != 0 {
@@ -440,11 +440,11 @@ func TestCompute_NeedsAssignment(t *testing.T) {
 
 func TestCompute_AddressPending(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: true,
-		OptIn:          boolPtr(true),
-		Hostname:       "web.team-a",
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
+		OptIn:    boolPtr(true),
+		Hostname: "web.team-a",
 	}
 	existing := []AddressState{{
 		Name:    addrLBWeb,
@@ -454,7 +454,7 @@ func TestCompute_AddressPending(t *testing.T) {
 		Message: "conflict allocating address",
 	}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
 	if len(plan.Ensure) != 1 {
 		t.Fatalf("expected the Address to still be ensured, got %d", len(plan.Ensure))
@@ -470,19 +470,19 @@ func TestCompute_AddressPending(t *testing.T) {
 
 func TestCompute_ReleaseOnOptOut(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: true,
-		OptIn:          boolPtr(false),
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
+		OptIn:    boolPtr(false),
 	}
 	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
 	if len(plan.Skips) != 0 {
 		t.Fatalf("expected no skip for an explicit opt-out, got %+v", plan.Skips)
 	}
-	if len(plan.Release) != 1 || plan.Release[0].AddressName != addrLBWeb || plan.Release[0].ClearValue != assignedIP || plan.Release[0].Service.Name != svcWeb {
+	if len(plan.Release) != 1 || plan.Release[0].AddressName != addrLBWeb || plan.Release[0].Address != assignedIP || plan.Release[0].Target.Name != svcWeb {
 		t.Fatalf("expected the Address released on opt-out, got %+v", plan.Release)
 	}
 }
@@ -491,31 +491,31 @@ func TestCompute_ReleaseOnServiceDisappearance(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
 	existing := []AddressState{{Name: "lb-gone", Service: "gone", Ready: true, Address: "10.0.10.8"}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: nil, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: nil, Pools: readyPools(), Existing: existing})
 
 	if len(plan.Release) != 1 {
 		t.Fatalf("expected one release, got %+v", plan.Release)
 	}
 	r := plan.Release[0]
-	if r.AddressName != "lb-gone" || r.ClearValue != "10.0.10.8" {
-		t.Fatalf("Release = %+v, want AddressName lb-gone ClearValue 10.0.10.8", r)
+	if r.AddressName != "lb-gone" || r.Address != "10.0.10.8" {
+		t.Fatalf("Release = %+v, want AddressName lb-gone Address 10.0.10.8", r)
 	}
-	if r.Service.Name != "gone" || r.Service.Namespace != "team-a" {
-		t.Fatalf("Release.Service = %+v, want name gone in namespace team-a", r.Service)
+	if r.Target.Name != "gone" || r.Target.Namespace != "team-a" {
+		t.Fatalf("Release.Target = %+v, want name gone in namespace team-a", r.Target)
 	}
 }
 
 func TestCompute_ReleaseWhenAnnotationMissingUnderRequireAnnotation(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true)) // requireAnnotation: true
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: true,
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
 		// OptIn nil: the allocate annotation is absent, which requireAnnotation
 		// treats as opted out.
 	}
 	existing := []AddressState{{Name: addrLBWeb, Service: svcWeb, Ready: true, Address: assignedIP}}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools(), Existing: existing})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools(), Existing: existing})
 
 	if len(plan.Ensure) != 0 {
 		t.Fatalf("expected nothing ensured without the allocate annotation, got %d", len(plan.Ensure))
@@ -527,15 +527,15 @@ func TestCompute_ReleaseWhenAnnotationMissingUnderRequireAnnotation(t *testing.T
 
 func TestCompute_RequireAnnotationFalseDefaultsIn(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(false))
-	v := ServiceView{
-		Ref:            ServiceRef{Namespace: "team-a", Name: svcWeb},
-		IsLoadBalancer: true,
-		Hostname:       "web.team-a",
+	v := Claim{
+		Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: svcWeb},
+		Eligible: true,
+		Hostname: "web.team-a",
 		// OptIn nil: with requireAnnotation false every LoadBalancer Service is
 		// allocated for by default.
 	}
 
-	plan := Compute(PlanInput{Policy: policy, Services: []ServiceView{v}, Pools: readyPools()})
+	plan := Compute(PlanInput{Policy: policy, Claims: []Claim{v}, Pools: readyPools()})
 
 	if len(plan.Ensure) != 1 {
 		t.Fatalf("expected an Address ensured by default when requireAnnotation is false, got %d", len(plan.Ensure))
@@ -544,13 +544,13 @@ func TestCompute_RequireAnnotationFalseDefaultsIn(t *testing.T) {
 
 func TestCompute_SortedAndDisjointOutputs(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	services := []ServiceView{
-		{Ref: ServiceRef{Namespace: "team-a", Name: "c"}, IsLoadBalancer: true, OptIn: boolPtr(true), Hostname: "c.team-a"},
-		{Ref: ServiceRef{Namespace: "team-a", Name: "a"}, IsLoadBalancer: true, OptIn: boolPtr(true), Hostname: "a.team-a"},
-		{Ref: ServiceRef{Namespace: "team-a", Name: "b"}, IsLoadBalancer: true, OptIn: boolPtr(true), Hostname: "b.team-a"},
+	services := []Claim{
+		{Target: TargetRef{Kind: TargetService, Namespace: "team-a", Name: "c"}, Eligible: true, OptIn: boolPtr(true), Hostname: "c.team-a"},
+		{Target: TargetRef{Kind: TargetService, Namespace: "team-a", Name: "a"}, Eligible: true, OptIn: boolPtr(true), Hostname: "a.team-a"},
+		{Target: TargetRef{Kind: TargetService, Namespace: "team-a", Name: "b"}, Eligible: true, OptIn: boolPtr(true), Hostname: "b.team-a"},
 	}
 
-	plan := Compute(PlanInput{Policy: policy, Services: services, Pools: readyPools()})
+	plan := Compute(PlanInput{Policy: policy, Claims: services, Pools: readyPools()})
 
 	if len(plan.Ensure) != 3 {
 		t.Fatalf("expected 3 ensured Addresses, got %d", len(plan.Ensure))
@@ -558,32 +558,32 @@ func TestCompute_SortedAndDisjointOutputs(t *testing.T) {
 	names := make([]string, len(plan.Ensure))
 	ensured := make(map[string]bool, len(plan.Ensure))
 	for i, d := range plan.Ensure {
-		names[i] = d.Service.Name
-		ensured[d.Service.Name] = true
+		names[i] = d.Target.Name
+		ensured[d.Target.Name] = true
 	}
 	if !sort.StringsAreSorted(names) {
 		t.Fatalf("expected Ensure sorted by Service name, got %v", names)
 	}
 	for _, r := range plan.Release {
-		if ensured[r.Service.Name] {
-			t.Fatalf("Service %q appears in both Ensure and Release", r.Service.Name)
+		if ensured[r.Target.Name] {
+			t.Fatalf("Service %q appears in both Ensure and Release", r.Target.Name)
 		}
 	}
 }
 
 func TestCompute_SkipsSortedByServiceThenReason(t *testing.T) {
 	policy := rangePoolPolicy(boolPtr(true))
-	services := []ServiceView{
-		{Ref: ServiceRef{Namespace: "team-a", Name: "b"}, IsLoadBalancer: false, OptIn: boolPtr(true)},
-		{Ref: ServiceRef{Namespace: "team-a", Name: "a"}, IsLoadBalancer: false, OptIn: boolPtr(true)},
+	services := []Claim{
+		{Target: TargetRef{Kind: TargetService, Namespace: "team-a", Name: "b"}, Eligible: false, OptIn: boolPtr(true)},
+		{Target: TargetRef{Kind: TargetService, Namespace: "team-a", Name: "a"}, Eligible: false, OptIn: boolPtr(true)},
 	}
 
-	plan := Compute(PlanInput{Policy: policy, Services: services, Pools: readyPools()})
+	plan := Compute(PlanInput{Policy: policy, Claims: services, Pools: readyPools()})
 
 	if len(plan.Skips) != 2 {
 		t.Fatalf("expected 2 skips, got %d", len(plan.Skips))
 	}
-	if plan.Skips[0].Service.Name != "a" || plan.Skips[1].Service.Name != "b" {
+	if plan.Skips[0].Target.Name != "a" || plan.Skips[1].Target.Name != "b" {
 		t.Fatalf("expected skips sorted by Service name, got %+v", plan.Skips)
 	}
 }

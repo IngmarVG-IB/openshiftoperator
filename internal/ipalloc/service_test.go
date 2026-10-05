@@ -95,27 +95,27 @@ func TestViewService(t *testing.T) {
 		svc    *corev1.Service
 		via    AssignVia
 		prefix string
-		want   ServiceView
+		want   Claim
 	}{
 		{
 			name: "defaults with no annotations and nil map",
 			svc:  svc("team-a", "web", nil),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Hostname:       "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Hostname: "web.team-a",
 			},
 		},
 		{
 			name: "empty prefix defaults to DefaultAnnotationPrefix",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/allocate": "true"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				OptIn:          boolp(true),
-				Hostname:       "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				OptIn:    boolp(true),
+				Hostname: "web.team-a",
 			},
 		},
 		{
@@ -123,11 +123,11 @@ func TestViewService(t *testing.T) {
 			svc:    svc("team-a", "web", map[string]string{"custom.example/allocate": "false", "uddi.infoblox.com/allocate": "true"}),
 			via:    metalVia,
 			prefix: "custom.example",
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				OptIn:          boolp(false),
-				Hostname:       "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				OptIn:    boolp(false),
+				Hostname: "web.team-a",
 			},
 		},
 		{
@@ -138,8 +138,8 @@ func TestViewService(t *testing.T) {
 				return s
 			}(),
 			via: metalVia,
-			want: ServiceView{
-				Ref:      ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
 				Hostname: "web.team-a",
 			},
 		},
@@ -147,109 +147,109 @@ func TestViewService(t *testing.T) {
 			name: "allocate false opts out",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/allocate": "false"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				OptIn:          boolp(false),
-				Hostname:       "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				OptIn:    boolp(false),
+				Hostname: "web.team-a",
 			},
 		},
 		{
 			name: "allocate is trimmed",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/allocate": " true "}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				OptIn:          boolp(true),
-				Hostname:       "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				OptIn:    boolp(true),
+				Hostname: "web.team-a",
 			},
 		},
 		{
 			name: "allocate invalid value",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/allocate": "yes"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Hostname:       "web.team-a",
-				Invalid:        `uddi.infoblox.com/allocate: "yes" must be "true" or "false"`,
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Hostname: "web.team-a",
+				Invalid:  `uddi.infoblox.com/allocate: "yes" must be "true" or "false"`,
 			},
 		},
 		{
 			name: "allocate-from overrides the pool",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/allocate-from": "range/other-pool"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Pool:           &PoolRef{Kind: PoolRange, Name: "other-pool"},
-				Hostname:       "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Pool:     &PoolRef{Kind: PoolRange, Name: "other-pool"},
+				Hostname: "web.team-a",
 			},
 		},
 		{
 			name: "allocate-from invalid value",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/allocate-from": "vlan/other-pool"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Hostname:       "web.team-a",
-				Invalid:        `uddi.infoblox.com/allocate-from: "vlan/other-pool" "vlan" is not subnet, range or addressblock`,
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Hostname: "web.team-a",
+				Invalid:  `uddi.infoblox.com/allocate-from: "vlan/other-pool" "vlan" is not subnet, range or addressblock`,
 			},
 		},
 		{
 			name: "explicit IPv4 address",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/address": "192.0.2.10"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:             ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer:  true,
-				ExplicitAddress: "192.0.2.10",
-				Hostname:        "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Slots:    []SlotRequest{{Address: "192.0.2.10"}},
+				Hostname: "web.team-a",
 			},
 		},
 		{
 			name: "explicit IPv6 address is canonicalised",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/address": "2001:DB8:0:0::1"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:             ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer:  true,
-				ExplicitAddress: "2001:db8::1",
-				Hostname:        "web.team-a",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Slots:    []SlotRequest{{Address: "2001:db8::1"}},
+				Hostname: "web.team-a",
 			},
 		},
 		{
 			name: "explicit address invalid",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/address": "not-an-ip"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Hostname:       "web.team-a",
-				Invalid:        `uddi.infoblox.com/address: "not-an-ip" not a valid IPv4 or IPv6 address`,
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Hostname: "web.team-a",
+				Invalid:  `uddi.infoblox.com/address: "not-an-ip" not a valid IPv4 or IPv6 address`,
 			},
 		},
 		{
 			name: "custom hostname",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/hostname": "Web.Example.Com"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Hostname:       "web.example.com",
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Hostname: "web.example.com",
 			},
 		},
 		{
 			name: "hostname invalid",
 			svc:  svc("team-a", "web", map[string]string{"uddi.infoblox.com/hostname": "not a hostname!"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Hostname:       "web.team-a",
-				Invalid:        `uddi.infoblox.com/hostname: "not a hostname!" not a valid DNS name`,
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Hostname: "web.team-a",
+				Invalid:  `uddi.infoblox.com/hostname: "not a hostname!" not a valid DNS name`,
 			},
 		},
 		{
@@ -259,33 +259,33 @@ func TestViewService(t *testing.T) {
 				"uddi.infoblox.com/address":       "also-not-an-ip",
 			}),
 			via: metalVia,
-			want: ServiceView{
-				Ref:            ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer: true,
-				Hostname:       "web.team-a",
-				Invalid:        `uddi.infoblox.com/allocate-from: "vlan/pool" "vlan" is not subnet, range or addressblock`,
+			want: Claim{
+				Target:   TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible: true,
+				Hostname: "web.team-a",
+				Invalid:  `uddi.infoblox.com/allocate-from: "vlan/pool" "vlan" is not subnet, range or addressblock`,
 			},
 		},
 		{
 			name: "current assignment from the annotation",
 			svc:  svc("team-a", "web", map[string]string{"metallb.io/loadBalancerIPs": " 192.0.2.20 "}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:               ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer:    true,
+			want: Claim{
+				Target:            TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible:          true,
 				Hostname:          "web.team-a",
-				CurrentAssignment: "192.0.2.20",
+				CurrentAssignment: []string{"192.0.2.20"},
 			},
 		},
 		{
-			name: "dual-stack current assignment counts as foreign (returned whole)",
+			name: "dual-stack current assignment is split into its addresses",
 			svc:  svc("team-a", "web", map[string]string{"metallb.io/loadBalancerIPs": "192.0.2.20,2001:db8::20"}),
 			via:  metalVia,
-			want: ServiceView{
-				Ref:               ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer:    true,
+			want: Claim{
+				Target:            TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible:          true,
 				Hostname:          "web.team-a",
-				CurrentAssignment: "192.0.2.20,2001:db8::20",
+				CurrentAssignment: []string{"192.0.2.20", "2001:db8::20"},
 			},
 		},
 		{
@@ -296,11 +296,11 @@ func TestViewService(t *testing.T) {
 				return s
 			}(),
 			via: AssignVia{Mode: AssignModeLoadBalancerIP},
-			want: ServiceView{
-				Ref:               ServiceRef{Namespace: "team-a", Name: "web", UID: "web-uid"},
-				IsLoadBalancer:    true,
+			want: Claim{
+				Target:            TargetRef{Kind: TargetService, Namespace: "team-a", Name: "web", UID: "web-uid"},
+				Eligible:          true,
 				Hostname:          "web.team-a",
-				CurrentAssignment: "192.0.2.30",
+				CurrentAssignment: []string{"192.0.2.30"},
 			},
 		},
 	}

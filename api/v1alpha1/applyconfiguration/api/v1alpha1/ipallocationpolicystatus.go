@@ -31,9 +31,9 @@ type IPAllocationPolicyStatusApplyConfiguration struct {
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// Conditions hold Ready.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
-	// Allocated is the number of Services that have an Address CR.
+	// Allocated is the number of Services and EgressIPs that have their Address CRs.
 	Allocated *int32 `json:"allocated,omitempty"`
-	// Assigned is, of those, the number whose assignment field carries the Ready
+	// Assigned is, of those, the number whose assignment field carries every Ready
 	// address.
 	Assigned *int32 `json:"assigned,omitempty"`
 	// Skipped lists Services not allocated or not assigned, and why. Bounded and
