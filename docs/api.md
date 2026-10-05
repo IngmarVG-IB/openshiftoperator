@@ -50,6 +50,7 @@ This document describes the custom resources of the `uddi.infoblox.com/v1alpha1`
 | `id` | string | Universal DDI resource id, for example "ipam/subnet/<uuid>". |
 | `observedGeneration` | int64 | The `metadata.generation` the status was last computed from. |
 | `lastSyncTime` | *metav1.Time | When the Universal DDI object was last read or written. |
+| `appliedTags` | []string | Sorted list of tag keys the operator wrote at the last successful sync: ownership tags, Connection `defaultTags`, and `spec.tags`. Written together with `Synced=True` for observedGeneration. On the next sync, keys listed here that are no longer wanted are removed from the Universal DDI object; keys the operator never wrote are kept, and an empty list removes nothing. This supports tag removal on updates without a server-side understanding of which tags the operator manages. |
 | `conditions` | []metav1.Condition | Conditions: `Ready` (summary) and `Synced` (object matched spec at observedGeneration). |
 
 ### Common Conditions and Reasons
@@ -263,7 +264,7 @@ A Record is a DNS resource record in Universal DDI. Universal DDI stores one rda
 | --- | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | No | Connection providing credentials. Empty means "default". |
 | `zoneRef` | ObjectRef | Yes | — | Yes | AuthZone CR or Universal DDI auth zone id. Immutable (CEL: `self == oldSelf`). |
-| `name` | string | No | — | Yes | Record name inside the zone. "@" or empty means the apex. Max 256 characters. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). |
+| `name` | string | No | — | Yes | Record name inside the zone. "@", empty string, and omitted all mean the zone apex and may be swapped; any other change is rejected. Max 256 characters. Immutable (spec-level CEL, so adding or removing the field is rejected as well as changing it; the rule lives on the spec rather than the field because `optionalOldSelf` needs Kubernetes 1.30 and the OpenShift 4.16 floor is 1.29). |
 | `type` | RecordType | Yes | — | Yes | Record type: A, AAAA, CNAME, TXT, PTR, SRV, MX, NS, or CAA. Immutable (CEL: `self == oldSelf`). |
 | `rdata` | RecordRData | Yes | — | No | Exactly one typed rdata block matching `type` (CEL validation ensures this). |
 | `rdata.a.address` | string | Yes (if type A) | — | No | IPv4 address. Max 45 characters. |
@@ -709,6 +710,10 @@ A DNSPublishPolicy watches OpenShift Routes, Ingresses, and LoadBalancer Service
 - `True/Published`: Every desired Record is Ready and no `ZoneNotReady` skip remains.
 - `False/RecordsNotReady`: Some desired Records have `Ready=False` (still being created).
 - `False/ZonesNotReady`: No `zoneRef` resolves to a CR with `status.id`.
+
+**ZonesResolved**
+- `True/ZonesFound`: Every `zoneRef` names an existing AuthZone CR (its `status.id` need not be set yet).
+- `False/ZoneNotFound`: At least one `zoneRef` names no existing AuthZone CR. The message lists the missing zone names. This condition is independent of `Ready`, so a typo in a zoneRef next to working ones does not take the policy out of service; it only reports the error for correction.
 
 ### Source Annotations
 

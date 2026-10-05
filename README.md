@@ -4,7 +4,7 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 
 ## Status
 
-Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records. Milestone 3 (IP allocation) is complete: an IPAllocationPolicy allocates IPs to LoadBalancer Services from Universal DDI pools and writes them into the load balancer annotation. Milestone 4 (host registration) is complete: a HostRegistrationPolicy registers cluster Nodes as DHCP reservations or named IPAM addresses. Milestones 1 to 4 make up v0.1.0; see ROADMAP.md for what follows.
+Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records. Milestone 3 (IP allocation) is complete: an IPAllocationPolicy allocates IPs to LoadBalancer Services from Universal DDI pools and writes them into the load balancer annotation. Milestone 4 (host registration) is complete: a HostRegistrationPolicy registers cluster Nodes as DHCP reservations or named IPAM addresses. Milestones 1 to 4 make up v0.1.0. Milestone 6 (object layer hardening) is in progress: tag removal, pagination, retries, observability, and deployment hardening. See ROADMAP.md and PLAN.md for what follows.
 
 ## Features
 
@@ -102,12 +102,13 @@ See [docs/usage.md](docs/usage.md) for complete task-oriented documentation.
 
 ## Documentation
 
-- **[docs/install.md](docs/install.md)** — Installation and setup (operator deployment, RBAC, OLM bundle).
+- **[docs/install.md](docs/install.md)** — Installation and setup (operator deployment, RBAC, OLM bundle); includes a [Hardening](docs/install.md#hardening) section.
 - **[docs/usage.md](docs/usage.md)** — Task-oriented guide: DNS, IPAM, DHCP, ownership tags, deletion, status and troubleshooting.
 - **[docs/dns-publishing.md](docs/dns-publishing.md)** — DNS Publishing: automatic publication of Routes, Ingresses, and LoadBalancer Services as DNS records.
 - **[docs/ip-allocation.md](docs/ip-allocation.md)** — IP Allocation: automatic IP allocation to LoadBalancer Services from Universal DDI pools.
 - **[docs/host-registration.md](docs/host-registration.md)** — Host Registration: automatic registration of cluster Nodes as DHCP or IPAM reservations.
 - **[docs/api.md](docs/api.md)** — Full API reference for all kinds and shared types.
+- **[docs/observability.md](docs/observability.md)** — Metrics, alerts, dashboards and runbooks for monitoring the operator.
 - **[DESIGN.md](DESIGN.md)** — Architecture, decisions and implementation notes.
 - **[PLAN.md](PLAN.md)** — Implementation roadmap.
 - **[ROADMAP.md](ROADMAP.md)** — The plan from here to a supported 1.0 (milestones 5 to 10).

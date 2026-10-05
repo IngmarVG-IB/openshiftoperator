@@ -97,10 +97,11 @@ Owned by the second wave 3 agent:
 
 ### Known limitations
 
-- **Tag keys removed from `spec.tags` are not removed in Universal DDI.** The tag merge
-  is additive: the operator sets the ownership tags, the Connection's `defaultTags` and
-  `spec.tags`, but a key that disappears from `spec.tags` is left on the object rather
-  than deleted, so a stale tag has to be removed by hand.
+- **Tag removal on upgrade:** When upgrading from a version that does not record
+  `status.appliedTags`, the first sync records which keys were applied but removes none.
+  If a tag key is dropped from `spec.tags` in the same sync as the upgrade, the key stays
+  on the Universal DDI object until a second reconcile after the upgrade completes. This
+  avoids accidentally stripping tags the operator might not own.
 - **Deleting a CR whose Connection CR is already gone orphans the Universal DDI object.**
   The finalizer is removed so the CR can go away, a `ConnectionMissing` Warning event
   says what happened, and the object stays behind with its ownership tags. Delete
@@ -108,15 +109,8 @@ Owned by the second wave 3 agent:
 - **Events use the legacy recorder API.** controller-runtime v0.24 deprecates
   `GetEventRecorderFor`; the object layer and its tests still use `record.EventRecorder`,
   so the three call sites carry a nolint until the Runtime moves to `events.EventRecorder`.
-- **A missing AuthZone in `zoneRefs` is only logged.** DNSPublishPolicy treats it as a
-  zone that is not Ready; the `ZonesNotReady` condition appears only when no zoneRef is
-  Ready, so a typo among several zoneRefs shows up as `NoMatchingZone` skips and a log line.
 - **Generated Records use the deprecated `client.Apply` patch.** controller-runtime v0.24
   deprecates it in favour of the apply-configuration API; the call site carries a nolint.
-- **Record apex spelling is immutable per form.** The CRD's immutability rule compares
-  `spec.name` literally, so switching an existing apex record between an omitted name and
-  `"@"` is rejected even though the adapter treats both as the apex. Delete and recreate
-  the CR, or keep the spelling you started with.
 - **Unified nameservers are not modelled.** AuthZone carries the legacy `nsgs` /
   `internalSecondaries` / `externalPrimaries` fields only. The API's `nameservers` model
   exists only on the SDK's untagged master branch, so `spec.nameservers` waits for a

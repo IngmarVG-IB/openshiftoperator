@@ -571,6 +571,14 @@ In addition to ownership tags, the operator merges:
 
 So the effective tags are: ownership tags (fixed) > Connection defaults > CR-level tags.
 
+### Tag Removal
+
+When a tag key is removed from `Connection.spec.defaultTags` or `spec.tags`, the operator removes it from the Universal DDI object on the next reconcile. The operator tracks the keys it wrote at the last successful sync in `status.appliedTags`, and on the next sync it removes keys that were applied before but are no longer wanted.
+
+Keys that the operator never wrote (for example, tags set by hand or by other systems) are always kept, so the operator does not claim exclusive ownership of the Universal DDI object's tags and will not delete tags it did not manage.
+
+**Upgrade caveat:** The first sync after upgrading from a version that did not record `appliedTags` will record the keys but not remove any. If you drop a tag key from `spec.tags` in the same sync as the upgrade, that key stays on the object until removed by hand or by a second reconcile after the upgrade is complete.
+
 ### Deletion: Delete vs Orphan
 
 The `spec.lifecycle.deletionPolicy` controls what happens when the CR is deleted:
@@ -725,6 +733,14 @@ Check the Ready condition reason:
 | `Deleting` | Deletion is blocked, e.g., by dependent objects in Universal DDI. | The message says what blocks it. Delete the blocking object first (e.g., records in a zone before deleting the zone). |
 | `ConnectionMissing` | Not a condition but a Warning event: the CR was deleted while the Connection it names no longer existed, so Universal DDI could not be reached. The operator orphaned the object and removed the finalizer instead of blocking forever. | The Universal DDI object is still there with its ownership tags. Delete it by hand, or re-create the Connection and a CR with the same natural key to re-adopt it. Deleting a Connection before the objects that use it is what causes this. |
 
+### Policy Status: ZoneNotFound (DNSPublishPolicy)
+
+The DNSPublishPolicy has a second condition, `ZonesResolved`:
+
+| Condition/Reason | Cause | What to Check |
+| --- | --- | --- |
+| `ZonesResolved=False/ZoneNotFound` | One or more `zoneRefs` name no existing AuthZone CR. | The message lists the missing zone names. Create the named AuthZone CRs, or fix the typo in `spec.zoneRefs`. This condition does not affect `Ready`, so the policy continues to publish records in zones that are found; only hostnames that would have matched the missing zones are skipped. |
+
 ### Check Connection Logs
 
 ```bash
@@ -756,6 +772,10 @@ kubectl describe connection default
 kubectl describe <kind> <name>
 # Shows the Events section at the bottom with recent reconcile messages
 ```
+
+### Monitoring and Alerts
+
+For metrics on API calls, rate limiting, retries, and alerts on Connection readiness, API errors, and pending allocations, see [docs/observability.md](docs/observability.md).
 
 ### Adopted vs. Created
 

@@ -43,6 +43,8 @@ first run via `setup-envtest`, run `go test` over every package except `test/e2e
 write a coverage profile (`cover.out` / `cover-floor.out`). Neither one touches a real
 Universal DDI tenant: every controller test runs against `internal/uddi.Fake`.
 
+The `test-floor` target enforces the Kubernetes 1.29 CEL feature set that OpenShift 4.16 ships, so any new validation rules must work inside those constraints and the tests prove it.
+
 ## Integration: a real Universal DDI tenant
 
 **Use a sandbox tenant. Never point this suite at a production or shared tenant.** It
@@ -122,7 +124,11 @@ covers:
    return it, and does re-creating the same name succeed immediately?
 6. Tag filter grammar: the single-quoted `'key'=='value'` `_tfilter` form, and whether a
    double-quoted form also works.
-7. `Get` on a deleted id returns 404.
+7. Tag PATCH semantics: `test/integration/tags_patch_test.go` patches an IPSpace with
+   the same tag map minus one key, reads it back, and logs a `VERDICT: PATCH of tags
+   replaces the map` (or "merges into the map" if the API does not replace) so the
+   operator knows whether the tag removal strategy in `internal/tags.ForPatch` works.
+8. `Get` on a deleted id returns 404.
 
 It also incidentally exercises a handful of client-layer behaviours worth knowing about
 regardless of their outcome: `dnsconfig.View.Name` and `ipam.IPSpace.Name` (and
@@ -160,6 +166,21 @@ under "List, filter, pagination", "Errors, rate limiting, retries", and DESIGN.m
 The `.github/workflows/integration.yml` workflow (manual `workflow_dispatch` only --
 this suite must never run on every push or PR) uploads its full log as a build artifact,
 so the same `grep 'VERDICT:'` works there without re-running anything locally.
+
+## Prometheus rules validation
+
+The alerts live in the PrometheusRule `config/observability/monitoring/prometheusrule.yaml`,
+with promtool unit tests in `config/observability/tests/rules_test.yaml`. Validate them with:
+
+```bash
+PROMTOOL=/path/to/promtool bash hack/check-rules.sh
+```
+
+The script needs a `promtool` binary from a Prometheus release. It finds one on the PATH, in
+`bin/promtool`, or through the `PROMTOOL` variable. It checks that every alert has a severity,
+summary, description, runbook link and unit test, then runs `promtool check rules` and
+`promtool test rules`. The CI `rules` job installs promtool with checksum verification and runs
+the same script.
 
 ## e2e
 

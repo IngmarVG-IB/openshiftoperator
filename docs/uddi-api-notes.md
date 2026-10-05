@@ -205,8 +205,28 @@ why they are always quoted. Whether tag lookups are indexed server-side is undoc
 Infoblox docs describe two tag types, freeform (any value, optionally regex-restricted)
 and restricted (fixed value set); the operator uses freeform tags.
 
-Pagination: use `_page_token` from the response when present, otherwise `_offset` /
-`_limit`. Default page sizes are small; always paginate in List helpers.
+### Pagination
+
+The SDK's nine list responses carry no page token, only results. When `ListOptions.Limit`
+is zero, the operator pages through all results with `_offset` and `_limit` in pages of
+1000. The controllers' own lookups (natural key, uid tag) always set a limit of one and
+make a single request; the unlimited walk serves bulk listing such as the integration
+suite's cleanup.
+
+The walk ends on an empty page, or on a page shorter than the longest page seen so far.
+That stays correct if a tenant caps `_limit` below 1000, which the API documents as
+possible; a short first page therefore costs one extra request that comes back empty.
+More than 100 pages is an `ErrTooManyPages` error rather than an endless loop. A non-zero
+limit requests one page only. Whether tenants actually cap `_limit` is unverified
+(**verify**).
+
+### Tag patch semantics
+
+Every tag patch sends the whole tag map, which assumes a PATCH of `tags` replaces the map
+rather than merging into it. Tag removal depends on that assumption. It has not been
+checked against a tenant yet: `test/integration/tags_patch_test.go` logs either
+`VERDICT: PATCH of tags replaces the map` or `VERDICT: PATCH of tags merges into the map`
+(**verify**).
 
 ## Errors, rate limiting, retries
 
@@ -222,13 +242,8 @@ Pagination: use `_page_token` from the response when present, otherwise `_offset
   `ipam`, `dnsconfig` and `dnsdata` packages document no conflict response at all, so a
   duplicate IP space, zone or record may come back as a generic 400. The reconcile loop
   does not depend on it: it looks up by natural key before every create.
-- Rate limiting and retries: the v0.4.0 tag ships neither. `option.WithRateLimit`,
-  `WithRetry` and `WithRetryDisabled` exist only on the SDK master branch (added after the
-  tag). The operator therefore rate-limits with its own `http.RoundTripper` over
-  `golang.org/x/time/rate`, injected through `option.WithHTTPClient`. When the dependency
-  is bumped to a tag that has the built-in retry, disable it: there is no idempotency key,
-  so a retried POST can double-create. Creates are idempotent at reconcile level anyway
-  because every create is preceded by a natural-key lookup.
+- Rate limiting: the v0.4.0 tag ships no built-in rate limiter. The operator carries its own via `golang.org/x/time/rate`, injected through `option.WithHTTPClient`. Every request waits for a token from a per-Connection limiter; the wait is observed in `uddi_operator_api_ratelimit_wait_seconds{connection}` regardless of outcome.
+- Retries: the v0.4.0 tag ships no built-in retry. The operator carries its own RoundTripper that retries 429, 502, 503 and 504 for GET, PATCH and DELETE. POST is never retried, because the API has no idempotency key: a create whose response was lost, or which was refused after it took effect, would be sent twice. A failed create is retried by the controller's requeue, which always precedes it with a natural-key lookup. Retries honour `Retry-After` in seconds or as an HTTP date; otherwise they back off exponentially with full jitter from 500 ms. At most 3 retries happen within 30 seconds of total waiting. A cancelled context or a deadline too near to fit another wait stops the retry loop. Request bodies are rewound with `GetBody`; a request that cannot be rewound is sent once. Each retry is counted in `uddi_operator_api_retries_total{connection,domain,method,code}` (the code is the status from the failed attempt). The transports are ordered retry, then rate limiter, then metrics, then the network, so every attempt waits for a limiter token and is counted under its own status. `Config.Timeout`, 30 seconds by default, bounds the whole call including token waits and backoff. When a later SDK tag brings a built-in retry, disable it: that retry would also repeat POSTs, and without an idempotency key a repeated create can make a second object.
 
 ## Examples
 
