@@ -34,6 +34,10 @@ const (
 	SourceRoute   SourceKind = "Route"
 	SourceIngress SourceKind = "Ingress"
 	SourceService SourceKind = "Service"
+	// Milestone 7 sources; see DESIGN.md 4.7.
+	SourceNode      SourceKind = "Node"
+	SourceDNSRecord SourceKind = "DNSRecord"
+	SourceHTTPRoute SourceKind = "HTTPRoute"
 )
 
 // SourceRef identifies the object an endpoint or skip came from.
@@ -91,7 +95,26 @@ type SourceOptions struct {
 	// AnnotationPrefix is the annotation domain, "uddi.infoblox.com" by default. The
 	// recognised keys are <prefix>/publish, /hostname, /ttl and /target.
 	AnnotationPrefix string
+	// ExternalDNS also reads the external-dns hostname, ttl and target annotations as
+	// fallbacks; the uddi.infoblox.com annotation wins when both are set.
+	ExternalDNS bool
+	// NodeAddressType selects the Node addresses the Node source publishes:
+	// NodeAddressInternal (default when empty) or NodeAddressExternal.
+	NodeAddressType string
 }
+
+// Node address types for SourceOptions.NodeAddressType; they equal the corev1 values.
+const (
+	NodeAddressInternal = "InternalIP"
+	NodeAddressExternal = "ExternalIP"
+)
+
+// external-dns annotation keys read when SourceOptions.ExternalDNS is set.
+const (
+	ExternalDNSHostname = "external-dns.alpha.kubernetes.io/hostname"
+	ExternalDNSTTL      = "external-dns.alpha.kubernetes.io/ttl"
+	ExternalDNSTarget   = "external-dns.alpha.kubernetes.io/target"
+)
 
 // DefaultAnnotationPrefix is the annotation domain when SourceOptions leaves it empty.
 const DefaultAnnotationPrefix = "uddi.infoblox.com"

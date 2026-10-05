@@ -241,9 +241,59 @@ below is the contract its agent builds against; DESIGN.md carries the same seman
 Milestone 6 ends with both envtest lanes, lint, govulncheck and the bundle validators green
 and the bundle regenerated.
 
+## Milestone 7: complete the integration layer
+
+Started 2026-10-04. Each work package is the contract its agent builds against; DESIGN.md
+4.7 carries the semantics under "Milestone 7 extensions" for each policy. The real-cluster
+smoke scenarios from the roadmap's exit criteria wait for milestone 5, because no cluster is
+available yet; milestone 7 is proven on envtest.
+
+### Wave 1: types and pure logic (parallel)
+
+- [ ] **P1. DNS publishing core.** DNSPublishPolicy spec gains `createPtr`,
+  `compatibility.externalDNS`, `nodeAddressType`, `dnsRecordNamespace` and the source
+  kinds Node, DNSRecord and HTTPRoute. `internal/publish`: the Node and DNSRecord
+  extractors, external-dns annotation fallbacks in the shared annotation parsing (no
+  signature change, driven by `SourceOptions.ExternalDNS`), wildcard hostnames in planning,
+  `createPtr` on generated A and AAAA Records, and tests proving dual-stack load balancers
+  and Nodes yield A and AAAA. A scheme helper for openshift/api `operatoringress/v1` and the
+  DNSRecord CRD fixture for envtest.
+- [ ] **P2. HTTPRoute source.** `internal/gatewayapi`: discovery for
+  `gateway.networking.k8s.io/v1`, minimal Gateway and HTTPRoute CRD fixtures, unstructured
+  accessors. `internal/publish`: the HTTPRoute extractor in its own file, using the shared
+  annotation helpers.
+- [ ] **P3. IP allocation claims.** `internal/ipalloc` generalised to claims and slots:
+  dual-stack Services and EgressIP claims with the naming and label compatibility rules,
+  pool family detection, comma-joined assignments, `NoPoolForFamily` and
+  `DualStackUnsupported`. IPAllocationPolicy spec gains `targets`, `allocateFromIPv6` and
+  `metallb`. `internal/egressip`: discovery, a minimal EgressIP CRD fixture and an
+  unstructured view.
+- [ ] **P4. MetalLB pool mirroring.** `internal/metallb`: discovery, a minimal IPAddressPool
+  CRD fixture, and pure builders for the desired pool objects, names, labels and the stale
+  set to prune.
+- [ ] **P5. Host registration.** `internal/metal3api`: discovery, a minimal BareMetalHost CRD
+  fixture and the MAC lookup. `internal/hostreg`: Metal3 in the MAC chain, additional
+  interfaces in the view and the planner. HostRegistrationPolicy spec gains
+  `macSource.metal3` and `additionalInterfaces`.
+- [ ] **P6. Patterns guide.** `docs/patterns.md`: a bare-metal cluster using all three
+  policies together.
+
+### Wave 2: controllers and docs (after wave 1 merges)
+
+- [ ] **C1. DNSPublishPolicy controller** wiring the three new sources, their discovery
+  flags, watches and RBAC, with envtest.
+- [ ] **C2. IPAllocationPolicy controller** wiring claims for dual-stack Services and
+  EgressIPs and MetalLB mirroring with its finalizer, with envtest.
+- [ ] **C3. HostRegistrationPolicy controller** wiring Metal3 and additional interfaces, with
+  envtest.
+- [ ] **D1. Documentation** for the three policy guides and the API reference.
+
+Milestone 7 ends with both envtest lanes, lint, govulncheck, the rule checks and the bundle
+validators green and the bundle regenerated.
+
 ## Milestones 5 and beyond
 
 Planned in [ROADMAP.md](ROADMAP.md): proving the operator on a real tenant and cluster
-(5), hardening the object layer (6, complete above), completing the integration layer (7), API maturity
+(5), hardening the object layer (6, complete above), completing the integration layer (7, in progress above), API maturity
 with `v1beta1` (8), distribution through OperatorHub and certification (9), and operating
 at scale (10). Each milestone moves here as a checklist when it starts.
