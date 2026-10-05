@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/labelvalue"
 )
 
 // maxNameLength is the Kubernetes object name length limit RegistrationName must respect.
@@ -81,10 +82,33 @@ type PlanInput struct {
 }
 
 // slot identifies one registration a policy may own for a Node: its primary registration
-// (iface empty) or the one generated for an additionalInterfaces entry.
+// (iface empty) or the one generated for an additionalInterfaces entry. node is the value
+// of the LabelNode label, labelvalue.For(node name), so a slot built from a Node and one
+// built from an existing object's label compare equal even for Node names longer than a
+// label value may be.
 type slot struct {
 	node  string
 	iface string
+}
+
+// slotOf builds the slot of a Node's primary registration (iface empty) or of one of its
+// interface registrations.
+func slotOf(nodeName, iface string) slot {
+	return slot{node: labelvalue.For(nodeName), iface: iface}
+}
+
+// claim is a holder of a generated object name: the slot of a desired or existing object.
+type claim struct {
+	node  NodeRef
+	iface string
+}
+
+// String names the holder the way a NameConflict message does.
+func (c claim) String() string {
+	if c.iface == "" {
+		return fmt.Sprintf("Node %s", c.node.Name)
+	}
+	return fmt.Sprintf("interface %s of Node %s", c.iface, c.node.Name)
 }
 
 // planner holds the state Compute threads through its helpers.
@@ -94,7 +118,16 @@ type planner struct {
 	// existing indexes the policy's current objects by slot, then by kind, so a kind change
 	// can release the object of the other kind.
 	existing map[slot]map[RegistrationKind]RegistrationState
-	plan     Plan
+	// nodeRefs and wanted are keyed by labelvalue.For(node name), like slot.node. wanted
+	// holds the Nodes whose existing registrations must survive this round: in the input
+	// and not opted out.
+	nodeRefs map[string]NodeRef
+	wanted   map[string]bool
+	// specIfaces holds the additionalInterfaces entry names of the spec.
+	specIfaces map[string]bool
+	// candidates are the registrations the slots want before name conflicts are settled.
+	candidates []DesiredRegistration
+	plan       Plan
 }
 
 // Compute turns Node views, IPSpace state and existing registration objects into the
@@ -115,11 +148,22 @@ type planner struct {
 // PoolNotReady. The conditions that do release an existing registration are the Node
 // disappearing from the input, opting out, its chosen kind changing, and (for an interface
 // registration) the interface being removed from the spec.
+//
+// No two desired registrations share an object name. The primary registration of Node
+// "<n>-<iface>" and interface <iface> of Node <n> would both be "<policy>-<n>-<iface>", and
+// dashes inside interface names allow the same between interfaces of different Nodes.
+// settle keeps the primary registration and skips the other with NameConflict.
+//
+// Node names are compared with the LabelNode label through labelvalue.For, so Node names
+// beyond the 63 character limit of a label value still match their objects.
 func Compute(in PlanInput) Plan {
 	p := &planner{
-		in:       in,
-		mode:     RegisterMode(in.Policy.Spec.Register.Mode),
-		existing: make(map[slot]map[RegistrationKind]RegistrationState, len(in.Existing)),
+		in:         in,
+		mode:       RegisterMode(in.Policy.Spec.Register.Mode),
+		existing:   make(map[slot]map[RegistrationKind]RegistrationState, len(in.Existing)),
+		nodeRefs:   make(map[string]NodeRef, len(in.Nodes)),
+		wanted:     make(map[string]bool, len(in.Nodes)),
+		specIfaces: make(map[string]bool, len(in.Policy.Spec.AdditionalInterfaces)),
 	}
 	for _, e := range in.Existing {
 		s := slot{node: e.Node, iface: e.Interface}
@@ -130,20 +174,22 @@ func Compute(in PlanInput) Plan {
 		}
 		byKind[e.Kind] = e
 	}
+	for _, e := range in.Policy.Spec.AdditionalInterfaces {
+		p.specIfaces[e.Name] = true
+	}
 
-	nodeRefs := make(map[string]NodeRef, len(in.Nodes))
-	// wanted tracks every Node name whose existing registrations must survive this
-	// round: it is in the input and did not opt out.
-	wanted := make(map[string]bool, len(in.Nodes))
-
+	// Primary registrations are planned for every Node before any interface registration,
+	// so settle sees the whole picture when two of them want the same name.
+	active := make([]NodeView, 0, len(in.Nodes))
 	for _, v := range in.Nodes {
-		nodeRefs[v.Ref.Name] = v.Ref
+		key := labelvalue.For(v.Ref.Name)
+		p.nodeRefs[key] = v.Ref
 
 		if v.OptOut {
 			p.plan.Skips = append(p.plan.Skips, Skip{Node: v.Ref, Reason: SkipExcluded, Message: `register annotation is "false"`})
 			continue
 		}
-		wanted[v.Ref.Name] = true
+		p.wanted[key] = true
 
 		if v.Invalid != "" {
 			p.plan.Skips = append(p.plan.Skips, Skip{Node: v.Ref, Reason: SkipInvalidAnnotation, Message: v.Invalid})
@@ -151,12 +197,16 @@ func Compute(in PlanInput) Plan {
 		}
 
 		p.planPrimary(v)
+		active = append(active, v)
+	}
+	for _, v := range active {
 		for _, entry := range in.Policy.Spec.AdditionalInterfaces {
 			p.planInterface(v, entry)
 		}
 	}
 
-	p.releaseStale(nodeRefs, wanted)
+	p.settle()
+	p.releaseStale()
 	p.sort()
 	return p.plan
 }
@@ -178,7 +228,7 @@ func (p *planner) planPrimary(v NodeView) {
 		p.skip(Skip{
 			Node:    v.Ref,
 			Reason:  SkipNoMAC,
-			Message: fmt.Sprintf("mode %s needs a MAC; no annotation and no NodeNetworkState", p.mode),
+			Message: fmt.Sprintf("mode %s needs a MAC; no annotation, NodeNetworkState or Metal3 BareMetalHost provides one", p.mode),
 		})
 		return
 	}
@@ -192,14 +242,14 @@ func (p *planner) planPrimary(v NodeView) {
 		return
 	}
 
-	p.ensure(buildDesired(p.in.Policy, v.Ref, kind, registrationTarget{
+	p.want(buildDesired(p.in.Policy, v.Ref, kind, registrationTarget{
 		name:     RegistrationName(p.in.Policy.Name, v.Ref.Name),
 		address:  v.Address,
 		mac:      v.MAC,
 		hostname: v.Hostname,
 		space:    p.in.Policy.Spec.SpaceRef,
 		comment:  fmt.Sprintf("Registered by HostRegistrationPolicy %s/%s for Node %s", p.in.Policy.Namespace, p.in.Policy.Name, v.Ref.Name),
-	}), "")
+	}))
 }
 
 // planInterface plans the registration of one additionalInterfaces entry of a Node. A spec
@@ -249,7 +299,7 @@ func (p *planner) planInterface(v NodeView, entry uddiv1alpha1.AdditionalInterfa
 		return
 	}
 
-	p.ensure(buildDesired(p.in.Policy, v.Ref, kind, registrationTarget{
+	p.want(buildDesired(p.in.Policy, v.Ref, kind, registrationTarget{
 		name:     InterfaceRegistrationName(p.in.Policy.Name, v.Ref.Name, entry.Name),
 		iface:    entry.Name,
 		address:  iv.Address,
@@ -258,7 +308,7 @@ func (p *planner) planInterface(v NodeView, entry uddiv1alpha1.AdditionalInterfa
 		space:    spaceRef,
 		comment: fmt.Sprintf("Registered by HostRegistrationPolicy %s/%s for Node %s interface %s",
 			p.in.Policy.Namespace, p.in.Policy.Name, v.Ref.Name, entry.Name),
-	}), entry.Name)
+	}))
 }
 
 // spaceState returns the planner's view of the IPSpace CR ref names: Space for the policy's
@@ -276,6 +326,107 @@ func (p *planner) spaceState(ref uddiv1alpha1.ObjectRef) SpaceState {
 // skip records a skip.
 func (p *planner) skip(s Skip) { p.plan.Skips = append(p.plan.Skips, s) }
 
+// want records a registration its slot asks for. settle turns the candidates into Ensure
+// entries once every slot has been planned.
+func (p *planner) want(d DesiredRegistration) {
+	p.candidates = append(p.candidates, d)
+}
+
+// settle turns the candidates into Ensure entries, one per object name. Names are claimed
+// in this order, and the first claim wins:
+//
+//  1. primary registrations (a Node name is unique, so two of them only share a name when
+//     the hash fallback of RegistrationName collides);
+//  2. objects the policy already holds for a slot that is kept but has no candidate this
+//     round (frozen on a transient condition): applying over them would hand an object
+//     that belongs to another Node to this one;
+//  3. interface registrations, in Node and interface order.
+//
+// A candidate that loses is skipped with NameConflict naming the holder of the name. The
+// winners go through ensure, which also does the kind-change and Registered/Pending
+// bookkeeping.
+func (p *planner) settle() {
+	sort.SliceStable(p.candidates, func(i, j int) bool {
+		a, b := p.candidates[i], p.candidates[j]
+		if (a.Interface == "") != (b.Interface == "") {
+			return a.Interface == ""
+		}
+		if a.Node.Name != b.Node.Name {
+			return a.Node.Name < b.Node.Name
+		}
+		return a.Interface < b.Interface
+	})
+
+	claims := make(map[string]claim, len(p.candidates))
+	var winners []DesiredRegistration
+	claimOrSkip := func(d DesiredRegistration) {
+		if holder, taken := claims[d.Name]; taken {
+			msg := fmt.Sprintf("object name %s is already used by %s", d.Name, holder)
+			if d.Interface != "" {
+				msg = interfaceMessage(d.Interface, msg)
+			}
+			p.skip(Skip{Node: d.Node, Interface: d.Interface, Reason: SkipNameConflict, Message: msg})
+			return
+		}
+		claims[d.Name] = claim{node: d.Node, iface: d.Interface}
+		winners = append(winners, d)
+	}
+
+	candidateSlots := make(map[slot]bool, len(p.candidates))
+	for _, d := range p.candidates {
+		candidateSlots[slotOf(d.Node.Name, d.Interface)] = true
+	}
+	var frozen []slot
+	for s := range p.existing {
+		if p.kept(s) && !candidateSlots[s] {
+			frozen = append(frozen, s)
+		}
+	}
+	sort.Slice(frozen, func(i, j int) bool {
+		a, b := frozen[i], frozen[j]
+		if (a.iface == "") != (b.iface == "") {
+			return a.iface == ""
+		}
+		if a.node != b.node {
+			return a.node < b.node
+		}
+		return a.iface < b.iface
+	})
+
+	for _, d := range p.candidates {
+		if d.Interface == "" {
+			claimOrSkip(d)
+		}
+	}
+	for _, s := range frozen {
+		ref, ok := p.nodeRefs[s.node]
+		if !ok {
+			ref = NodeRef{Name: s.node}
+		}
+		for _, ex := range p.existing[s] {
+			if _, taken := claims[ex.Name]; !taken {
+				claims[ex.Name] = claim{node: ref, iface: s.iface}
+			}
+		}
+	}
+	for _, d := range p.candidates {
+		if d.Interface != "" {
+			claimOrSkip(d)
+		}
+	}
+
+	for _, d := range winners {
+		p.ensure(d, d.Interface)
+	}
+}
+
+// kept reports whether the existing objects of a slot survive this round: the Node is in
+// the input and did not opt out, and an interface registration's interface is still in the
+// spec.
+func (p *planner) kept(s slot) bool {
+	return p.wanted[s.node] && (s.iface == "" || p.specIfaces[s.iface])
+}
+
 // ensure adds d to the plan, releases the object of the other kind that the same slot
 // already has (a kind change), and counts the slot as registered or pending when its
 // object of the chosen kind already exists. iface is d's interface name, "" for a primary
@@ -283,7 +434,7 @@ func (p *planner) skip(s Skip) { p.plan.Skips = append(p.plan.Skips, s) }
 func (p *planner) ensure(d DesiredRegistration, iface string) {
 	p.plan.Ensure = append(p.plan.Ensure, d)
 
-	s := slot{node: d.Node.Name, iface: iface}
+	s := slotOf(d.Node.Name, iface)
 	for exKind, ex := range p.existing[s] {
 		if exKind == d.Kind {
 			continue
@@ -310,25 +461,36 @@ func (p *planner) ensure(d DesiredRegistration, iface string) {
 // releaseStale releases the existing objects no slot of this round keeps: those of a Node
 // that is gone from the input or opted out, and interface registrations whose interface is
 // no longer in the spec (for any Node still in the input, even one frozen on an invalid
-// annotation: removing an interface from the spec is deliberate).
-func (p *planner) releaseStale(nodeRefs map[string]NodeRef, wanted map[string]bool) {
-	specIfaces := make(map[string]bool, len(p.in.Policy.Spec.AdditionalInterfaces))
-	for _, e := range p.in.Policy.Spec.AdditionalInterfaces {
-		specIfaces[e.Name] = true
+// annotation: removing an interface from the spec is deliberate). An object that is also
+// ensured this round (another slot's registration now carries its name) is applied over,
+// never deleted.
+func (p *planner) releaseStale() {
+	ensured := make(map[registrationKey]bool, len(p.plan.Ensure))
+	for _, d := range p.plan.Ensure {
+		ensured[registrationKey{d.Kind, d.Name}] = true
 	}
 
 	for s, byKind := range p.existing {
-		if wanted[s.node] && (s.iface == "" || specIfaces[s.iface]) {
+		if p.kept(s) {
 			continue
 		}
-		ref, ok := nodeRefs[s.node]
+		ref, ok := p.nodeRefs[s.node]
 		if !ok {
 			ref = NodeRef{Name: s.node}
 		}
 		for _, ex := range byKind {
+			if ensured[registrationKey{ex.Kind, ex.Name}] {
+				continue
+			}
 			p.plan.Release = append(p.plan.Release, Release{Name: ex.Name, Kind: ex.Kind, Node: ref, Interface: s.iface})
 		}
 	}
+}
+
+// registrationKey identifies one generated object by kind and name.
+type registrationKey struct {
+	Kind RegistrationKind
+	Name string
 }
 
 // sort puts the plan in a deterministic order.
@@ -394,7 +556,7 @@ func buildDesired(p *uddiv1alpha1.HostRegistrationPolicy, node NodeRef, kind Reg
 		Interface: t.iface,
 		Labels: map[string]string{
 			LabelPolicy: p.Name,
-			LabelNode:   node.Name,
+			LabelNode:   labelvalue.For(node.Name),
 		},
 	}
 	if t.iface != "" {

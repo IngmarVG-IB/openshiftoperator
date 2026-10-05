@@ -192,8 +192,11 @@ var _ = BeforeSuite(func() {
 		ErrorIfCRDPathMissing: true,
 	}
 
-	// Retrieve the first found binary directory to allow running tests from IDEs
-	if getFirstFoundEnvTestBinaryDir() != "" {
+	// Retrieve the first found binary directory to allow running tests from IDEs. Only when
+	// KUBEBUILDER_ASSETS is unset: BinaryAssetsDirectory takes precedence over it, so with
+	// several versions under bin/k8s it would pin every lane, `make test` and
+	// `make test-floor` alike, to whichever version sorts first.
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" && getFirstFoundEnvTestBinaryDir() != "" {
 		testEnv.BinaryAssetsDirectory = getFirstFoundEnvTestBinaryDir()
 	}
 

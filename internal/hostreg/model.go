@@ -85,7 +85,9 @@ const DefaultMACAnnotation = DefaultAnnotationPrefix + "/" + AnnotationMAC
 // Labels, tags and the field manager stamped on generated objects.
 const (
 	LabelPolicy = "uddi.infoblox.com/policy"
-	LabelNode   = "uddi.infoblox.com/node"
+	// LabelNode carries labelvalue.For(node name): the Node name itself when it fits in a
+	// label value (63 characters), a shortened form with a hash otherwise.
+	LabelNode = "uddi.infoblox.com/node"
 	// LabelInterface carries the additionalInterfaces entry name on the registration
 	// generated for it. Primary registrations (one per Node) do not carry it.
 	LabelInterface = "uddi.infoblox.com/interface"
@@ -166,6 +168,11 @@ const (
 	// Node: its cidr does not parse, or inserting its hostnameSuffix does not give a valid
 	// DNS name.
 	SkipInvalidInterface SkipReason = "InvalidInterface"
+	// SkipNameConflict means the registration would get the same object name as another one
+	// of this policy: the primary registration of Node "<n>-<iface>" and interface <iface>
+	// of Node "<n>" are both "<policy>-<n>-<iface>". The primary registration is kept and
+	// the interface registration skipped; the message names the Node holding the name.
+	SkipNameConflict SkipReason = "NameConflict"
 )
 
 // Skip records one Node (or one additional interface of a Node) that was not registered and
@@ -247,7 +254,9 @@ type SpaceState struct {
 type RegistrationState struct {
 	Name string
 	Kind RegistrationKind
-	Node string // from the LabelNode label
+	// Node is the value of the LabelNode label, which is labelvalue.For(node name): the
+	// planner compares it with labelvalue.For of the Node names it is given.
+	Node string
 	// Interface is the LabelInterface label; empty for a Node's primary registration.
 	Interface string
 	Ready     bool

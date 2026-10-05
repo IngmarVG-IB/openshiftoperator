@@ -41,9 +41,11 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/gatewayapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/hostreg"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/ipalloc"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/metal3api"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/publish"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // The other suites drive Reconcile by hand, which proves the loop but not the wiring.
@@ -165,7 +167,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			RoutesAvailable: true, DNSRecordsAvailable: true, GatewayAPIAvailable: true,
 		}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&IPAllocationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
-		Expect((&HostRegistrationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, NMStateAvailable: true}).SetupWithManager(mgr)).To(Succeed())
+		Expect((&HostRegistrationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, NMStateAvailable: true, Metal3Available: true}).SetupWithManager(mgr)).To(Succeed())
 
 		var mgrCtx context.Context
 		mgrCtx, mgrCancel = context.WithCancel(ctx)
@@ -609,5 +611,88 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		Expect(k8sClient.Status().Update(ctx, gw)).To(Succeed())
 
 		Eventually(policyRecordCount(policy.Name)).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
+	})
+
+	It("switches a registration from an Address to a FixedAddress when a BareMetalHost gains hardware details, purely through the watch", func() {
+		space := &uddiv1alpha1.IPSpace{
+			ObjectMeta: metav1.ObjectMeta{Name: "metal3-watch-space", Namespace: mgrNS},
+			Spec:       uddiv1alpha1.IPSpaceSpec{Name: "metal3-watch-space"},
+		}
+		Expect(k8sClient.Create(ctx, space)).To(Succeed())
+		Eventually(readyCondition(space, func() []metav1.Condition { return space.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		// The manager's cache covers this file's namespace only, so the BareMetalHost lives
+		// here and the policy reads it through macSource.metal3.namespace.
+		policy := &uddiv1alpha1.HostRegistrationPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "watch-metal3-policy", Namespace: mgrNS},
+			Spec: uddiv1alpha1.HostRegistrationPolicySpec{
+				Selector:  &metav1.LabelSelector{MatchLabels: map[string]string{"hostreg-metal3-watch": "true"}},
+				SpaceRef:  uddiv1alpha1.ObjectRef{Name: space.Name},
+				MACSource: uddiv1alpha1.MACSource{Metal3: uddiv1alpha1.Metal3Source{Namespace: mgrNS}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "watch-metal3-node",
+				Labels: map[string]string{"hostreg-metal3-watch": "true"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		node.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.150"}}
+		Expect(k8sClient.Status().Update(ctx, node)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, node))).To(Succeed())
+		})
+
+		registrationName := hostreg.RegistrationName(policy.Name, node.Name)
+		addressOf := func() error {
+			return k8sClient.Get(ctx, client.ObjectKey{Namespace: mgrNS, Name: registrationName}, &uddiv1alpha1.Address{})
+		}
+		fixedOf := func() (*uddiv1alpha1.FixedAddress, error) {
+			var fa uddiv1alpha1.FixedAddress
+			err := k8sClient.Get(ctx, client.ObjectKey{Namespace: mgrNS, Name: registrationName}, &fa)
+			return &fa, err
+		}
+
+		// No MAC is known yet, so the Node registers as an Address.
+		Eventually(addressOf).WithTimeout(settle).WithPolling(poll).Should(Succeed())
+
+		host := &unstructured.Unstructured{}
+		host.SetGroupVersionKind(metal3api.GVK)
+		host.SetNamespace(mgrNS)
+		host.SetName("watch-metal3-host")
+		Expect(k8sClient.Create(ctx, host)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, host))).To(Succeed())
+		})
+		hardware := map[string]interface{}{
+			"nics": []interface{}{map[string]interface{}{"name": "eno1", "mac": "52:55:00:D1:55:F1", "ip": "192.0.2.150"}},
+		}
+		Expect(unstructured.SetNestedMap(host.Object, hardware, "status", "hardware")).To(Succeed())
+		Expect(k8sClient.Status().Update(ctx, host)).To(Succeed())
+
+		// No direct Reconcile call: the BareMetalHost watch wakes the policy, which now finds
+		// a MAC, releases the Address and applies a FixedAddress.
+		Eventually(func() string {
+			fa, err := fixedOf()
+			if err != nil {
+				return ""
+			}
+			return fa.Spec.MatchValue
+		}).WithTimeout(settle).WithPolling(poll).Should(Equal("52:55:00:d1:55:f1"))
+		Eventually(func() bool {
+			err := addressOf()
+			if apierrors.IsNotFound(err) {
+				return true
+			}
+			// The Address controller's finalizer may still be removing it from Universal DDI.
+			var a uddiv1alpha1.Address
+			return k8sClient.Get(ctx, client.ObjectKey{Namespace: mgrNS, Name: registrationName}, &a) == nil &&
+				!a.DeletionTimestamp.IsZero()
+		}).WithTimeout(settle).WithPolling(poll).Should(BeTrue())
 	})
 })

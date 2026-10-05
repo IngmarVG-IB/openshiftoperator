@@ -261,7 +261,12 @@ func buildRecord(policy *uddiv1alpha1.DNSPublishPolicy, ep Endpoint, t Target, z
 	for k, v := range policy.Spec.Tags {
 		tags[k] = v
 	}
-	tags[TagSource] = fmt.Sprintf("%s/%s/%s", ep.Source.Kind, ep.Source.Namespace, ep.Source.Name)
+	// Cluster-scoped sources such as Nodes have no namespace: Node/<name>, not Node//<name>.
+	if ep.Source.Namespace == "" {
+		tags[TagSource] = fmt.Sprintf("%s/%s", ep.Source.Kind, ep.Source.Name)
+	} else {
+		tags[TagSource] = fmt.Sprintf("%s/%s/%s", ep.Source.Kind, ep.Source.Namespace, ep.Source.Name)
+	}
 
 	spec := uddiv1alpha1.RecordSpec{
 		CommonSpec: uddiv1alpha1.CommonSpec{
