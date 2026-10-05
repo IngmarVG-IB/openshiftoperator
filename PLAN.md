@@ -160,9 +160,98 @@ HostRegistrationPolicy: Nodes become DHCP FixedAddress reservations when a MAC i
 - [x] **NodeNetworkState fixture:** Mock `nmstate.io/v1beta1 NodeNetworkState` in envtest so the controller can test MAC reading.
 - [x] **Documentation:** `docs/host-registration.md` (task guide: what it does, prerequisites, complete example, Node annotations, modes, MAC discovery, generated object naming, status fields, skip reasons, release and deletion behavior, limitations).
 
+## Milestone 6: harden the object layer
+
+Started 2026-10-04. Scope: the ROADMAP.md milestone 6 items that need neither a Universal
+DDI tenant nor a cluster. Unified nameservers stay blocked until the SDK tags them, and
+checking the `restricted-v2` SCC on a real cluster belongs to milestone 5. Each work package
+below is the contract its agent builds against; DESIGN.md carries the same semantics.
+
+### Wave 1 (parallel)
+
+- [ ] **A. Tag removal and correctness items.**
+  - `ObjectStatus.appliedTags` (sorted list of keys): the tag keys the operator wrote at the
+    last successful sync, meaning ownership tags, Connection `defaultTags` and `spec.tags`.
+    It is written only together with `Synced=True` for the current generation.
+  - `tags.Desired{Want map[string]string; Remove []string}`. `Remove` is `appliedTags`
+    minus the keys of `Want`, and never contains an ownership key. `tags.ForPatch(current,
+    desired)` returns `current` minus `Remove` plus `Want`, and whether that differs from
+    `current`. Keys the operator never wrote are left alone. An empty `appliedTags`, as on
+    the first sync after an upgrade, removes nothing.
+  - The adapter interface changes so `Create` receives `Want` and `Diff` receives the whole
+    `tags.Desired`; all nine adapters follow.
+  - The fake's updates replace the tag map wholesale, which is what the operator assumes a
+    PATCH of `tags` does. `test/integration` gains a test that removes one key through a
+    PATCH and logs a `VERDICT:` line saying whether Universal DDI replaced or merged the map.
+  - Record apex: the spec-level immutability rule treats an omitted `name` and `@` as the
+    same value.
+  - DNSPublishPolicy: a second condition type `ZonesResolved`, True when every zoneRef names
+    an existing AuthZone CR, otherwise False with reason `ZoneNotFound` and the missing
+    names in the message, plus a Warning event `ZoneNotFound`. Ready logic is unchanged.
+- [ ] **B. API client behaviour**, confined to `internal/uddi`.
+  - Pagination: every SDK List helper pages through all results when `ListOptions.Limit`
+    is 0, following the page token when the response carries one and otherwise using
+    offset and limit pages of 1000. More than 100 pages is an error, never an endless loop.
+    The fake supports offset and limit so the tests exercise paging.
+  - Retries: a RoundTripper retries 429, 502, 503 and 504 for GET, PATCH and DELETE. POST is
+    never retried because the API has no idempotency key. It honours `Retry-After` in
+    seconds or as an HTTP date, otherwise backs off exponentially with full jitter from
+    500 ms, retries at most 3 times within 30 s of total waiting, stops when the context is
+    cancelled, and rewinds request bodies with `GetBody`.
+  - Metrics: `uddi_operator_api_retries_total{connection,domain,method,code}` and the
+    histogram `uddi_operator_api_ratelimit_wait_seconds{connection}` for time spent waiting
+    on the client-side limiter.
+- [ ] **C. Observability.**
+  - `internal/metrics`: a Prometheus collector that reads the manager's cache at scrape time,
+    so the reconcile loop does not change. It exports
+    `uddi_operator_objects{kind,namespace,ready}` for Connection and the nine object-layer
+    kinds, with `ready` as true, false or unknown from the Ready condition;
+    `uddi_operator_policy_objects{kind,namespace,policy,state}` from policy status
+    (DNSPublishPolicy published and ready, IPAllocationPolicy allocated and assigned,
+    HostRegistrationPolicy registered and pending); and
+    `uddi_operator_policy_skipped{kind,namespace,policy,reason}`.
+  - `config/observability`, not part of `config/default`: a ServiceMonitor for OpenShift
+    user-workload monitoring, a PrometheusRule and dashboards. Alerts: UDDIConnectionNotReady
+    (10 min), UDDIObjectsNotReady (15 min), UDDIAPIServerErrors (5xx rate),
+    UDDIAPIThrottled (429 rate), UDDIAddressesPending (15 min), UDDIRegistrationsPending
+    (15 min) and UDDIReconcileErrors (controller-runtime error rate). Each has a summary, a
+    description and a runbook link into `docs/observability.md`. Dashboards: a Grafana JSON
+    and an OpenShift console dashboard ConfigMap.
+  - Rules pass `promtool check rules` locally and in a new CI step.
+  - `docs/observability.md`: metric reference and one runbook section per alert.
+- [ ] **F. Deployment hardening.**
+  - Manager pod: `runAsNonRoot`, seccomp `RuntimeDefault`, no privilege escalation,
+    read-only root filesystem, all capabilities dropped, explicit requests and limits.
+  - `config/ha` overlay: two replicas, a PodDisruptionBudget with `maxUnavailable: 1` and
+    soft pod anti-affinity. The default stays one replica without a PDB, because a PDB on a
+    single leader-elected replica only blocks node drains.
+  - `config/network-policy`: egress to cluster DNS, the API server and TCP 443 for
+    `csp.infoblox.com`, which a NetworkPolicy cannot name by host; ingress to the metrics
+    port from `openshift-monitoring` and `openshift-user-workload-monitoring`.
+  - `docs/install.md`: a hardening section.
+
+### Wave 2 (after wave 1 merges)
+
+- [ ] **D. controller-runtime modernisation.** Events go through `events.EventRecorder` from
+  `mgr.GetEventRecorder`, and the policies' generated Records, Addresses and FixedAddresses
+  are applied with generated apply configurations through the client's `Apply` method. The
+  nolint suppressions and the matching known limitations go away.
+- [ ] **E. DHCP option codes by name.** `DHCPOption` gains `optionName` and an optional
+  `optionSpace` as an alternative to `optionCode`; exactly one of the two is set for type
+  `option`. A new `ListOptionCodes` on the DHCP client interface, a per-Connection cache
+  with a 10-minute TTL, and resolution in `Adapter.Resolve`, which therefore receives the
+  Universal DDI client. A name that does not resolve reports `DependencyNotReady` with the
+  name and space in the message, and is retried.
+- [ ] **G. Documentation pass**: API reference and usage guide for `appliedTags`,
+  `optionName` and `ZonesResolved`; API notes for retries and pagination; known
+  limitations updated.
+
+Milestone 6 ends with both envtest lanes, lint, govulncheck and the bundle validators green
+and the bundle regenerated.
+
 ## Milestones 5 and beyond
 
 Planned in [ROADMAP.md](ROADMAP.md): proving the operator on a real tenant and cluster
-(5), hardening the object layer (6), completing the integration layer (7), API maturity
+(5), hardening the object layer (6, in progress above), completing the integration layer (7), API maturity
 with `v1beta1` (8), distribution through OperatorHub and certification (9), and operating
 at scale (10). Each milestone moves here as a checklist when it starts.

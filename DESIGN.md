@@ -346,6 +346,12 @@ dhcpOptions:
 Maps to the SDK's `ipam.OptionItem`. DHCP objects live in the `ipam` Go package even though
 their REST paths are under `/dhcp/`.
 
+Milestone 6 adds lookup by name: an `option` entry sets either `optionCode` or
+`optionName`, never both, with an optional `optionSpace` id. Names resolve through a
+per-Connection cache of `/dhcp/option_code` with a 10-minute TTL. A name that does not
+resolve reports `Ready=False/DependencyNotReady` naming the option and space, and is
+retried, so an option code created later is picked up without editing the CR.
+
 ### 4.7 Integration (policy) kinds, milestones 2 to 4
 
 These are designed now so the object layer has the right hooks, and scaffolded later.
@@ -430,6 +436,11 @@ and Services mapped to every policy in the object's namespace, and AuthZones map
 a field index on `zoneRefs[].name`. The Route API is registered from
 `github.com/openshift/api/route/v1` and its presence is checked once with discovery at
 startup, so on a cluster without Routes (kind) the Route source is inert and logged.
+
+A second condition, `ZonesResolved`, is True when every zoneRef names an existing AuthZone
+CR and otherwise False with reason `ZoneNotFound` listing the missing names, with a Warning
+event of the same name (milestone 6). It does not change `Ready`, so a mistyped zoneRef
+next to working ones is visible without taking the policy out of service.
 
 Not in milestone 2: the default router wildcard (`*.apps.<cluster>`) and the ingress
 operator's `DNSRecord` CRs; a hand-written wildcard `Record` covers it for now.
@@ -651,6 +662,14 @@ Cluster id comes from the OpenShift `ClusterVersion` object's `spec.clusterID`, 
 to the `kube-system` namespace UID, overridable with the `CLUSTER_ID` environment variable.
 The `uid` tag is the guard: delete and destructive update paths compare it before acting.
 
+Tag removal (milestone 6). `status.appliedTags` records the keys the operator wrote at the
+last successful sync: ownership tags, Connection `defaultTags` and `spec.tags`. On the next
+sync, keys that were applied before and are no longer wanted are removed, and keys the
+operator never wrote are left alone. Ownership keys are always wanted, and an empty
+`appliedTags` removes nothing, so upgrading from an older version never strips tags. This
+relies on a PATCH of `tags` replacing the whole map, which the integration suite checks
+(**verify**).
+
 ## 7. Deletion and adoption
 
 - Finalizer `uddi.infoblox.com/finalizer` on every object-layer CR.
@@ -691,6 +710,12 @@ requeue plus a natural-key lookup before every create; when a later SDK tag brin
 built-in retry, it stays disabled because there is no idempotency key. API errors are
 wrapped with the domain, method and HTTP status, with the API key never included.
 
+Milestone 6 adds the operator's own retry and pagination. A RoundTripper retries 429, 502,
+503 and 504 for GET, PATCH and DELETE, honouring `Retry-After` and otherwise backing off
+exponentially with jitter, at most 3 times within 30 seconds. POST is never retried, for
+the same idempotency reason. List helpers page through every result when no limit is set,
+with a hard cap so a misbehaving cursor cannot loop forever.
+
 ## 9. Observability
 
 - Conditions and `observedGeneration` on every CR, as above.
@@ -698,8 +723,18 @@ wrapped with the domain, method and HTTP status, with the API key never included
 - Metrics (Prometheus, served by the manager with controller-runtime's
   `WithAuthenticationAndAuthorization` metrics filter; kube-rbac-proxy is deprecated and not
   used): `uddi_operator_api_requests_total{connection,domain,method,code}`,
-  `uddi_operator_api_request_duration_seconds`, `uddi_operator_objects{kind,namespace,ready}`,
-  plus the standard controller-runtime reconcile metrics.
+  `uddi_operator_api_request_duration_seconds`,
+  `uddi_operator_api_retries_total{connection,domain,method,code}`,
+  `uddi_operator_api_ratelimit_wait_seconds{connection}`,
+  `uddi_operator_objects{kind,namespace,ready}`,
+  `uddi_operator_policy_objects{kind,namespace,policy,state}` and
+  `uddi_operator_policy_skipped{kind,namespace,policy,reason}`, plus the standard
+  controller-runtime reconcile metrics. Object and policy gauges come from a collector that
+  reads the manager cache at scrape time, so the reconcile loops carry no metric code.
+- `config/observability` ships a ServiceMonitor, a PrometheusRule with alerts on Connection
+  and object readiness, API errors and throttling, pending allocations and registrations,
+  and reconcile errors, plus Grafana and OpenShift console dashboards. Runbooks live in
+  `docs/observability.md`.
 - Structured JSON logging via logr / zap; log level flag.
 
 ## 10. Security
@@ -713,6 +748,11 @@ wrapped with the domain, method and HTTP status, with the API key never included
 - API keys live only in Secrets; the operator never writes them to status, events, logs or
   metrics.
 - Leader election on; one active manager per install.
+- Pod hardening: seccomp `RuntimeDefault`, no privilege escalation, all capabilities
+  dropped, explicit requests and limits. The default is one replica without a
+  PodDisruptionBudget; the `config/ha` overlay runs two replicas with a PDB and soft
+  anti-affinity. `config/network-policy` restricts traffic to cluster DNS, the API server,
+  HTTPS egress for `csp.infoblox.com` and metrics scraping from the monitoring namespaces.
 
 ## 11. Toolchain and versions
 
