@@ -20,11 +20,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 func TestClassifyRequest(t *testing.T) {
@@ -138,6 +140,79 @@ func TestMetricsTransportDefaultsToDefaultTransport(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestRetryMetricCountsEachRetryByCause records retries directly on the counter through
+// the transport and checks the series it produces, with the labels derived the same way as
+// the request metrics.
+func TestRetryMetricCountsEachRetryByCause(t *testing.T) {
+	const connLabel = "test-retry-metric"
+	srv := newScriptedServer(t,
+		reply{http.StatusTooManyRequests, ""}, reply{http.StatusBadGateway, ""}, reply{http.StatusOK, ""})
+	rt, _ := newTestRetry(connLabel)
+
+	if status, err := send(t, rt, http.MethodPatch, srv.URL+"/api/ddi/v1/ipam/subnet/00000000-0000-4000-8000-000000000003", []byte(`{}`)); err != nil || status != http.StatusOK {
+		t.Fatalf("send = (%d, %v), want 200", status, err)
+	}
+
+	// One retry was caused by a 429 and one by a 502; the final 200 is not a retry.
+	for code, want := range map[string]float64{"429": 1, "502": 1, "200": 0} {
+		if got := testutil.ToFloat64(apiRetriesTotal.WithLabelValues(connLabel, "ipam", "PATCH subnet", code)); got != want {
+			t.Errorf("retries{ipam, PATCH subnet, %s} = %v, want %v", code, got, want)
+		}
+	}
+}
+
+// TestNewMetricsAreRegisteredOnTheControllerRuntimeRegistry pins the names and label sets
+// of the retry counter and the rate-limit wait histogram, which DESIGN.md section 9, the
+// alerts and the dashboards depend on, and checks they pass the Prometheus naming lint.
+func TestNewMetricsAreRegisteredOnTheControllerRuntimeRegistry(t *testing.T) {
+	const connLabel = "test-registry"
+	apiRetriesTotal.WithLabelValues(connLabel, "ipam", "PATCH subnet", "429").Inc()
+	apiRateLimitWait.WithLabelValues(connLabel).Observe(0)
+
+	families, err := ctrlmetrics.Registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	want := map[string][]string{
+		"uddi_operator_api_retries_total":          {"code", "connection", "domain", "method"},
+		"uddi_operator_api_ratelimit_wait_seconds": {"connection"},
+	}
+	for name, labels := range want {
+		var found *dto.Metric
+		for _, fam := range families {
+			if fam.GetName() != name {
+				continue
+			}
+			for _, m := range fam.GetMetric() {
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == "connection" && lp.GetValue() == connLabel {
+						found = m
+					}
+				}
+			}
+		}
+		if found == nil {
+			t.Errorf("%s with connection=%q is not on controller-runtime's registry", name, connLabel)
+			continue
+		}
+		got := make([]string, 0, len(found.GetLabel()))
+		for _, lp := range found.GetLabel() {
+			got = append(got, lp.GetName())
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, labels) {
+			t.Errorf("%s labels = %v, want %v", name, got, labels)
+		}
+	}
+
+	if problems, err := testutil.CollectAndLint(apiRetriesTotal, "uddi_operator_api_retries_total"); err != nil || len(problems) != 0 {
+		t.Errorf("lint of the retry counter: %v %v", problems, err)
+	}
+	if problems, err := testutil.CollectAndLint(apiRateLimitWait, "uddi_operator_api_ratelimit_wait_seconds"); err != nil || len(problems) != 0 {
+		t.Errorf("lint of the rate-limit wait histogram: %v %v", problems, err)
 	}
 }
 

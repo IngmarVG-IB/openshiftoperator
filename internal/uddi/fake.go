@@ -185,7 +185,9 @@ func i64v(p *int64) int64 {
 }
 
 // filtered walks a map of stored objects in id order, applies the compiled _filter and
-// _tfilter expressions and returns at most opts.Limit results starting at opts.Offset.
+// _tfilter expressions and returns the matches from opts.Offset on, at most opts.Limit of
+// them; a zero Limit means all of them. The order is stable between calls, so a caller
+// that pages with Offset and Limit sees every match exactly once.
 func filtered[T any](
 	domain, method string,
 	store map[string]T,

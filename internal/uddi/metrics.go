@@ -26,11 +26,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-// Metric names, per DESIGN.md section 9. The uddi_operator_objects gauge from the same
-// section lives in the reconcile loop, not here.
+// Metric names, per DESIGN.md section 9. The object and policy gauges from the same
+// section come from the collector in internal/metrics, not from here.
 const (
 	metricAPIRequestsTotal   = "uddi_operator_api_requests_total"
 	metricAPIRequestDuration = "uddi_operator_api_request_duration_seconds"
+	metricAPIRetriesTotal    = "uddi_operator_api_retries_total"
+	metricAPIRateLimitWait   = "uddi_operator_api_ratelimit_wait_seconds"
+)
+
+// Label names shared by the API metrics.
+const (
+	labelConnection = "connection"
+	labelDomain     = "domain"
+	labelMethod     = "method"
+	labelCode       = "code"
 )
 
 var (
@@ -42,24 +52,47 @@ var (
 	apiRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: metricAPIRequestsTotal,
 		Help: "Total Universal DDI API requests, labeled by connection, domain, method and result code.",
-	}, []string{"connection", "domain", "method", "code"})
+	}, []string{labelConnection, labelDomain, labelMethod, labelCode})
 
 	// apiRequestDuration observes the latency of the underlying HTTP round trip to
 	// Universal DDI. It sits inside the client-side rate limiter in the transport chain
-	// (see newRateLimitedClient), so the observed duration never counts time spent
-	// waiting for a rate-limit token.
+	// (see newHTTPClient), so the observed duration never counts time spent waiting for a
+	// rate-limit token or backing off between retries.
 	apiRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    metricAPIRequestDuration,
 		Help:    "Universal DDI API request duration in seconds, labeled by connection, domain and method.",
 		Buckets: prometheus.DefBuckets,
-	}, []string{"connection", "domain", "method"})
+	}, []string{labelConnection, labelDomain, labelMethod})
+
+	// apiRetriesTotal counts the retries retryTransport performed, with the status code
+	// of the response that caused each one. The labels are derived exactly as for
+	// apiRequestsTotal (classifyRequest), so a retry series lines up with the request
+	// series it belongs to. Every attempt, the first included, is also counted in
+	// apiRequestsTotal; this counter says how many of them were retries.
+	apiRetriesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: metricAPIRetriesTotal,
+		Help: "Total Universal DDI API request retries, labeled by connection, domain, method and the status code that caused the retry.",
+	}, []string{labelConnection, labelDomain, labelMethod, labelCode})
+
+	// apiRateLimitWait observes how long each request waited for a token from the
+	// client-side rate limiter, zero waits included, so the bucket counts add up to the
+	// number of rate-limited requests and a rising tail shows the limiter saturating.
+	apiRateLimitWait = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    metricAPIRateLimitWait,
+		Help:    "Time Universal DDI API requests spent waiting on the client-side rate limiter, in seconds, labeled by connection.",
+		Buckets: rateLimitWaitBuckets,
+	}, []string{labelConnection})
 )
+
+// rateLimitWaitBuckets span an uncontended limiter (a few microseconds, below the first
+// bucket) to a queue that approaches the 30 second request timeout.
+var rateLimitWaitBuckets = []float64{0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}
 
 // init registers the API metrics on controller-runtime's default metrics registry, the
 // same one the manager serves (cmd/main.go wires up metrics/server against it). This
 // mirrors how controller-runtime's own reconcile metrics register themselves.
 func init() {
-	metrics.Registry.MustRegister(apiRequestsTotal, apiRequestDuration)
+	metrics.Registry.MustRegister(apiRequestsTotal, apiRequestDuration, apiRetriesTotal, apiRateLimitWait)
 }
 
 // metricsTransport is an http.RoundTripper that records apiRequestsTotal and
