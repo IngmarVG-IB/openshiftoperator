@@ -1,0 +1,252 @@
+# Unit tests for ../monitoring/prometheusrule.yaml, run by hack/check-rules.sh with
+# `promtool test rules`. The script extracts the PrometheusRule's spec to rules.yaml next to
+# a copy of this file, which is why rule_files names a bare rules.yaml.
+#
+# Every alert has a case that fires and one that must stay quiet. The object and policy
+# series come in pairs from two pods, the way the config/ha overlay exports them, to prove
+# that the expressions count each object once.
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: UDDIConnectionNotReady fires after 10 minutes, once for two replicas
+    interval: 1m
+    input_series:
+      # team-a: one Connection is not Ready, seen by both replicas.
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-a", ready="false", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x40'
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-a", ready="false", job="uddi-operator", pod="uddi-operator-bbb", instance="10.0.0.2:8443"}'
+        values: '1x40'
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-a", ready="true", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '0x40'
+      # team-b: a Connection that is unknown for 5 minutes and then becomes Ready.
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-b", ready="unknown", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x4 0x36'
+      # Objects that are not Ready belong to UDDIObjectsNotReady, not to this alert.
+      - series: 'uddi_operator_objects{kind="Subnet", exported_namespace="team-c", ready="false", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: UDDIConnectionNotReady
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: UDDIConnectionNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              exported_namespace: team-a
+            exp_annotations:
+              summary: "A Universal DDI Connection is not Ready."
+              description: "1 Connection(s) in namespace team-a have not been Ready for 10 minutes. Nothing that uses them can sync with Universal DDI."
+              runbook_url: "https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiconnectionnotready"
+
+  - name: UDDIConnectionNotReady stays quiet when every Connection is Ready
+    interval: 1m
+    input_series:
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-a", ready="true", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '2x40'
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-a", ready="false", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '0x40'
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-a", ready="unknown", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: UDDIConnectionNotReady
+        exp_alerts: []
+
+  - name: UDDIObjectsNotReady fires after 15 minutes and adds false and unknown
+    interval: 1m
+    input_series:
+      # team-a: two Subnets are false and one is unknown, seen by both replicas.
+      - series: 'uddi_operator_objects{kind="Subnet", exported_namespace="team-a", ready="false", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '2x40'
+      - series: 'uddi_operator_objects{kind="Subnet", exported_namespace="team-a", ready="false", job="uddi-operator", pod="uddi-operator-bbb", instance="10.0.0.2:8443"}'
+        values: '2x40'
+      - series: 'uddi_operator_objects{kind="Subnet", exported_namespace="team-a", ready="unknown", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x40'
+      - series: 'uddi_operator_objects{kind="Subnet", exported_namespace="team-a", ready="unknown", job="uddi-operator", pod="uddi-operator-bbb", instance="10.0.0.2:8443"}'
+        values: '1x40'
+      - series: 'uddi_operator_objects{kind="Subnet", exported_namespace="team-a", ready="true", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '7x40'
+      # team-b: a View that is not Ready for 10 minutes only.
+      - series: 'uddi_operator_objects{kind="View", exported_namespace="team-b", ready="false", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x9 0x31'
+      # A Connection that is not Ready belongs to UDDIConnectionNotReady.
+      - series: 'uddi_operator_objects{kind="Connection", exported_namespace="team-a", ready="false", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: UDDIObjectsNotReady
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: UDDIObjectsNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              exported_namespace: team-a
+              kind: Subnet
+            exp_annotations:
+              summary: "Universal DDI objects are not Ready."
+              description: "3 Subnet object(s) in namespace team-a have not been Ready for 15 minutes."
+              runbook_url: "https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiobjectsnotready"
+
+  - name: UDDIAPIServerErrors fires on a sustained 5xx rate only
+    interval: 1m
+    input_series:
+      # 1 request per second answered with 503 by the DNS API.
+      - series: 'uddi_operator_api_requests_total{connection="team-a/default", domain="dns", method="POST record", code="503"}'
+        values: '0+60x40'
+      # 0.05 requests per second answered with 500 by the IPAM API: under the threshold.
+      - series: 'uddi_operator_api_requests_total{connection="team-a/default", domain="ipam", method="POST address", code="500"}'
+        values: '0+3x40'
+      # A heavy rate of 429 and of transport errors is not a 5xx.
+      - series: 'uddi_operator_api_requests_total{connection="team-a/default", domain="dhcp", method="GET fixed_address", code="429"}'
+        values: '0+120x40'
+      - series: 'uddi_operator_api_requests_total{connection="team-a/default", domain="dhcp", method="GET fixed_address", code="error"}'
+        values: '0+120x40'
+      - series: 'uddi_operator_api_requests_total{connection="team-a/default", domain="dhcp", method="GET fixed_address", code="200"}'
+        values: '0+600x40'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: UDDIAPIServerErrors
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: UDDIAPIServerErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              connection: team-a/default
+              domain: dns
+            exp_annotations:
+              summary: "The Universal DDI API keeps answering with server errors."
+              description: "Connection team-a/default is getting 5xx responses from the Universal DDI dns API at 1.00 requests per second."
+              runbook_url: "https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiapiservererrors"
+
+  - name: UDDIAPIThrottled fires on a sustained 429 rate only
+    interval: 1m
+    input_series:
+      # 0.1 requests per second answered with 429 by the IPAM API.
+      - series: 'uddi_operator_api_requests_total{connection="team-a/lab", domain="ipam", method="POST address", code="429"}'
+        values: '0+6x40'
+      # 0.02 requests per second answered with 429 by the DNS API: under the threshold.
+      - series: 'uddi_operator_api_requests_total{connection="team-a/lab", domain="dns", method="POST record", code="429"}'
+        values: '0+1.2x40'
+      # 5xx responses are not throttling.
+      - series: 'uddi_operator_api_requests_total{connection="team-a/lab", domain="dhcp", method="GET fixed_address", code="503"}'
+        values: '0+120x40'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: UDDIAPIThrottled
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: UDDIAPIThrottled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              connection: team-a/lab
+              domain: ipam
+            exp_annotations:
+              summary: "Universal DDI is throttling the operator."
+              description: "Connection team-a/lab is getting 429 responses from the Universal DDI ipam API at 0.10 requests per second."
+              runbook_url: "https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiapithrottled"
+
+  - name: UDDIAddressesPending fires when assigned stays below allocated
+    interval: 1m
+    input_series:
+      # team-a/alloc: three Services have an address, one of them is assigned. Both
+      # replicas export it.
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-a", policy="alloc", state="allocated", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '3x40'
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-a", policy="alloc", state="assigned", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x40'
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-a", policy="alloc", state="allocated", job="uddi-operator", pod="uddi-operator-bbb", instance="10.0.0.2:8443"}'
+        values: '3x40'
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-a", policy="alloc", state="assigned", job="uddi-operator", pod="uddi-operator-bbb", instance="10.0.0.2:8443"}'
+        values: '1x40'
+      # team-a/caught-up: all assigned.
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-a", policy="caught-up", state="allocated", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '2x40'
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-a", policy="caught-up", state="assigned", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '2x40'
+      # team-b/catching-up: behind for 10 minutes, then assigned.
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-b", policy="catching-up", state="allocated", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '2x40'
+      - series: 'uddi_operator_policy_objects{kind="IPAllocationPolicy", exported_namespace="team-b", policy="catching-up", state="assigned", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '0x9 2x31'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: UDDIAddressesPending
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: UDDIAddressesPending
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              kind: IPAllocationPolicy
+              exported_namespace: team-a
+              policy: alloc
+              job: uddi-operator
+            exp_annotations:
+              summary: "An IPAllocationPolicy has addresses that are not assigned."
+              description: "IPAllocationPolicy alloc in namespace team-a has had 2 Service(s) with an allocated address that is not assigned for 15 minutes."
+              runbook_url: "https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiaddressespending"
+
+  - name: UDDIRegistrationsPending fires when registrations stay pending
+    interval: 1m
+    input_series:
+      # team-b/nodes: two registrations are not Ready, seen by both replicas.
+      - series: 'uddi_operator_policy_objects{kind="HostRegistrationPolicy", exported_namespace="team-b", policy="nodes", state="pending", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '2x40'
+      - series: 'uddi_operator_policy_objects{kind="HostRegistrationPolicy", exported_namespace="team-b", policy="nodes", state="pending", job="uddi-operator", pod="uddi-operator-bbb", instance="10.0.0.2:8443"}'
+        values: '2x40'
+      - series: 'uddi_operator_policy_objects{kind="HostRegistrationPolicy", exported_namespace="team-b", policy="nodes", state="registered", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '5x40'
+      # team-b/workers: pending for 10 minutes, then done.
+      - series: 'uddi_operator_policy_objects{kind="HostRegistrationPolicy", exported_namespace="team-b", policy="workers", state="pending", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '1x9 0x31'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: UDDIRegistrationsPending
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: UDDIRegistrationsPending
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              kind: HostRegistrationPolicy
+              exported_namespace: team-b
+              policy: nodes
+              job: uddi-operator
+            exp_annotations:
+              summary: "A HostRegistrationPolicy has registrations that are not Ready."
+              description: "HostRegistrationPolicy nodes in namespace team-b has had 2 registration(s) that are not Ready for 15 minutes."
+              runbook_url: "https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiregistrationspending"
+
+  - name: UDDIReconcileErrors fires per controller, for this operator only
+    interval: 1m
+    input_series:
+      # One reconcile error per minute from the subnet controller.
+      - series: 'controller_runtime_reconcile_errors_total{controller="subnet", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '0+1x40'
+      # The view controller never fails.
+      - series: 'controller_runtime_reconcile_errors_total{controller="view", job="uddi-operator", pod="uddi-operator-aaa", instance="10.0.0.1:8443"}'
+        values: '0x40'
+      # Another operator's controller fails all the time, but is not ours.
+      - series: 'controller_runtime_reconcile_errors_total{controller="widget", job="other-operator", pod="other-aaa", instance="10.0.1.1:8443"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: UDDIReconcileErrors
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: UDDIReconcileErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              controller: subnet
+            exp_annotations:
+              summary: "A uddi-operator controller keeps failing to reconcile."
+              description: "Controller subnet has returned reconcile errors for 15 minutes, currently 0.02 per second."
+              runbook_url: "https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddireconcileerrors"

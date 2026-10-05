@@ -1,0 +1,11 @@
+# Optional monitoring for the operator: a ServiceMonitor, alert rules and dashboards. It is
+# not referenced from config/default, so installing the operator never needs the
+# monitoring.coreos.com CRDs. Apply it on top of an installed operator:
+#
+#   kubectl apply -k config/observability
+#
+# See docs/observability.md. The two subdirectories carry their own namespaces: monitoring/
+# targets the operator's namespace, dashboards/ targets openshift-config-managed.
+resources:
+  - monitoring
+  - dashboards

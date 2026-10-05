@@ -1,0 +1,45 @@
+# Credentials the ServiceMonitor scrapes with. The metrics endpoint authenticates callers
+# with a TokenReview and authorizes them with a SubjectAccessReview for `get /metrics`, which
+# the uddi-operator-metrics-reader ClusterRole (installed with the operator, see
+# config/rbac/metrics_reader_role.yaml) grants.
+#
+# A dedicated ServiceAccount with a long-lived token Secret is used because a ServiceMonitor
+# on OpenShift user-workload monitoring can only reference a token through a Secret in its
+# own namespace. The Secret holds nothing but the token of a ServiceAccount that can do
+# nothing else than read /metrics.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: uddi-operator-metrics-scraper
+  namespace: uddi-operator-system
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/component: monitoring
+---
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/service-account-token
+metadata:
+  name: uddi-operator-metrics-scraper-token
+  namespace: uddi-operator-system
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/component: monitoring
+  annotations:
+    kubernetes.io/service-account.name: uddi-operator-metrics-scraper
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: uddi-operator-metrics-scraper
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/component: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: uddi-operator-metrics-reader
+subjects:
+  - kind: ServiceAccount
+    name: uddi-operator-metrics-scraper
+    namespace: uddi-operator-system

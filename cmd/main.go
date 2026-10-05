@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -44,6 +45,7 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/clusterid"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/controller"
+	uddimetrics "github.com/IngmarVG-IB/openshiftoperator/internal/metrics"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/nmstateapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/routeapi"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
@@ -222,6 +224,14 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+
+	// Export the state of the custom resources (readiness per kind, policy counts and skip
+	// reasons). The collector reads the manager's cache at scrape time, so the controllers
+	// below carry no metric code.
+	if err := ctrlmetrics.Registry.Register(uddimetrics.NewCollector(mgr.GetCache())); err != nil {
+		setupLog.Error(err, "unable to register the custom resource metrics collector")
 		os.Exit(1)
 	}
 

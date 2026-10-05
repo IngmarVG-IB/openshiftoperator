@@ -1,0 +1,21 @@
+# The OpenShift console picks up every ConfigMap in openshift-config-managed that carries the
+# console.openshift.io/dashboard label and lists it under Observe > Dashboards. Creating it
+# needs cluster-admin. The ConfigMap is generated from uddi-operator.json, the same file you
+# can import into Grafana, so the two never drift apart.
+#
+# The directory sets its own namespace, so it can be built on its own when you only want
+# the dashboard, or left out of an overlay of ../monitoring when you do not.
+namespace: openshift-config-managed
+
+generatorOptions:
+  # The console finds the dashboard by label, so a stable name is better than a hashed one.
+  disableNameSuffixHash: true
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/component: monitoring
+    console.openshift.io/dashboard: "true"
+
+configMapGenerator:
+  - name: uddi-operator-dashboard
+    files:
+      - uddi-operator.json
