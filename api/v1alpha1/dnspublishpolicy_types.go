@@ -63,7 +63,7 @@ const (
 )
 
 // SourceKind names a kind of Kubernetes object DNSPublishPolicy can publish from.
-// +kubebuilder:validation:Enum=Route;Ingress;Service
+// +kubebuilder:validation:Enum=Route;Ingress;Service;Node;DNSRecord;HTTPRoute
 type SourceKind string
 
 const (
@@ -73,7 +73,41 @@ const (
 	SourceKindIngress SourceKind = "Ingress"
 	// SourceKindService publishes Services of type LoadBalancer.
 	SourceKindService SourceKind = "Service"
+	// SourceKindNode publishes cluster-scoped Nodes: the Node name when it contains a dot,
+	// plus the hostname annotation, pointing at the Node addresses of nodeAddressType.
+	SourceKindNode SourceKind = "Node"
+	// SourceKindDNSRecord publishes OpenShift ingress operator DNSRecords
+	// (ingress.operator.openshift.io/v1) from dnsRecordNamespace, usually the default
+	// router wildcard.
+	SourceKindDNSRecord SourceKind = "DNSRecord"
+	// SourceKindHTTPRoute publishes Gateway API HTTPRoutes (gateway.networking.k8s.io/v1).
+	SourceKindHTTPRoute SourceKind = "HTTPRoute"
 )
+
+// NodeAddressType selects which Node addresses the Node source publishes.
+// +kubebuilder:validation:Enum=InternalIP;ExternalIP
+type NodeAddressType string
+
+const (
+	// NodeAddressTypeInternalIP publishes the Node's InternalIP addresses.
+	NodeAddressTypeInternalIP NodeAddressType = "InternalIP"
+	// NodeAddressTypeExternalIP publishes the Node's ExternalIP addresses.
+	NodeAddressTypeExternalIP NodeAddressType = "ExternalIP"
+)
+
+// DefaultDNSRecordNamespace is the namespace the DNSRecord source reads when
+// dnsRecordNamespace is unset: where the OpenShift ingress operator creates its records.
+const DefaultDNSRecordNamespace = "openshift-ingress-operator"
+
+// DNSPublishCompatibility switches on interoperability with other DNS publishers.
+type DNSPublishCompatibility struct {
+	// ExternalDNS also reads the external-dns.alpha.kubernetes.io/hostname, /ttl and
+	// /target annotations as fallbacks on every source kind. The uddi.infoblox.com
+	// annotation wins when both are set, so existing external-dns users can move without
+	// relabelling.
+	// +optional
+	ExternalDNS bool `json:"externalDNS,omitempty"`
+}
 
 // DNSPublishTarget selects the DNS record type generated for hostnames a
 // DNSPublishPolicy matches.
@@ -105,8 +139,9 @@ type DNSPublishPolicySpec struct {
 	// +optional
 	ConnectionRef ConnectionRef `json:"connectionRef,omitempty"`
 
-	// Sources selects which kinds of objects this policy publishes. Defaults to all
-	// three; Service means type LoadBalancer.
+	// Sources selects which kinds of objects this policy publishes. Defaults to Route,
+	// Ingress and Service; Service means type LoadBalancer. Node, DNSRecord and HTTPRoute
+	// are opt-in.
 	// +kubebuilder:default={Route,Ingress,Service}
 	// +kubebuilder:validation:MinItems=1
 	// +listType=set
@@ -143,6 +178,28 @@ type DNSPublishPolicySpec struct {
 	// RecordLifecycle is copied onto every generated Record's spec.lifecycle.
 	// +optional
 	RecordLifecycle Lifecycle `json:"recordLifecycle,omitempty"`
+
+	// CreatePtr sets createPtr on every A and AAAA Record this policy generates, so the
+	// matching PTR record is created too. CNAME Records never carry it.
+	// +optional
+	CreatePtr bool `json:"createPtr,omitempty"`
+
+	// Compatibility switches on interoperability with other DNS publishers.
+	// +optional
+	Compatibility DNSPublishCompatibility `json:"compatibility,omitempty"`
+
+	// NodeAddressType selects which Node addresses the Node source publishes.
+	// +kubebuilder:default=InternalIP
+	// +optional
+	NodeAddressType NodeAddressType `json:"nodeAddressType,omitempty"`
+
+	// DNSRecordNamespace is the namespace the DNSRecord source reads, matched by selector.
+	// Defaults to the namespace the OpenShift ingress operator creates its records in.
+	// +kubebuilder:default=openshift-ingress-operator
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +optional
+	DNSRecordNamespace string `json:"dnsRecordNamespace,omitempty"`
 }
 
 // SkippedSource is one hostname (or a whole source, when Hostname is empty) that a

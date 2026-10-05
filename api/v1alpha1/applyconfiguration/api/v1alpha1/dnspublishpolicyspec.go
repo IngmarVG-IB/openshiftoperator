@@ -32,8 +32,9 @@ type DNSPublishPolicySpecApplyConfiguration struct {
 	// ConnectionRef names the Connection used by every Record this policy generates.
 	// Empty means the Connection called "default" in this namespace.
 	ConnectionRef *ConnectionRefApplyConfiguration `json:"connectionRef,omitempty"`
-	// Sources selects which kinds of objects this policy publishes. Defaults to all
-	// three; Service means type LoadBalancer.
+	// Sources selects which kinds of objects this policy publishes. Defaults to Route,
+	// Ingress and Service; Service means type LoadBalancer. Node, DNSRecord and HTTPRoute
+	// are opt-in.
 	Sources []apiv1alpha1.SourceKind `json:"sources,omitempty"`
 	// Selector selects the source objects in this namespace. Empty selects every
 	// object of the configured source kinds.
@@ -50,6 +51,16 @@ type DNSPublishPolicySpecApplyConfiguration struct {
 	Tags map[string]string `json:"tags,omitempty"`
 	// RecordLifecycle is copied onto every generated Record's spec.lifecycle.
 	RecordLifecycle *LifecycleApplyConfiguration `json:"recordLifecycle,omitempty"`
+	// CreatePtr sets createPtr on every A and AAAA Record this policy generates, so the
+	// matching PTR record is created too. CNAME Records never carry it.
+	CreatePtr *bool `json:"createPtr,omitempty"`
+	// Compatibility switches on interoperability with other DNS publishers.
+	Compatibility *DNSPublishCompatibilityApplyConfiguration `json:"compatibility,omitempty"`
+	// NodeAddressType selects which Node addresses the Node source publishes.
+	NodeAddressType *apiv1alpha1.NodeAddressType `json:"nodeAddressType,omitempty"`
+	// DNSRecordNamespace is the namespace the DNSRecord source reads, matched by selector.
+	// Defaults to the namespace the OpenShift ingress operator creates its records in.
+	DNSRecordNamespace *string `json:"dnsRecordNamespace,omitempty"`
 }
 
 // DNSPublishPolicySpecApplyConfiguration constructs a declarative configuration of the DNSPublishPolicySpec type for use with
@@ -132,5 +143,37 @@ func (b *DNSPublishPolicySpecApplyConfiguration) WithTags(entries map[string]str
 // If called multiple times, the RecordLifecycle field is set to the value of the last call.
 func (b *DNSPublishPolicySpecApplyConfiguration) WithRecordLifecycle(value *LifecycleApplyConfiguration) *DNSPublishPolicySpecApplyConfiguration {
 	b.RecordLifecycle = value
+	return b
+}
+
+// WithCreatePtr sets the CreatePtr field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CreatePtr field is set to the value of the last call.
+func (b *DNSPublishPolicySpecApplyConfiguration) WithCreatePtr(value bool) *DNSPublishPolicySpecApplyConfiguration {
+	b.CreatePtr = &value
+	return b
+}
+
+// WithCompatibility sets the Compatibility field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Compatibility field is set to the value of the last call.
+func (b *DNSPublishPolicySpecApplyConfiguration) WithCompatibility(value *DNSPublishCompatibilityApplyConfiguration) *DNSPublishPolicySpecApplyConfiguration {
+	b.Compatibility = value
+	return b
+}
+
+// WithNodeAddressType sets the NodeAddressType field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NodeAddressType field is set to the value of the last call.
+func (b *DNSPublishPolicySpecApplyConfiguration) WithNodeAddressType(value apiv1alpha1.NodeAddressType) *DNSPublishPolicySpecApplyConfiguration {
+	b.NodeAddressType = &value
+	return b
+}
+
+// WithDNSRecordNamespace sets the DNSRecordNamespace field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DNSRecordNamespace field is set to the value of the last call.
+func (b *DNSPublishPolicySpecApplyConfiguration) WithDNSRecordNamespace(value string) *DNSPublishPolicySpecApplyConfiguration {
+	b.DNSRecordNamespace = &value
 	return b
 }

@@ -1,7 +1,7 @@
 # Publishes admitted Routes and Ingresses labelled dns: public as Records in
 # apps-zone and corp-zone: Auto mode CNAMEs to the router's canonical hostname for
 # Routes, and A/AAAA or CNAME records from the Ingress's load balancer status for
-# Ingresses.
+# Ingresses. The commented fields show the milestone 7 options.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: DNSPublishPolicy
 metadata:
@@ -15,6 +15,11 @@ spec:
   sources:
     - Route
     - Ingress
+    # Opt-in sources: Nodes (cluster-scoped), the ingress operator's DNSRecords (the
+    # default router wildcard) and Gateway API HTTPRoutes.
+    # - Node
+    # - DNSRecord
+    # - HTTPRoute
   selector:
     matchLabels:
       dns: public
@@ -27,3 +32,13 @@ spec:
     team: platform
   recordLifecycle:
     deletionPolicy: Delete
+  # Also create the PTR record for every generated A and AAAA Record.
+  createPtr: true
+  # Read the external-dns hostname, ttl and target annotations as fallbacks; the
+  # uddi.infoblox.com annotation wins when both are set.
+  compatibility:
+    externalDNS: true
+  # Node source: publish the InternalIP (default) or the ExternalIP addresses.
+  # nodeAddressType: InternalIP
+  # DNSRecord source: the namespace the ingress operator keeps its DNSRecords in (default).
+  # dnsRecordNamespace: openshift-ingress-operator

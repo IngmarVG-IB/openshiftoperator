@@ -36,6 +36,13 @@ const nameHashLength = 10
 // apexLabel is the name-in-zone MatchZone reports for the zone apex.
 const apexLabel = "@"
 
+// wildcardLabel is the DNS wildcard label, and wildcardPrefix the form it takes at the
+// start of a hostname or of a name in a zone.
+const (
+	wildcardLabel  = "*"
+	wildcardPrefix = "*."
+)
+
 // CanonicalHostname lower-cases h and ensures it ends with a trailing dot, the form
 // every hostname is compared and matched in.
 func CanonicalHostname(h string) string {
@@ -55,7 +62,28 @@ func CanonicalHostname(h string) string {
 // It returns the winning zone, the name of hostname inside that zone ("@" for the
 // apex), and whether a zone matched at all. MatchZone does not look at Zone.Ready;
 // the caller decides what a match against a not-yet-ready zone means.
+//
+// A hostname starting with the wildcard label "*." matches by the labels after the
+// wildcard, exactly like a normal hostname, and its name in the zone is "*" or
+// "*.<labels>". The wildcard label is never part of the match, so the zone apex can
+// never come out as a wildcard and a wildcard hostname never comes out as "@".
 func MatchZone(hostname string, zones []Zone) (Zone, string, bool) {
+	if rest, ok := strings.CutPrefix(hostname, wildcardPrefix); ok {
+		z, name, found := matchZoneLabels(rest, zones)
+		switch {
+		case !found:
+			return Zone{}, "", false
+		case name == apexLabel:
+			return z, wildcardLabel, true
+		default:
+			return z, wildcardPrefix + name, true
+		}
+	}
+	return matchZoneLabels(hostname, zones)
+}
+
+// matchZoneLabels is MatchZone for a hostname without a leading wildcard label.
+func matchZoneLabels(hostname string, zones []Zone) (Zone, string, bool) {
 	best := -1
 	bestLen := -1
 	for i, z := range zones {
@@ -140,7 +168,8 @@ type desiredKey struct {
 
 // Plan turns endpoints and zones into the Records a DNSPublishPolicy should own, plus
 // the hostnames it could not place and why. See DESIGN.md section 4.7, pipeline steps
-// 2 (zone matching) and 3 (desired Records).
+// 2 (zone matching) and 3 (desired Records). Wildcard hostnames are matched and named as
+// MatchZone describes, and the policy's createPtr is set on the A and AAAA Records only.
 //
 // The returned records are sorted by Name and deduplicated: when two endpoints
 // resolve to the same hostname and target, the first one (in in.Endpoints order)
@@ -246,6 +275,12 @@ func buildRecord(policy *uddiv1alpha1.DNSPublishPolicy, ep Endpoint, t Target, z
 		TTL:     effectiveTTL(ep, policy),
 		Comment: fmt.Sprintf("Published by DNSPublishPolicy %s/%s from %s %s",
 			policy.Namespace, policy.Name, ep.Source.Kind, ep.Source.Name),
+	}
+	// createPtr only makes sense for the address records, and is left unset (not false)
+	// when the policy does not ask for it so it is not owned by this policy's field manager.
+	if policy.Spec.CreatePtr && (t.Type == TargetA || t.Type == TargetAAAA) {
+		createPtr := true
+		spec.CreatePtr = &createPtr
 	}
 
 	return DesiredRecord{
