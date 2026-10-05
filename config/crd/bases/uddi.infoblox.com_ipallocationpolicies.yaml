@@ -438,12 +438,13 @@ spec:
                 type: integer
               skipped:
                 description: |-
-                  Skipped lists Services not allocated or not assigned, and why. Bounded and
-                  sorted by service then reason.
+                  Skipped lists Services and EgressIPs not allocated or not assigned, and pools not
+                  mirrored into MetalLB, and why. Bounded and sorted by service then reason.
                 items:
                   description: |-
-                    SkippedService is one Service that did not get an address, or did not get its
-                    address assigned, and why. See internal/ipalloc.Skip.
+                    SkippedService is one Service or EgressIP that did not get its addresses, or did not
+                    get them assigned, or one pool that could not be mirrored into MetalLB, and why. See
+                    internal/ipalloc.Skip.
                   properties:
                     message:
                       description: Message is a human-readable explanation.
@@ -455,8 +456,12 @@ spec:
                       maxLength: 64
                       type: string
                     service:
-                      description: Service is the name of the Service that was skipped.
-                      maxLength: 253
+                      description: |-
+                        Service names what was skipped: the name of a Service; "EgressIP/<name>" for an
+                        EgressIP; "<pool kind>/<pool name>" (for example "Range/lb-pool") for a pool that
+                        cannot be mirrored into MetalLB; or "EgressIP" or "IPAddressPool" alone when the
+                        cluster does not serve that API. At most "AddressBlock/" plus a 253 character name.
+                      maxLength: 266
                       type: string
                   type: object
                 maxItems: 50

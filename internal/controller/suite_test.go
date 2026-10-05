@@ -80,6 +80,8 @@ const (
 	// testRootAddress is the network address of the top-level block or subnet parent
 	// the IPAM suites allocate from.
 	testRootAddress = "10.0.0.0"
+	// testServiceCIDRs is the envtest API server's dual-stack service-cluster-ip-range.
+	testServiceCIDRs = "10.0.0.0/24,fd00::/108"
 )
 
 // newNamespace creates a fresh namespace so specs cannot collide on object names.
@@ -188,6 +190,10 @@ var _ = BeforeSuite(func() {
 		},
 		ErrorIfCRDPathMissing: true,
 	}
+	// A dual-stack service CIDR, so PreferDualStack and RequireDualStack Services get both
+	// IP families as on a dual-stack cluster. The IPv4 range is envtest's own default, so
+	// single-stack Services behave exactly as before.
+	testEnv.ControlPlane.GetAPIServer().Configure().Set("service-cluster-ip-range", testServiceCIDRs)
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
 	if getFirstFoundEnvTestBinaryDir() != "" {

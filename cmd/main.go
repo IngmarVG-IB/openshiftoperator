@@ -45,6 +45,8 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/clusterid"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/controller"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/egressip"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/metallb"
 	uddimetrics "github.com/IngmarVG-IB/openshiftoperator/internal/metrics"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/nmstateapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/routeapi"
@@ -350,11 +352,34 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "DNSPublishPolicy")
 		os.Exit(1)
 	}
-	// Milestone 3 wave 1 placeholder: registered so the manager wires up cleanly;
-	// Reconcile is a no-op until milestone 3 wave 2 implements the pipeline.
+	// The OVN-Kubernetes EgressIP API (k8s.ovn.org/v1) and the MetalLB IPAddressPool API
+	// (metallb.io/v1beta1) are only served where those components run, so their presence
+	// is checked once here; IPAllocationPolicyReconciler leaves the EgressIP target or the
+	// pool mirroring inert when an API is absent.
+	egressIPAvailable, err := egressip.Available(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to determine whether the EgressIP API is available")
+		os.Exit(1)
+	}
+	metalLBAvailable, err := metallb.Available(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to determine whether the MetalLB API is available")
+		os.Exit(1)
+	}
+	setupLog.Info("discovered EgressIP and MetalLB API availability",
+		"egressIPAvailable", egressIPAvailable, "metalLBAvailable", metalLBAvailable)
+	if !egressIPAvailable {
+		setupLog.Info("k8s.ovn.org/v1 EgressIP is not served; the IPAllocationPolicy EgressIP target is inert")
+	}
+	if !metalLBAvailable {
+		setupLog.Info("metallb.io/v1beta1 IPAddressPool is not served; IPAllocationPolicy pool mirroring is inert")
+	}
+
 	if err := (&controller.IPAllocationPolicyReconciler{
-		Client:  mgr.GetClient(),
-		Runtime: runtimeCtx,
+		Client:            mgr.GetClient(),
+		Runtime:           runtimeCtx,
+		EgressIPAvailable: egressIPAvailable,
+		MetalLBAvailable:  metalLBAvailable,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IPAllocationPolicy")
 		os.Exit(1)

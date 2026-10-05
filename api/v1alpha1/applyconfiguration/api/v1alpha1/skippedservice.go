@@ -20,10 +20,14 @@ package v1alpha1
 // SkippedServiceApplyConfiguration represents a declarative configuration of the SkippedService type for use
 // with apply.
 //
-// SkippedService is one Service that did not get an address, or did not get its
-// address assigned, and why. See internal/ipalloc.Skip.
+// SkippedService is one Service or EgressIP that did not get its addresses, or did not
+// get them assigned, or one pool that could not be mirrored into MetalLB, and why. See
+// internal/ipalloc.Skip.
 type SkippedServiceApplyConfiguration struct {
-	// Service is the name of the Service that was skipped.
+	// Service names what was skipped: the name of a Service; "EgressIP/<name>" for an
+	// EgressIP; "<pool kind>/<pool name>" (for example "Range/lb-pool") for a pool that
+	// cannot be mirrored into MetalLB; or "EgressIP" or "IPAddressPool" alone when the
+	// cluster does not serve that API. At most "AddressBlock/" plus a 253 character name.
 	Service *string `json:"service,omitempty"`
 	// Reason is a short machine-readable skip reason, for example PoolNotReady.
 	Reason *string `json:"reason,omitempty"`
