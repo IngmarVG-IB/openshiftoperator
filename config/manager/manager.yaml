@@ -71,6 +71,10 @@ spec:
           capabilities:
             drop:
             - "ALL"
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
         livenessProbe:
           httpGet:
             path: /healthz
@@ -88,11 +92,14 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 128Mi
+            # The manager caches Nodes, Services, Routes and Ingresses cluster-wide next to
+            # its own thirteen kinds, so the scaffold's 128Mi is too tight for large clusters.
+            memory: 256Mi
           requests:
             cpu: 10m
             memory: 64Mi
-        volumeMounts: []
-      volumes: []
+      volumes:
+      - name: tmp
+        emptyDir: {}
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

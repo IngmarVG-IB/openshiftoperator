@@ -1,0 +1,50 @@
+# This NetworkPolicy allows egress traffic from the manager pods to:
+# - DNS servers (openshift-dns namespace on UDP and TCP 53 and 5353)
+# - Kubernetes API server (TCP 443 and 6443 to any address)
+# - HTTPS to any address for csp.infoblox.com
+# (NetworkPolicy cannot match host names, so HTTPS egress allows all TCP 443)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: allow-manager-egress
+  namespace: system
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: uddi-operator
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS queries to the openshift-dns namespace
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+    # Kubernetes API (TCP 6443, and 443 for the kubernetes Service) and HTTPS to
+    # csp.infoblox.com (TCP 443). The API server runs on the host network of the
+    # control-plane nodes and the Cloud Services Portal is outside the cluster, so
+    # neither matches a namespaceSelector; both need ipBlock rules. NetworkPolicy cannot
+    # match host names, so this allows HTTPS egress to any address.
+    - to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+      - ipBlock:
+          cidr: ::/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP

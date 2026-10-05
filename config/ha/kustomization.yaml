@@ -1,0 +1,9 @@
+resources:
+- ../default
+- pod-disruption-budget.yaml
+
+patches:
+- path: deployment-patch.yaml
+  target:
+    kind: Deployment
+    name: controller-manager

@@ -1,6 +1,5 @@
-# This NetworkPolicy allows ingress traffic
-# with Pods running on namespaces labeled with 'metrics: enabled'. Only Pods on those
-# namespaces are able to gather data from the metrics endpoint.
+# This NetworkPolicy allows ingress traffic to the metrics endpoint
+# from the OpenShift monitoring namespaces (user-workload monitoring and system monitoring).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -17,11 +16,19 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # This allows ingress traffic from any namespace with the label metrics: enabled
+    # Allow metrics scraping from OpenShift user-workload monitoring
     - from:
       - namespaceSelector:
           matchLabels:
-            metrics: enabled  # Only from namespaces with this label
+            kubernetes.io/metadata.name: openshift-user-workload-monitoring
+      ports:
+        - port: 8443
+          protocol: TCP
+    # Allow metrics scraping from OpenShift system monitoring
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: openshift-monitoring
       ports:
         - port: 8443
           protocol: TCP

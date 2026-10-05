@@ -150,6 +150,68 @@ $ make undeploy
 $ make uninstall
 ```
 
+## Hardening
+
+The default `config/default` deployment applies the following pod security settings:
+
+**Pod and container hardening:**
+- Pod-level: `runAsNonRoot: true`, seccomp profile set to `RuntimeDefault`
+- Container-level: no privilege escalation, read-only root filesystem, all Linux
+  capabilities dropped
+- Explicit resource requests (CPU 10m, memory 64Mi) and limits (CPU 500m, memory 256Mi)
+- A temporary `/tmp` volume (emptyDir) for the metrics server's self-signed certificate generation
+
+These settings are compatible with the OpenShift `restricted-v2` Pod Security Standard and
+enforced at admission time on the 4.16 platform.
+
+### High-availability overlay
+
+For production deployments, use the `config/ha` overlay to run two replicas with a
+PodDisruptionBudget and soft pod anti-affinity (the default stays one replica without a
+PDB, since a PDB on a single leader-elected replica only blocks node drains):
+
+```console
+$ bin/kustomize build config/ha | oc apply -f -
+```
+
+This overlay sets:
+- Two replicas of the manager Deployment
+- A PodDisruptionBudget with `maxUnavailable: 1` (one replica can be disrupted at a time)
+- Soft pod anti-affinity preferring to spread replicas across different nodes
+  (`kubernetes.io/hostname`)
+
+Leader election is already enabled, so only one replica reconciles at a time; the second
+provides redundancy.
+
+### Network policies
+
+To restrict ingress and egress traffic to and from the manager pods, apply the
+`config/network-policy` overlay. It is opt-in and not included in the default:
+
+```console
+$ bin/kustomize build config/network-policy | oc apply -f -
+```
+
+**Ingress:** Allows metrics scraping (TCP 8443) from OpenShift's monitoring namespaces:
+- `openshift-monitoring` (system monitoring)
+- `openshift-user-workload-monitoring` (user-workload monitoring for ServiceMonitors)
+
+**Egress:** Allows the following traffic from the manager pods:
+- DNS: UDP and TCP ports 53 and 5353 to the `openshift-dns` namespace
+- Kubernetes API: TCP ports 443 and 6443 to any address (cluster API server and admission webhooks)
+- HTTPS: TCP 443 to any address for `csp.infoblox.com` (Universal DDI API)
+
+Note: NetworkPolicy cannot match host names; the HTTPS rule allows all TCP 443 egress.
+If your cluster needs stricter egress controls, you may need to layer an Egress policy or
+egress firewalls on top.
+
+### Bundle and OLM
+
+The pod security settings in `config/manager/manager.yaml` are picked up by `make bundle`
+when the operator's ClusterServiceVersion (CSV) is regenerated. If you enable the HA
+overlay or network policies in production, the CSV's install instructions should document
+that the security settings are already applied and refer to this section.
+
 ## Configuring the release workflow's quay.io credentials
 
 [`release.yml`](../.github/workflows/release.yml) pushes the manager image, the OLM bundle
