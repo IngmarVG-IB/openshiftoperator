@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	uddiapply "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/hostreg"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/nmstateapi"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
@@ -69,6 +71,7 @@ type HostRegistrationPolicyReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=nmstate.io,resources=nodenetworkstates,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile brings the Addresses and FixedAddresses owned by one HostRegistrationPolicy
 // into agreement with its selected Nodes, per DESIGN.md section 4.7.
@@ -123,8 +126,12 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 	views := make([]hostreg.NodeView, 0, len(nodeList.Items))
+	// nodeByName is the related object of a Registered event; a Node that is gone by the
+	// time of a release has none.
+	nodeByName := make(map[string]client.Object, len(nodeList.Items))
 	for i := range nodeList.Items {
 		node := &nodeList.Items[i]
+		nodeByName[node.Name] = node
 		view := hostreg.ViewNode(node, addrType, src, "")
 		if view.MAC == "" && src.NMState && src.NMStateAvailable {
 			mac, ok, err := r.macFromNMState(ctx, node.Name, src.NMStateInterface, view.Address)
@@ -158,17 +165,17 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 	// that the first reconcile would report Ready with nothing registered and flap.
 	created := int32(0)
 	for _, d := range plan.Ensure {
-		obj, err := desiredRegistrationObject(policy, d)
+		obj, err := desiredRegistrationApplyConfiguration(policy, d)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		//nolint:staticcheck // see PLAN.md
-		if err := r.Patch(ctx, obj, client.Apply, client.FieldOwner(hostreg.FieldManager), client.ForceOwnership); err != nil {
+		if err := r.Apply(ctx, obj, client.FieldOwner(hostreg.FieldManager), client.ForceOwnership); err != nil {
 			return ctrl.Result{}, fmt.Errorf("applying %s %s: %w", d.Kind, d.Name, err)
 		}
 		if !prior[registrationKey{d.Kind, d.Name}] {
 			created++
-			r.event(policy, corev1.EventTypeNormal, "Registered", "registered %s %s for Node %s", d.Kind, d.Name, d.Node.Name)
+			r.Runtime.Eventf(policy, nodeByName[d.Node.Name], corev1.EventTypeNormal, "Registered", uddisync.ActionRegister,
+				"registered %s %s for Node %s", d.Kind, d.Name, d.Node.Name)
 		}
 	}
 
@@ -177,7 +184,8 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 		if err := r.deleteRegistration(ctx, policy.Namespace, rel); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.event(policy, corev1.EventTypeNormal, "Released", "released %s %s for Node %s", rel.Kind, rel.Name, rel.Node.Name)
+		r.Runtime.Eventf(policy, nil, corev1.EventTypeNormal, "Released", uddisync.ActionRelease,
+			"released %s %s for Node %s", rel.Kind, rel.Name, rel.Node.Name)
 	}
 
 	r.emitSkipEvents(policy, plan.Skips)
@@ -221,15 +229,6 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 	// Ready: rely on watches (Nodes, NodeNetworkStates, owned Addresses/FixedAddresses
 	// and the IPSpace) rather than polling.
 	return ctrl.Result{}, nil
-}
-
-// event records a Kubernetes event when a Recorder is wired up, matching
-// uddisync.Runtime's own nil-safe helper.
-func (r *HostRegistrationPolicyReconciler) event(obj client.Object, eventType, reason, format string, args ...any) {
-	if r.Runtime == nil || r.Runtime.Recorder == nil {
-		return
-	}
-	r.Runtime.Recorder.Eventf(obj, eventType, reason, format, args...)
 }
 
 // resolveSpace reads the IPSpace CR spec.spaceRef.name names in the policy's namespace
@@ -320,59 +319,47 @@ type registrationKey struct {
 	Name string
 }
 
-// desiredRegistrationObject builds the typed Address or FixedAddress CR a
-// DesiredRegistration applies as. TypeMeta is set explicitly, and resourceVersion and
-// managedFields are left zero, as server-side apply requires. The ownerReference points
-// at the Node by hand (APIVersion "v1", Kind "Node") rather than through
-// controllerutil.SetControllerReference: a cluster-scoped Node owning a namespaced
-// Address or FixedAddress is a case Kubernetes garbage collection supports, per
-// DESIGN.md section 4.7.
-func desiredRegistrationObject(policy *uddiv1alpha1.HostRegistrationPolicy, d hostreg.DesiredRegistration) (client.Object, error) {
-	owner := nodeOwnerReference(d.Node)
-	objMeta := metav1.ObjectMeta{
-		Name:            d.Name,
-		Namespace:       policy.Namespace,
-		Labels:          d.Labels,
-		Annotations:     d.Annotations,
-		OwnerReferences: []metav1.OwnerReference{owner},
-	}
+// desiredRegistrationApplyConfiguration builds the server-side apply configuration of
+// the Address or FixedAddress a DesiredRegistration is applied as: name, namespace,
+// labels, annotations, the Node as controller owner, and the spec. The ownerReference
+// points at the Node by hand (apiVersion v1, kind Node) rather than through the scheme
+// helper: a cluster-scoped Node owning a namespaced Address or FixedAddress is a case
+// Kubernetes garbage collection supports, per DESIGN.md section 4.7.
+func desiredRegistrationApplyConfiguration(
+	policy *uddiv1alpha1.HostRegistrationPolicy,
+	d hostreg.DesiredRegistration,
+) (runtime.ApplyConfiguration, error) {
+	owner := controllerReference("v1", "Node", d.Node.Name, d.Node.UID)
 
 	switch d.Kind {
 	case hostreg.KindFixedAddress:
 		if d.FixedAddressSpec == nil {
 			return nil, fmt.Errorf("desired FixedAddress %s has no spec", d.Name)
 		}
-		return &uddiv1alpha1.FixedAddress{
-			TypeMeta:   metav1.TypeMeta{APIVersion: uddiv1alpha1.GroupVersion.String(), Kind: string(hostreg.KindFixedAddress)},
-			ObjectMeta: objMeta,
-			Spec:       *d.FixedAddressSpec,
-		}, nil
+		spec, err := specApplyConfiguration[uddiapply.FixedAddressSpecApplyConfiguration](*d.FixedAddressSpec)
+		if err != nil {
+			return nil, err
+		}
+		return uddiapply.FixedAddress(d.Name, policy.Namespace).
+			WithLabels(d.Labels).
+			WithAnnotations(d.Annotations).
+			WithOwnerReferences(owner).
+			WithSpec(spec), nil
 	case hostreg.KindAddress:
 		if d.AddressSpec == nil {
 			return nil, fmt.Errorf("desired Address %s has no spec", d.Name)
 		}
-		return &uddiv1alpha1.Address{
-			TypeMeta:   metav1.TypeMeta{APIVersion: uddiv1alpha1.GroupVersion.String(), Kind: string(hostreg.KindAddress)},
-			ObjectMeta: objMeta,
-			Spec:       *d.AddressSpec,
-		}, nil
+		spec, err := specApplyConfiguration[uddiapply.AddressSpecApplyConfiguration](*d.AddressSpec)
+		if err != nil {
+			return nil, err
+		}
+		return uddiapply.Address(d.Name, policy.Namespace).
+			WithLabels(d.Labels).
+			WithAnnotations(d.Annotations).
+			WithOwnerReferences(owner).
+			WithSpec(spec), nil
 	default:
 		return nil, fmt.Errorf("unknown registration kind %q", d.Kind)
-	}
-}
-
-// nodeOwnerReference builds a controller ownerReference to the cluster-scoped Node a
-// generated Address or FixedAddress belongs to.
-func nodeOwnerReference(node hostreg.NodeRef) metav1.OwnerReference {
-	isController := true
-	blockOwnerDeletion := true
-	return metav1.OwnerReference{
-		APIVersion:         "v1",
-		Kind:               "Node",
-		Name:               node.Name,
-		UID:                node.UID,
-		Controller:         &isController,
-		BlockOwnerDeletion: &blockOwnerDeletion,
 	}
 }
 
@@ -445,7 +432,7 @@ func (r *HostRegistrationPolicyReconciler) emitSkipEvents(policy *uddiv1alpha1.H
 		reason := hostreg.SkipReason(reasonStr)
 		list := byReason[reason]
 		examples := exampleNodes(list, maxSkipExamples)
-		r.Runtime.Recorder.Eventf(policy, corev1.EventTypeWarning, "Skipped",
+		r.Runtime.Eventf(policy, nil, corev1.EventTypeWarning, "Skipped", uddisync.ActionRegister,
 			"%d node(s) skipped: %s (e.g. %s)", len(list), reason, strings.Join(examples, ", "))
 	}
 }

@@ -223,6 +223,37 @@ var _ = Describe("IPAllocationPolicy controller", func() {
 		Expect(collectEvents()).To(ContainElement(ContainSubstring("Assigned")))
 	})
 
+	It("removes a field from a generated Address when the policy stops setting it", func() {
+		space := readySpace("space-ssa")
+		rg := readyRange("lb-pool-ssa", "10.0.20.100", "10.0.20.199", space)
+		svc := newLBService("web", map[string]string{"uddi.infoblox.com/allocate": "true"})
+
+		policy := &uddiv1alpha1.IPAllocationPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "ssa", Namespace: ns},
+			Spec: uddiv1alpha1.IPAllocationPolicySpec{
+				Tags:         map[string]string{"team": "net", "env": "prod"},
+				AllocateFrom: uddiv1alpha1.AllocateFrom{RangeRef: &uddiv1alpha1.ObjectRef{Name: rg.Name}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+		Expect(reconcilePolicy(policy)).To(Succeed())
+
+		addr := getAddress(policy, svc.Name)
+		Expect(addr.Spec.Tags).To(HaveKeyWithValue("env", "prod"))
+		Expect(appliedBy(addr, ipalloc.FieldManager)).To(BeTrue())
+
+		// The policy drops a tag. Server-side apply removes exactly the fields this field
+		// manager owned and no longer sends, and leaves the rest alone.
+		policy.Spec.Tags = map[string]string{"team": "net"}
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+		Expect(reconcilePolicy(policy)).To(Succeed())
+
+		addr = getAddress(policy, svc.Name)
+		Expect(addr.Spec.Tags).To(HaveKeyWithValue("team", "net"))
+		Expect(addr.Spec.Tags).NotTo(HaveKey("env"))
+		Expect(addr.Spec.Tags).To(HaveKey(ipalloc.TagSource))
+	})
+
 	It("allocates without the allocate annotation when requireAnnotation is false, and never allocates when allocate is false", func() {
 		space := readySpace("space-2")
 		rg := readyRange("lb-pool-2", "10.0.11.100", "10.0.11.199", space)

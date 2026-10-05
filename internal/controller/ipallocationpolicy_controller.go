@@ -27,15 +27,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	uddiapply "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/ipalloc"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 )
@@ -62,6 +63,7 @@ type IPAllocationPolicyReconciler struct {
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=addressblocks,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile brings the Addresses and Service assignments owned by one
 // IPAllocationPolicy into agreement with its selected Services, per DESIGN.md
@@ -159,28 +161,16 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 			// reconcile (woken by the delete) releases it instead.
 			continue
 		}
-		addr := &uddiv1alpha1.Address{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: uddiv1alpha1.GroupVersion.String(),
-				Kind:       "Address",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        da.Name,
-				Namespace:   policy.Namespace,
-				Labels:      da.Labels,
-				Annotations: da.Annotations,
-			},
-			Spec: da.Spec,
-		}
-		if err := controllerutil.SetControllerReference(svc, addr, r.Scheme()); err != nil {
+		addr, err := desiredAddressApplyConfiguration(policy, da, svc, r.Scheme())
+		if err != nil {
 			return ctrl.Result{}, err
 		}
-		//nolint:staticcheck // see PLAN.md
-		if err := r.Patch(ctx, addr, client.Apply, client.FieldOwner(ipalloc.FieldManager), client.ForceOwnership); err != nil {
+		if err := r.Apply(ctx, addr, client.FieldOwner(ipalloc.FieldManager), client.ForceOwnership); err != nil {
 			return ctrl.Result{}, fmt.Errorf("applying Address %s: %w", da.Name, err)
 		}
 		if !priorAddressNames[da.Name] {
-			r.event(policy, corev1.EventTypeNormal, "Allocated", "allocated Address %s for Service %s", da.Name, da.Service.Name)
+			r.Runtime.Eventf(policy, svc, corev1.EventTypeNormal, "Allocated", uddisync.ActionAllocate,
+				"allocated Address %s for Service %s", da.Name, da.Service.Name)
 		}
 	}
 
@@ -193,7 +183,8 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if err := r.Patch(ctx, svc, client.RawPatch(types.MergePatchType, ipalloc.AssignmentPatch(via, as.Value))); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.event(policy, corev1.EventTypeNormal, "Assigned", "assigned %s to Service %s", as.Value, as.Service.Name)
+		r.Runtime.Eventf(policy, svc, corev1.EventTypeNormal, "Assigned", uddisync.ActionAssign,
+			"assigned %s to Service %s", as.Value, as.Service.Name)
 	}
 
 	// Step 9: Release.
@@ -216,7 +207,8 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if err := r.Delete(ctx, addr); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		r.event(policy, corev1.EventTypeNormal, "Released", "released Address %s for Service %s", rel.AddressName, rel.Service.Name)
+		r.Runtime.Eventf(policy, nil, corev1.EventTypeNormal, "Released", uddisync.ActionRelease,
+			"released Address %s for Service %s", rel.AddressName, rel.Service.Name)
 	}
 
 	r.emitSkipEvents(policy, plan.Skips)
@@ -279,13 +271,29 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, nil
 }
 
-// event records a Kubernetes event when a Recorder is wired up, matching
-// uddisync.Runtime's own nil-safe helper.
-func (r *IPAllocationPolicyReconciler) event(obj client.Object, eventType, reason, format string, args ...any) {
-	if r.Runtime == nil || r.Runtime.Recorder == nil {
-		return
+// desiredAddressApplyConfiguration builds the server-side apply configuration a
+// DesiredAddress is applied as: name, namespace, labels, annotations, the Service as
+// controller owner, and the spec. It is a pure declaration of intent, so only these
+// fields end up owned by the policy's field manager.
+func desiredAddressApplyConfiguration(
+	policy *uddiv1alpha1.IPAllocationPolicy,
+	da ipalloc.DesiredAddress,
+	svc *corev1.Service,
+	scheme *runtime.Scheme,
+) (*uddiapply.AddressApplyConfiguration, error) {
+	spec, err := specApplyConfiguration[uddiapply.AddressSpecApplyConfiguration](da.Spec)
+	if err != nil {
+		return nil, err
 	}
-	r.Runtime.Recorder.Eventf(obj, eventType, reason, format, args...)
+	owner, err := controllerOwnerReference(svc, scheme)
+	if err != nil {
+		return nil, err
+	}
+	return uddiapply.Address(da.Name, policy.Namespace).
+		WithLabels(da.Labels).
+		WithAnnotations(da.Annotations).
+		WithOwnerReferences(owner).
+		WithSpec(spec), nil
 }
 
 // resolvePool reads the Subnet, Range or AddressBlock CR a PoolRef names in namespace
@@ -381,7 +389,7 @@ func (r *IPAllocationPolicyReconciler) emitSkipEvents(policy *uddiv1alpha1.IPAll
 		reason := ipalloc.SkipReason(reasonStr)
 		list := byReason[reason]
 		examples := exampleServices(list, maxSkipExamples)
-		r.Runtime.Recorder.Eventf(policy, corev1.EventTypeWarning, "Skipped",
+		r.Runtime.Eventf(policy, nil, corev1.EventTypeWarning, "Skipped", uddisync.ActionAllocate,
 			"%d service(s) skipped: %s (e.g. %s)", len(list), reason, strings.Join(examples, ", "))
 	}
 }

@@ -24,7 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -33,6 +33,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
+	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
 
@@ -45,8 +46,8 @@ type ConnectionReconciler struct {
 	client.Client
 	// Connections builds and caches Universal DDI clients.
 	Connections *connection.Resolver
-	// Recorder emits Kubernetes events.
-	Recorder record.EventRecorder
+	// Recorder emits Kubernetes events through the events.k8s.io/v1 API.
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=connections,verbs=get;list;watch;create;update;patch;delete
@@ -97,9 +98,8 @@ func (r *ConnectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if uddi.IsUnauthorized(err) {
 			r.Connections.Invalidate(conn.Namespace, conn.Name)
 		}
-		if r.Recorder != nil {
-			r.Recorder.Eventf(conn, corev1.EventTypeWarning, "VerificationFailed", "%s", err.Error())
-		}
+		uddisync.Emit(r.Recorder, conn, nil, corev1.EventTypeWarning, "VerificationFailed", uddisync.ActionReconcile,
+			"%s", err.Error())
 		r.setReady(conn, metav1.ConditionFalse, uddiv1alpha1.ReasonAPIError, err.Error())
 		return ctrl.Result{RequeueAfter: requeue}, r.patchStatus(ctx, before, conn)
 	}

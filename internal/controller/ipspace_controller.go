@@ -44,6 +44,7 @@ type IPSpaceReconciler struct {
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=connections,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile brings one IPSpace CR and its Universal DDI counterpart into agreement.
 func (r *IPSpaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
