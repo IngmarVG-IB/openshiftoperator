@@ -59,6 +59,18 @@ spec:
               Universal DDI DNS. Selected source objects are turned into Records in the matching
               zoneRefs; see DESIGN.md section 4.7 for the full pipeline.
             properties:
+              compatibility:
+                description: Compatibility switches on interoperability with other
+                  DNS publishers.
+                properties:
+                  externalDNS:
+                    description: |-
+                      ExternalDNS also reads the external-dns.alpha.kubernetes.io/hostname, /ttl and
+                      /target annotations as fallbacks on every source kind. The uddi.infoblox.com
+                      annotation wins when both are set, so existing external-dns users can move without
+                      relabelling.
+                    type: boolean
+                type: object
               connectionRef:
                 description: |-
                   ConnectionRef names the Connection used by every Record this policy generates.
@@ -70,6 +82,27 @@ spec:
                     maxLength: 253
                     type: string
                 type: object
+              createPtr:
+                description: |-
+                  CreatePtr sets createPtr on every A and AAAA Record this policy generates, so the
+                  matching PTR record is created too. CNAME Records never carry it.
+                type: boolean
+              dnsRecordNamespace:
+                default: openshift-ingress-operator
+                description: |-
+                  DNSRecordNamespace is the namespace the DNSRecord source reads, matched by selector.
+                  Defaults to the namespace the OpenShift ingress operator creates its records in.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              nodeAddressType:
+                default: InternalIP
+                description: NodeAddressType selects which Node addresses the Node
+                  source publishes.
+                enum:
+                - InternalIP
+                - ExternalIP
+                type: string
               recordLifecycle:
                 description: RecordLifecycle is copied onto every generated Record's
                   spec.lifecycle.
@@ -144,8 +177,9 @@ spec:
                 - Ingress
                 - Service
                 description: |-
-                  Sources selects which kinds of objects this policy publishes. Defaults to all
-                  three; Service means type LoadBalancer.
+                  Sources selects which kinds of objects this policy publishes. Defaults to Route,
+                  Ingress and Service; Service means type LoadBalancer. Node, DNSRecord and HTTPRoute
+                  are opt-in.
                 items:
                   description: SourceKind names a kind of Kubernetes object DNSPublishPolicy
                     can publish from.
@@ -153,6 +187,9 @@ spec:
                   - Route
                   - Ingress
                   - Service
+                  - Node
+                  - DNSRecord
+                  - HTTPRoute
                   type: string
                 minItems: 1
                 type: array

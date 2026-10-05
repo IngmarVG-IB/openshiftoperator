@@ -77,6 +77,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DHCPOptionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DHCPUtilization"):
 		return &apiv1alpha1.DHCPUtilizationApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DNSPublishCompatibility"):
+		return &apiv1alpha1.DNSPublishCompatibilityApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DNSPublishPolicy"):
 		return &apiv1alpha1.DNSPublishPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DNSPublishPolicySpec"):

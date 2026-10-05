@@ -15,19 +15,21 @@ limitations under the License.
 */
 
 // This file implements DESIGN.md section 4.7 pipeline step 1: turning a Route, an
-// Ingress or a LoadBalancer Service into the Endpoints and Skips a DNSPublishPolicy
-// should act on. EndpointsFromRoute, EndpointsFromIngress and EndpointsFromService live
-// in sources_route.go, sources_ingress.go and sources_service.go; this file holds the
-// logic they share: annotation parsing, target/hostname syntax, mode filtering and
-// endpoint assembly.
+// Ingress, a LoadBalancer Service, a Node, an ingress operator DNSRecord or a Gateway API
+// HTTPRoute into the Endpoints and Skips a DNSPublishPolicy should act on. Each kind's
+// extractor lives in its own sources_<kind>.go file; this file holds the logic they
+// share: annotation parsing (including the external-dns fallbacks), target/hostname
+// syntax, mode filtering and endpoint assembly.
 package publish
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -198,8 +200,28 @@ type parsedAnnotations struct {
 	hasTargets bool
 }
 
+// annotationValue looks up one of the hostname, ttl or target annotations: the
+// <prefix>/<name> annotation first and, when SourceOptions.ExternalDNS is set, the
+// external-dns key as a fallback. The uddi annotation wins outright when both are set (the
+// two values are never merged). It returns the value and the full key it was read from,
+// which an InvalidAnnotation message names.
+func annotationValue(o SourceOptions, annotations map[string]string, name, externalDNSKey string) (value, key string, ok bool) {
+	key = o.Prefix() + "/" + name
+	if v, found := annotations[key]; found {
+		return v, key, true
+	}
+	if o.ExternalDNS {
+		if v, found := annotations[externalDNSKey]; found {
+			return v, externalDNSKey, true
+		}
+	}
+	return "", "", false
+}
+
 // parseAnnotations reads and validates the publish, hostname, ttl and target
-// annotations. A non-nil Skip means the whole source is Excluded or the annotations are
+// annotations. With SourceOptions.ExternalDNS set, the external-dns hostname, ttl and
+// target annotations are fallbacks for the uddi ones; the uddi annotation wins when both
+// are set. A non-nil Skip means the whole source is Excluded or the annotations are
 // malformed (InvalidAnnotation); the caller returns it as the source's only Skip without
 // doing any further work.
 func parseAnnotations(o SourceOptions, annotations map[string]string, src SourceRef) (parsedAnnotations, *Skip) {
@@ -216,26 +238,32 @@ func parseAnnotations(o SourceOptions, annotations map[string]string, src Source
 		}
 	}
 
-	if v, ok := annotations[prefix+"/"+AnnotationHostname]; ok {
+	if v, key, ok := annotationValue(o, annotations, AnnotationHostname, ExternalDNSHostname); ok {
 		hostnames, err := parseHostnamesAnnotation(v)
 		if err != nil {
-			return out, invalidAnnotation(src, prefix, AnnotationHostname, err)
+			return out, invalidAnnotationKey(src, key, err)
 		}
 		out.hostnames = hostnames
 	}
 
-	if v, ok := annotations[prefix+"/"+AnnotationTTL]; ok {
-		ttl, err := parseTTLAnnotation(v)
+	if v, key, ok := annotationValue(o, annotations, AnnotationTTL, ExternalDNSTTL); ok {
+		var ttl *int32
+		var err error
+		if key == ExternalDNSTTL {
+			ttl, err = parseExternalDNSTTL(v)
+		} else {
+			ttl, err = parseTTLAnnotation(v)
+		}
 		if err != nil {
-			return out, invalidAnnotation(src, prefix, AnnotationTTL, err)
+			return out, invalidAnnotationKey(src, key, err)
 		}
 		out.ttl = ttl
 	}
 
-	if v, ok := annotations[prefix+"/"+AnnotationTarget]; ok {
+	if v, key, ok := annotationValue(o, annotations, AnnotationTarget, ExternalDNSTarget); ok {
 		targets, err := ParseTargets(v)
 		if err != nil {
-			return out, invalidAnnotation(src, prefix, AnnotationTarget, err)
+			return out, invalidAnnotationKey(src, key, err)
 		}
 		out.targets = targets
 		out.hasTargets = true
@@ -245,15 +273,22 @@ func parseAnnotations(o SourceOptions, annotations map[string]string, src Source
 }
 
 func invalidAnnotation(src SourceRef, prefix, key string, err error) *Skip {
+	return invalidAnnotationKey(src, prefix+"/"+key, err)
+}
+
+// invalidAnnotationKey builds the InvalidAnnotation skip for the annotation named by its
+// full key, including the domain, which is how an external-dns key is spelled.
+func invalidAnnotationKey(src SourceRef, key string, err error) *Skip {
 	return &Skip{
 		Source:  src,
 		Reason:  SkipInvalidAnnotation,
-		Message: fmt.Sprintf("%s/%s: %v", prefix, key, err),
+		Message: fmt.Sprintf("%s: %v", key, err),
 	}
 }
 
 // parseHostnamesAnnotation parses the comma-separated hostname annotation value into
-// normalized hostnames. Empty items are ignored; an invalid name is an error.
+// normalized hostnames. Empty items are ignored; an invalid name is an error. A name may
+// start with one wildcard label ("*.apps.example.com").
 func parseHostnamesAnnotation(csv string) ([]string, error) {
 	items := strings.Split(csv, ",")
 	out := make([]string, 0, len(items))
@@ -262,12 +297,20 @@ func parseHostnamesAnnotation(csv string) ([]string, error) {
 		if item == "" {
 			continue
 		}
-		if !isValidHostname(item) {
+		if !isValidPublishedHostname(item) {
 			return nil, fmt.Errorf("%q is not a valid DNS name", item)
 		}
 		out = append(out, normalizeHostname(item))
 	}
 	return out, nil
+}
+
+// isValidPublishedHostname is isValidHostname for a name that will be published: it also
+// accepts one leading wildcard label, as in "*.apps.example.com". Targets never use it,
+// because a CNAME or MX target cannot be a wildcard.
+func isValidPublishedHostname(h string) bool {
+	h = strings.ToLower(strings.TrimSpace(h))
+	return isValidHostname(strings.TrimPrefix(h, "*."))
 }
 
 // parseTTLAnnotation parses the ttl annotation, which must be a positive integer number
@@ -281,5 +324,26 @@ func parseTTLAnnotation(v string) (*int32, error) {
 		return nil, fmt.Errorf("%q is not a positive integer", v)
 	}
 	ttl := int32(n)
+	return &ttl, nil
+}
+
+// parseExternalDNSTTL parses the external-dns ttl annotation. external-dns accepts either
+// an integer number of seconds ("300") or a duration ("5m", "1h30m"); both forms are read
+// here so an existing external-dns annotation never turns a source into InvalidAnnotation.
+// A duration is truncated to whole seconds and must come to at least one.
+func parseExternalDNSTTL(v string) (*int32, error) {
+	s := strings.TrimSpace(v)
+	if _, err := strconv.ParseInt(s, 10, 32); err == nil {
+		return parseTTLAnnotation(s)
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return nil, fmt.Errorf("%q is neither an integer number of seconds nor a duration", v)
+	}
+	secs := int64(d / time.Second)
+	if secs <= 0 || secs > math.MaxInt32 {
+		return nil, fmt.Errorf("%q is not between 1 second and %d seconds", v, int64(math.MaxInt32))
+	}
+	ttl := int32(secs)
 	return &ttl, nil
 }
