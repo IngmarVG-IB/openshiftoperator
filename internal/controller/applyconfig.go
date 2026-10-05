@@ -48,6 +48,9 @@ func specApplyConfiguration[AC any](spec any) (*AC, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding %T: %w", spec, err)
 	}
+	if raw, err = omitEmptyObjects(raw); err != nil {
+		return nil, fmt.Errorf("encoding %T: %w", spec, err)
+	}
 	out := new(AC)
 	if err := json.Unmarshal(raw, out); err != nil {
 		return nil, fmt.Errorf("decoding %T into %T: %w", spec, out, err)
@@ -65,6 +68,26 @@ func specApplyConfiguration[AC any](spec any) (*AC, error) {
 			out, spec)
 	}
 	return out, nil
+}
+
+// omitEmptyObjects drops top-level spec fields whose value is an empty JSON object, such as
+// connectionRef: {} or lifecycle: {} when the policy sets nothing inside them. Kubernetes
+// 1.29, the OpenShift 4.16 floor, rejects an apply that empties an optional object this
+// field manager previously filled: the merge turns the object into null and validation
+// fails with a 422. Leaving the field out instead makes server-side apply remove what this
+// manager set before, which is the intended result on every version. Only the top level is
+// pruned; nested empty objects, such as a Record rdata block, keep their meaning.
+func omitEmptyObjects(raw []byte) ([]byte, error) {
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	for k, v := range fields {
+		if obj, ok := dropNulls(v).(map[string]any); ok && len(obj) == 0 {
+			delete(fields, k)
+		}
+	}
+	return json.Marshal(fields)
 }
 
 // sameJSON reports whether two JSON documents hold the same data, ignoring key order and

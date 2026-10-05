@@ -267,6 +267,47 @@ var _ = Describe("DNSPublishPolicy controller", func() {
 			Expect(records[0].Spec.Tags).To(HaveKey(publish.TagSource))
 		})
 
+		It("clears connectionRef and lifecycle on generated Records when the policy stops setting them", func() {
+			// On Kubernetes 1.29 an apply that sent connectionRef: {} after an earlier apply set
+			// connectionRef.name failed with a 422; the envtest floor lane proves it no longer does.
+			ingress := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: "clear", Namespace: ns},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{{Host: "clear.apps.example.com"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ingress)).To(Succeed())
+			ingress.Status.LoadBalancer.Ingress = []networkingv1.IngressLoadBalancerIngress{{IP: "192.0.2.41"}}
+			Expect(k8sClient.Status().Update(ctx, ingress)).To(Succeed())
+
+			policy := &uddiv1alpha1.DNSPublishPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "clear-policy", Namespace: ns},
+				Spec: uddiv1alpha1.DNSPublishPolicySpec{
+					ConnectionRef:   uddiv1alpha1.ConnectionRef{Name: uddiv1alpha1.DefaultConnectionName},
+					Sources:         []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindIngress},
+					ZoneRefs:        []uddiv1alpha1.ObjectRef{{Name: zone.Name}},
+					RecordLifecycle: uddiv1alpha1.Lifecycle{DeletionPolicy: uddiv1alpha1.DeletionPolicyOrphan},
+				},
+			}
+			Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+			Expect(reconcilePolicy(policy)).To(Succeed())
+
+			records := policyRecords(policy)
+			Expect(records).To(HaveLen(1))
+			Expect(records[0].Spec.ConnectionRef.Name).To(Equal(uddiv1alpha1.DefaultConnectionName))
+			Expect(records[0].Spec.Lifecycle.DeletionPolicy).To(Equal(uddiv1alpha1.DeletionPolicyOrphan))
+
+			policy.Spec.ConnectionRef = uddiv1alpha1.ConnectionRef{}
+			policy.Spec.RecordLifecycle = uddiv1alpha1.Lifecycle{}
+			Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+			Expect(reconcilePolicy(policy)).To(Succeed())
+
+			records = policyRecords(policy)
+			Expect(records).To(HaveLen(1))
+			Expect(records[0].Spec.ConnectionRef.Name).To(BeEmpty())
+			Expect(records[0].Spec.Lifecycle.DeletionPolicy).NotTo(Equal(uddiv1alpha1.DeletionPolicyOrphan))
+		})
+
 		It("publishes a LoadBalancer Service with the hostname annotation and skips the others", func() {
 			lbWithHostname := &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{

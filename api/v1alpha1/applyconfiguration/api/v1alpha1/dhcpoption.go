@@ -24,14 +24,29 @@ import (
 // DHCPOptionApplyConfiguration represents a declarative configuration of the DHCPOption type for use
 // with apply.
 //
-// DHCPOption maps to the Universal DDI ipam.OptionItem. Option codes and groups are
-// opaque Universal DDI resource ids in v1alpha1; lookup by name is a later convenience.
+// DHCPOption maps to the Universal DDI ipam.OptionItem. Option groups are opaque
+// Universal DDI resource ids. An option code is named either by its Universal DDI
+// resource id (optionCode) or by its name (optionName), which the operator looks up in
+// Universal DDI, optionally narrowed to one option space (optionSpace).
 type DHCPOptionApplyConfiguration struct {
 	// Type selects a single option or an option group.
 	Type *apiv1alpha1.DHCPOptionType `json:"type,omitempty"`
 	// OptionCode is a Universal DDI option code id, for example "dhcp/option_code/<uuid>".
-	// Required when type is "option".
+	// When type is "option", exactly one of optionCode and optionName is set.
 	OptionCode *string `json:"optionCode,omitempty"`
+	// OptionName is the name of a DHCP option code, for example "routers" or
+	// "domain-name-servers", looked up in Universal DDI instead of giving the option
+	// code id. A name that exists in more than one option space needs optionSpace; a
+	// name that does not resolve keeps the object at Ready=False with reason
+	// DependencyNotReady and is retried, so a code created later is picked up without
+	// editing the object. When type is "option", exactly one of optionCode and
+	// optionName is set.
+	OptionName *string `json:"optionName,omitempty"`
+	// OptionSpace is the Universal DDI option space id, for example
+	// "dhcp/option_space/<uuid>", that optionName is looked up in. It may only be set
+	// together with optionName. Leave it out when the name exists in exactly one option
+	// space.
+	OptionSpace *string `json:"optionSpace,omitempty"`
 	// OptionValue is the value for the option code.
 	OptionValue *string `json:"optionValue,omitempty"`
 	// Group is a Universal DDI option group id, for example "dhcp/option_group/<uuid>".
@@ -58,6 +73,22 @@ func (b *DHCPOptionApplyConfiguration) WithType(value apiv1alpha1.DHCPOptionType
 // If called multiple times, the OptionCode field is set to the value of the last call.
 func (b *DHCPOptionApplyConfiguration) WithOptionCode(value string) *DHCPOptionApplyConfiguration {
 	b.OptionCode = &value
+	return b
+}
+
+// WithOptionName sets the OptionName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the OptionName field is set to the value of the last call.
+func (b *DHCPOptionApplyConfiguration) WithOptionName(value string) *DHCPOptionApplyConfiguration {
+	b.OptionName = &value
+	return b
+}
+
+// WithOptionSpace sets the OptionSpace field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the OptionSpace field is set to the value of the last call.
+func (b *DHCPOptionApplyConfiguration) WithOptionSpace(value string) *DHCPOptionApplyConfiguration {
+	b.OptionSpace = &value
 	return b
 }
 

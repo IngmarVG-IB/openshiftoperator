@@ -248,6 +248,13 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 				uddiv1alpha1.ReasonDependencyNotReady, err.Error(), obj.GetGeneration())
 			return ctrl.Result{RequeueAfter: RequeueNotReady}, true, nil
 		}
+		// Resolve can call Universal DDI (DHCP option codes by name). An API failure there
+		// is reported like any other API failure, with a condition and an event, rather
+		// than as a bare reconcile error the CR never shows.
+		var apiErr *uddi.APIError
+		if errors.As(err, &apiErr) {
+			return apiFailure(rt, obj, status, err)
+		}
 		return ctrl.Result{}, false, err
 	}
 
