@@ -323,7 +323,23 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 			current = created
 			rt.Eventf(obj, nil, corev1.EventTypeNormal, EventCreated, ActionCreate,
 				"created Universal DDI %s %s", ad.Kind(), ad.IDOf(current))
-		case tags.OwnedBy(ad.TagsOf(found), uid), lifecycle.AdoptExisting:
+		case tags.OwnedBy(ad.TagsOf(found), uid):
+			current = found
+			rt.Eventf(obj, nil, corev1.EventTypeNormal, EventAdopted, ActionAdopt,
+				"adopted existing Universal DDI %s %s", ad.Kind(), ad.IDOf(current))
+		case lifecycle.AdoptExisting:
+			ownerValue := tags.Owner(obj.GetNamespace(), ad.Kind(), obj.GetName())
+			if claimant, other := tags.ClaimedByOther(ad.TagsOf(found), rt.ClusterID, ownerValue, uid); other {
+				msg := fmt.Sprintf("Universal DDI %s %s is already managed by %s; adoptExisting only takes over "+
+					"objects no other CR manages. Share it by referencing one CR, or remove its uddi_operator_* tags "+
+					"to hand it over", ad.Kind(), ad.IDOf(found), claimant)
+				rt.Eventf(obj, nil, corev1.EventTypeWarning, EventConflict, ActionAdopt, "%s", msg)
+				setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,
+					uddiv1alpha1.ReasonAlreadyExists, msg, obj.GetGeneration())
+				setCondition(status, uddiv1alpha1.ConditionSynced, metav1.ConditionFalse,
+					uddiv1alpha1.ReasonAlreadyExists, msg, obj.GetGeneration())
+				return ctrl.Result{RequeueAfter: conn.ResyncInterval}, true, nil
+			}
 			current = found
 			rt.Eventf(obj, nil, corev1.EventTypeNormal, EventAdopted, ActionAdopt,
 				"adopted existing Universal DDI %s %s", ad.Kind(), ad.IDOf(current))

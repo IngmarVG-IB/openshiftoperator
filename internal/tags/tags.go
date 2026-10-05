@@ -215,6 +215,26 @@ func Managed(tags map[string]string) bool {
 	return tags[KeyManaged] == ValueManaged
 }
 
+// ClaimedByOther reports whether the tags show that another CR owns the object: it carries
+// the managed marker and a uid tag that is not uid, and it was not written by an earlier
+// incarnation of the same CR (same cluster and the same namespace/Kind/name owner value).
+// lifecycle.adoptExisting must never take such an object over, or two CRs would keep
+// rewriting its ownership tags and either one's deletion could remove an object the other
+// still uses. The other CR's owner value is returned for messages.
+func ClaimedByOther(tags map[string]string, clusterID, owner, uid string) (string, bool) {
+	if !Managed(tags) || tags[KeyUID] == "" || tags[KeyUID] == uid {
+		return "", false
+	}
+	if tags[KeyCluster] == clusterID && tags[KeyOwner] == owner {
+		return "", false
+	}
+	claimant := tags[KeyOwner]
+	if c := tags[KeyCluster]; c != "" && c != clusterID {
+		claimant += " on cluster " + c
+	}
+	return claimant, true
+}
+
 // UIDFilter builds the _tfilter expression that finds the object belonging to one CR.
 func UIDFilter(uid string) string {
 	return uddi.TagFilter(map[string]string{KeyUID: uid})

@@ -281,7 +281,8 @@ available yet; milestone 7 is proven on envtest.
 ### Wave 2: controllers and docs (after wave 1 merges)
 
 - [ ] **C1. DNSPublishPolicy controller** wiring the three new sources, their discovery
-  flags, watches and RBAC, with envtest.
+  flags, watches and RBAC, with envtest; plus `zoneRefs` by `id` and `fqdn` (type, planner
+  and controller), so several namespaces can publish into one zone adopted once.
 - [ ] **C2. IPAllocationPolicy controller** wiring claims for dual-stack Services and
   EgressIPs and MetalLB mirroring with its finalizer, with envtest.
 - [ ] **C3. HostRegistrationPolicy controller** wiring Metal3 and additional interfaces, with

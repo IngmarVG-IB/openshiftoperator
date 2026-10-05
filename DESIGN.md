@@ -479,6 +479,12 @@ spec:
   fallbacks on every source kind; the `uddi.infoblox.com` annotation wins when both are set.
   Existing external-dns users can therefore move without relabelling.
 - **createPtr** sets `createPtr` on every generated A and AAAA Record.
+- **Zones by id.** A `zoneRefs` entry names either an AuthZone CR in the policy namespace
+  (`name`) or a Universal DDI zone directly (`id` plus `fqdn`, both required together). A
+  zone given by id counts as ready and resolved, matching uses the given `fqdn`, and the
+  generated Records reference it as `zoneRef.id`. This lets policies in many namespaces
+  publish into one zone that is adopted once, in a platform namespace, without a second
+  adoption.
 - **Dual-stack.** Load balancers and Nodes with IPv4 and IPv6 addresses already yield one A
   and one AAAA Record each; milestone 7 adds tests that prove it.
 
@@ -805,6 +811,15 @@ relies on a PATCH of `tags` replacing the whole map, which the integration suite
   event is emitted and the object is orphaned rather than deleted. Then remove the finalizer.
 - `deletionPolicy: Orphan` removes the finalizer without touching Universal DDI. The
   ownership tags stay on the object so a later CR can re-adopt it.
+- `lifecycle.adoptExisting` only takes over an object that no other CR manages. An object
+  carrying the managed marker and another CR's uid tag is a conflict
+  (`Ready=False/AlreadyExists`, naming the owner and, for another cluster, the cluster)
+  unless its owner tag names this same CR in this same cluster, which is the case after
+  the CR was deleted with `Orphan` and recreated. Without this guard two CRs adopting one
+  object would rewrite its ownership tags on every resync, and either one's deletion could
+  remove an object the other still uses. To share a Universal DDI object across
+  namespaces, adopt it in one namespace and reference it from the others by id; to hand it
+  over, remove its `uddi_operator_*` tags.
 - Dependents block deletion of their dependencies in Universal DDI (a zone with records, a
   subnet with addresses); the API error is surfaced as `Ready=False/Deleting` with the
   message, and the controller keeps retrying with backoff.

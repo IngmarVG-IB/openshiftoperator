@@ -136,6 +136,56 @@ var _ = Describe("View controller through the generic object-layer loop", func()
 			Expect(collectEvents()).To(ContainElement(ContainSubstring("Adopted")))
 		})
 
+		It("never adopts a view another CR manages, even with lifecycle.adoptExisting", func() {
+			existing, err := testFake.CreateView(ctx, dnsconfig.View{
+				Name: "shared-view",
+				Tags: uddi.ToAPITags(map[string]string{
+					tags.KeyManaged: tags.ValueManaged,
+					tags.KeyCluster: TestClusterID,
+					tags.KeyOwner:   tags.Owner("other-namespace", "View", "shared"),
+					tags.KeyUID:     "uid-of-the-other-cr",
+				}),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			v := makeView("shared-view", func(v *uddiv1alpha1.View) {
+				v.Spec.Lifecycle.AdoptExisting = true
+			})
+			patchesBefore := testFake.CallCount("UpdateView")
+
+			Expect(reconcileView(v)).To(Succeed())
+
+			Expect(v.Status.ID).To(BeEmpty())
+			Expect(readyOf(v).Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyOf(v).Reason).To(Equal(uddiv1alpha1.ReasonAlreadyExists))
+			Expect(readyOf(v).Message).To(ContainSubstring("other-namespace/View/shared"))
+			Expect(testFake.CallCount("UpdateView")).To(Equal(patchesBefore))
+			Expect(uddi.FromAPITags(fakeView(*existing.Id).Tags)[tags.KeyUID]).To(Equal("uid-of-the-other-cr"))
+			Expect(collectEvents()).To(ContainElement(ContainSubstring("Conflict")))
+		})
+
+		It("re-adopts its own orphaned view after the CR is recreated with the same name", func() {
+			first := makeView("recreated", func(v *uddiv1alpha1.View) {
+				v.Spec.Lifecycle.DeletionPolicy = uddiv1alpha1.DeletionPolicyOrphan
+			})
+			Expect(reconcileView(first)).To(Succeed())
+			id := first.Status.ID
+			Expect(k8sClient.Delete(ctx, first)).To(Succeed())
+			_, err := reconciler.Reconcile(ctx, requestFor(first))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(first), first))).To(BeTrue())
+
+			second := makeView("recreated", func(v *uddiv1alpha1.View) {
+				v.Spec.Lifecycle.AdoptExisting = true
+			})
+			Expect(second.UID).NotTo(Equal(first.UID))
+			Expect(reconcileView(second)).To(Succeed())
+
+			Expect(second.Status.ID).To(Equal(id))
+			Expect(readyOf(second).Status).To(Equal(metav1.ConditionTrue))
+			Expect(uddi.FromAPITags(fakeView(id).Tags)[tags.KeyUID]).To(Equal(string(second.UID)))
+		})
+
 		It("adopts an untagged view when lifecycle.adoptExisting is set", func() {
 			existing, err := testFake.CreateView(ctx, dnsconfig.View{Name: "adopt-flag"})
 			Expect(err).NotTo(HaveOccurred())
