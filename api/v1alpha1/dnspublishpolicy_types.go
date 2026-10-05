@@ -32,14 +32,15 @@ const (
 )
 
 // ConditionZonesResolved is the second DNSPublishPolicy condition type. It is True when
-// every zoneRef names an existing AuthZone CR, and False with reason ZoneNotFound and
-// the missing names otherwise. It never changes Ready: a mistyped zoneRef next to
-// working ones is reported without taking the policy out of service.
+// every zoneRef names an existing AuthZone CR (a zoneRef given by id always counts as
+// resolved), and False with reason ZoneNotFound and the missing names otherwise. It never
+// changes Ready: a mistyped zoneRef next to working ones is reported without taking the
+// policy out of service.
 const ConditionZonesResolved = "ZonesResolved"
 
 // Reasons for the ZonesResolved condition.
 const (
-	// ReasonZonesFound means every zoneRef names an existing AuthZone CR.
+	// ReasonZonesFound means every zoneRef names an existing AuthZone CR or is given by id.
 	ReasonZonesFound = "ZonesFound"
 	// ReasonZoneNotFound means at least one zoneRef names no existing AuthZone CR. It is
 	// also the reason of the Warning event emitted alongside.
@@ -109,6 +110,40 @@ type DNSPublishCompatibility struct {
 	ExternalDNS bool `json:"externalDNS,omitempty"`
 }
 
+// ZoneRef is one zone a DNSPublishPolicy may publish into. It names either an AuthZone CR
+// in the policy namespace (name), or a Universal DDI zone directly (id plus fqdn, both
+// required together). A zone given by id counts as ready and resolved, is matched through
+// the given fqdn, and the generated Records reference it as zoneRef.id, so many namespaces
+// can publish into one zone that is adopted once, in a platform namespace.
+// +kubebuilder:validation:XValidation:rule="has(self.name) != has(self.id)",message="exactly one of name or id must be set"
+// +kubebuilder:validation:XValidation:rule="has(self.id) == has(self.fqdn)",message="fqdn is required with id, and only valid with id"
+type ZoneRef struct {
+	// Name of an AuthZone CR in this namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// ID is a Universal DDI auth zone id, for example "dns/auth_zone/2c1a...". Set it
+	// together with fqdn.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +optional
+	ID string `json:"id,omitempty"`
+
+	// FQDN of the zone behind id, a canonical DNS name with or without the trailing dot.
+	// Hostnames are matched against it, so it must equal the zone's real fqdn.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9_]([-A-Za-z0-9_]{0,61}[A-Za-z0-9_])?)(\.[A-Za-z0-9_]([-A-Za-z0-9_]{0,61}[A-Za-z0-9_])?)*\.?$`
+	// +optional
+	FQDN string `json:"fqdn,omitempty"`
+}
+
+// ByID reports whether the reference addresses a Universal DDI zone directly (id plus
+// fqdn) rather than naming an AuthZone CR.
+func (z ZoneRef) ByID() bool { return z.ID != "" }
+
 // DNSPublishTarget selects the DNS record type generated for hostnames a
 // DNSPublishPolicy matches.
 type DNSPublishTarget struct {
@@ -153,12 +188,11 @@ type DNSPublishPolicySpec struct {
 	// +optional
 	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 
-	// ZoneRefs are the AuthZone CRs in this namespace considered for the generated
-	// Records. Only name is supported here; a Universal DDI zone id is not accepted.
+	// ZoneRefs are the zones considered for the generated Records: AuthZone CRs in this
+	// namespace (name), or Universal DDI zones addressed directly (id plus fqdn).
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:XValidation:rule="self.all(z, has(z.name) && z.name != '')",message="every zoneRefs entry must set name"
 	// +listType=atomic
-	ZoneRefs []ObjectRef `json:"zoneRefs"`
+	ZoneRefs []ZoneRef `json:"zoneRefs"`
 
 	// Target selects the DNS record type generated for matched hostnames.
 	// +optional

@@ -19,18 +19,22 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	operatoringressv1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -39,6 +43,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	uddiapply "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1/applyconfiguration/api/v1alpha1"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/gatewayapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/publish"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 )
@@ -56,9 +61,9 @@ const maxSkipExamples = 3
 
 // DNSPublishPolicyReconciler turns a DNSPublishPolicy into the Records described by
 // DESIGN.md section 4.7: it resolves the policy's zoneRefs and selected sources
-// (Routes, Ingresses, Services), calls internal/publish.Plan, applies the resulting
-// Records with server-side apply, prunes the ones the policy no longer wants, and
-// reports status.
+// (Routes, Ingresses, Services, Nodes, DNSRecords, HTTPRoutes), calls
+// internal/publish.Plan, applies the resulting Records with server-side apply, prunes the
+// ones the policy no longer wants, and reports status.
 type DNSPublishPolicyReconciler struct {
 	client.Client
 	// Runtime carries the event recorder shared by every object-layer controller.
@@ -69,6 +74,14 @@ type DNSPublishPolicyReconciler struct {
 	// (internal/routeapi.Available, checked once at manager startup). When false the
 	// Route source is ignored rather than erroring.
 	RoutesAvailable bool
+	// DNSRecordsAvailable reports whether the cluster serves the OpenShift ingress
+	// operator DNSRecord API (internal/ingressapi.Available, checked once at manager
+	// startup). When false the DNSRecord source is ignored rather than erroring.
+	DNSRecordsAvailable bool
+	// GatewayAPIAvailable reports whether the cluster serves the Gateway API Gateway and
+	// HTTPRoute kinds (internal/gatewayapi.Available, checked once at manager startup).
+	// When false the HTTPRoute source is ignored rather than erroring.
+	GatewayAPIAvailable bool
 }
 
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=dnspublishpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -78,6 +91,9 @@ type DNSPublishPolicyReconciler struct {
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=authzones,verbs=get;list;watch
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=ingress.operator.openshift.io,resources=dnsrecords,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
@@ -124,6 +140,8 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Mode:              publish.TargetMode(policy.Spec.Target.Mode),
 		StaticAddresses:   policy.Spec.Target.Addresses,
 		CanonicalHostname: policy.Spec.Target.CanonicalHostname,
+		ExternalDNS:       policy.Spec.Compatibility.ExternalDNS,
+		NodeAddressType:   string(policy.Spec.NodeAddressType),
 	}
 	endpoints, skips, err := r.collectEndpoints(ctx, policy, opts, sel)
 	if err != nil {
@@ -143,13 +161,31 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 	priorNames := make(map[string]bool, len(existing.Items))
-	for _, it := range existing.Items {
-		priorNames[it.Name] = true
+	existingByName := make(map[string]*uddiv1alpha1.Record, len(existing.Items))
+	for i := range existing.Items {
+		priorNames[existing.Items[i].Name] = true
+		existingByName[existing.Items[i].Name] = &existing.Items[i]
 	}
 
 	desiredNames := make(map[string]bool, len(desired))
+	replacing := make(map[string]bool)
 	for _, dr := range desired {
 		desiredNames[dr.Name] = true
+
+		// A Record's zoneRef and name cannot change in place. When a desired Record keeps its
+		// name but lands in another zone (a zoneRef moved from an AuthZone name to a zone id,
+		// or a longer zone now matches), delete the old one and let the owned-Record watch
+		// create the replacement once it is gone, instead of failing the apply forever.
+		if cur := existingByName[dr.Name]; cur != nil && recordPlacementDiffers(cur, dr) {
+			log.Info("replacing a Record whose zone or name changed", "record", dr.Name)
+			replacing[dr.Name] = true
+			if cur.GetDeletionTimestamp().IsZero() {
+				if err := r.Delete(ctx, cur); err != nil && !apierrors.IsNotFound(err) {
+					return ctrl.Result{}, err
+				}
+			}
+			continue
+		}
 
 		rec, err := desiredRecordApplyConfiguration(policy, dr, r.Scheme())
 		if err != nil {
@@ -176,6 +212,9 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// (RecordReconciler racing us) is not missed.
 	readyCount := 0
 	for _, dr := range desired {
+		if replacing[dr.Name] {
+			continue
+		}
 		rec := &uddiv1alpha1.Record{}
 		if err := r.Get(ctx, client.ObjectKey{Namespace: policy.Namespace, Name: dr.Name}, rec); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -254,16 +293,25 @@ func selectorFor(policy *uddiv1alpha1.DNSPublishPolicy) (labels.Selector, error)
 }
 
 // resolveZones builds the publish.Zone list DESIGN.md 4.7 step 2 describes: one entry
-// per spec.zoneRefs[].name, in order. A zoneRef whose AuthZone CR does not exist
-// yields a Zone with no FQDN (so it can never match a hostname) and Ready false, and
-// its name is returned in missing, sorted and without duplicates, for the
-// ZonesResolved condition. Any other read error is returned so the caller retries with
-// backoff.
+// per spec.zoneRefs entry, in order. A zoneRef given by id (id plus fqdn) is Ready and
+// resolved as it stands, with its FQDN taken from the spec and no read at all. A zoneRef
+// naming an AuthZone CR that does not exist yields a Zone with no FQDN (so it can never
+// match a hostname) and Ready false, and its name is returned in missing, sorted and
+// without duplicates, for the ZonesResolved condition. Any other read error is returned
+// so the caller retries with backoff.
 func (r *DNSPublishPolicyReconciler) resolveZones(ctx context.Context, policy *uddiv1alpha1.DNSPublishPolicy) (zones []publish.Zone, missing []string, err error) {
 	log := logf.FromContext(ctx)
 	zones = make([]publish.Zone, 0, len(policy.Spec.ZoneRefs))
 	seenMissing := map[string]bool{}
 	for _, ref := range policy.Spec.ZoneRefs {
+		if ref.ByID() {
+			zones = append(zones, publish.Zone{
+				ID:    ref.ID,
+				FQDN:  publish.CanonicalHostname(ref.FQDN),
+				Ready: true,
+			})
+			continue
+		}
 		if ref.Name == "" {
 			continue
 		}
@@ -318,30 +366,72 @@ func zonesNotFoundMessage(missing []string) string {
 	return "zoneRefs not found: " + strings.Join(missing, ", ")
 }
 
-// collectEndpoints lists every selected source kind in the policy's namespace and
-// turns each matching object into Endpoints and Skips, per DESIGN.md 4.7 step 1 and
-// step 3's "Sources" paragraph. Routes are silently ignored (logged once at V(1))
-// when RoutesAvailable is false.
+// collectEndpoints lists every selected source kind and turns each matching object
+// into Endpoints and Skips, per DESIGN.md 4.7 step 1 and step 3's "Sources" paragraph.
+// Routes, Ingresses, Services and HTTPRoutes are read from the policy's namespace, Nodes
+// cluster-wide, and DNSRecords from spec.dnsRecordNamespace. A source whose API the
+// cluster does not serve (RoutesAvailable, DNSRecordsAvailable or GatewayAPIAvailable
+// false) is silently ignored and logged at V(1).
+//
+//nolint:gocyclo // one flat switch over the source kinds; splitting it hides the list.
 func (r *DNSPublishPolicyReconciler) collectEndpoints(
 	ctx context.Context,
 	policy *uddiv1alpha1.DNSPublishPolicy,
 	opts publish.SourceOptions,
 	sel labels.Selector,
 ) ([]publish.Endpoint, []publish.Skip, error) {
+	log := logf.FromContext(ctx)
 	kinds := policy.Spec.Sources
 	if len(kinds) == 0 {
 		kinds = []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindRoute, uddiv1alpha1.SourceKindIngress, uddiv1alpha1.SourceKindService}
 	}
-	listOpts := []client.ListOption{client.InNamespace(policy.Namespace), client.MatchingLabelsSelector{Selector: sel}}
+	selector := client.MatchingLabelsSelector{Selector: sel}
+	listOpts := []client.ListOption{client.InNamespace(policy.Namespace), selector}
 
 	var endpoints []publish.Endpoint
 	var skips []publish.Skip
 
 	for _, kind := range kinds {
 		switch kind {
+		case uddiv1alpha1.SourceKindNode:
+			// Nodes are cluster-scoped: no namespace option.
+			var list corev1.NodeList
+			if err := r.List(ctx, &list, selector); err != nil {
+				return nil, nil, err
+			}
+			for i := range list.Items {
+				eps, sk := publish.EndpointsFromNode(&list.Items[i], opts)
+				endpoints = append(endpoints, eps...)
+				skips = append(skips, sk...)
+			}
+		case uddiv1alpha1.SourceKindDNSRecord:
+			if !r.DNSRecordsAvailable {
+				log.V(1).Info("ignoring DNSRecord source: the ingress operator DNSRecord API is not available on this cluster")
+				continue
+			}
+			var list operatoringressv1.DNSRecordList
+			if err := r.List(ctx, &list, client.InNamespace(dnsRecordNamespace(policy)), selector); err != nil {
+				return nil, nil, err
+			}
+			for i := range list.Items {
+				eps, sk := publish.EndpointsFromDNSRecord(&list.Items[i], opts)
+				endpoints = append(endpoints, eps...)
+				skips = append(skips, sk...)
+			}
+		case uddiv1alpha1.SourceKindHTTPRoute:
+			if !r.GatewayAPIAvailable {
+				log.V(1).Info("ignoring HTTPRoute source: the Gateway API is not available on this cluster")
+				continue
+			}
+			eps, sk, err := r.httpRouteEndpoints(ctx, listOpts, opts)
+			if err != nil {
+				return nil, nil, err
+			}
+			endpoints = append(endpoints, eps...)
+			skips = append(skips, sk...)
 		case uddiv1alpha1.SourceKindRoute:
 			if !r.RoutesAvailable {
-				logf.FromContext(ctx).V(1).Info("ignoring Route source: the Route API is not available on this cluster")
+				log.V(1).Info("ignoring Route source: the Route API is not available on this cluster")
 				continue
 			}
 			var list routev1.RouteList
@@ -376,6 +466,75 @@ func (r *DNSPublishPolicyReconciler) collectEndpoints(
 		}
 	}
 	return endpoints, skips, nil
+}
+
+// httpRouteEndpoints lists the HTTPRoutes the policy selects (as unstructured data, per
+// DESIGN.md 4.7, so the operator takes no Gateway API module dependency) and turns them
+// into Endpoints and Skips. The Gateways each route's status.parents report as accepting
+// it are read once each into the map EndpointsFromHTTPRoute resolves addresses from; a
+// Gateway that no longer exists is simply absent from it and contributes no target.
+func (r *DNSPublishPolicyReconciler) httpRouteEndpoints(
+	ctx context.Context,
+	listOpts []client.ListOption,
+	opts publish.SourceOptions,
+) ([]publish.Endpoint, []publish.Skip, error) {
+	routes := &unstructured.UnstructuredList{}
+	routes.SetGroupVersionKind(gatewayapi.HTTPRouteGVK.GroupVersion().WithKind(gatewayapi.HTTPRouteGVK.Kind + "List"))
+	if err := r.List(ctx, routes, listOpts...); err != nil {
+		return nil, nil, err
+	}
+
+	var endpoints []publish.Endpoint
+	var skips []publish.Skip
+	gateways := map[types.NamespacedName]*unstructured.Unstructured{}
+	fetched := map[types.NamespacedName]bool{}
+	for i := range routes.Items {
+		route := &routes.Items[i]
+		for _, key := range gatewayapi.AcceptedGateways(route) {
+			if fetched[key] {
+				continue
+			}
+			fetched[key] = true
+			gw := &unstructured.Unstructured{}
+			gw.SetGroupVersionKind(gatewayapi.GatewayGVK)
+			switch err := r.Get(ctx, key, gw); {
+			case apierrors.IsNotFound(err):
+				logf.FromContext(ctx).V(1).Info("accepting Gateway not found", "gateway", key.String())
+			case err != nil:
+				return nil, nil, err
+			default:
+				gateways[key] = gw
+			}
+		}
+		eps, sk := publish.EndpointsFromHTTPRoute(route, gateways, opts)
+		endpoints = append(endpoints, eps...)
+		skips = append(skips, sk...)
+	}
+	return endpoints, skips, nil
+}
+
+// dnsRecordNamespace is the namespace the DNSRecord source reads for policy: its
+// spec.dnsRecordNamespace, else where the OpenShift ingress operator creates its records.
+func dnsRecordNamespace(policy *uddiv1alpha1.DNSPublishPolicy) string {
+	if ns := policy.Spec.DNSRecordNamespace; ns != "" {
+		return ns
+	}
+	return uddiv1alpha1.DefaultDNSRecordNamespace
+}
+
+// recordPlacementDiffers reports whether the desired Record would put an existing Record
+// in another zone or under another name, both of which a Record rejects changing.
+func recordPlacementDiffers(cur *uddiv1alpha1.Record, dr publish.DesiredRecord) bool {
+	return cur.Spec.ZoneRef != dr.Spec.ZoneRef || apexName(cur.Spec.Name) != apexName(dr.Spec.Name)
+}
+
+// apexName returns the name of a record in its zone with the omitted name spelled as the
+// apex "@", which is how a Record treats it.
+func apexName(name string) string {
+	if name == "" {
+		return "@"
+	}
+	return name
 }
 
 // desiredRecordApplyConfiguration builds the server-side apply configuration a
@@ -531,39 +690,108 @@ func enqueueNamespacePolicies(c client.Client) handler.MapFunc {
 	}
 }
 
+// zoneRefNames are the AuthZone CR names a policy depends on, for the dependency index.
+// A zoneRef given by id has no CR to wait for and is not indexed.
+func zoneRefNames(policy *uddiv1alpha1.DNSPublishPolicy) []string {
+	names := make([]string, 0, len(policy.Spec.ZoneRefs))
+	for _, z := range policy.Spec.ZoneRefs {
+		if !z.ByID() && z.Name != "" {
+			names = append(names, z.Name)
+		}
+	}
+	return names
+}
+
+// policyRelevance decides whether a changed source object can affect a policy that
+// lists the object's kind among its sources.
+type policyRelevance func(policy *uddiv1alpha1.DNSPublishPolicy, obj client.Object) bool
+
+// inObjectNamespace holds for a policy in the changed object's own namespace, which is
+// where Routes, Ingresses, Services and HTTPRoutes are read from.
+func inObjectNamespace(policy *uddiv1alpha1.DNSPublishPolicy, obj client.Object) bool {
+	return policy.Namespace == obj.GetNamespace()
+}
+
+// anywhere holds for every policy: Nodes are cluster-scoped, and a Gateway may live in
+// another namespace than the routes attached to it.
+func anywhere(*uddiv1alpha1.DNSPublishPolicy, client.Object) bool { return true }
+
+// readsObjectNamespace holds for a policy whose DNSRecord source reads the changed
+// DNSRecord's namespace.
+func readsObjectNamespace(policy *uddiv1alpha1.DNSPublishPolicy, obj client.Object) bool {
+	return dnsRecordNamespace(policy) == obj.GetNamespace()
+}
+
+// enqueuePoliciesListingSource maps a changed source object onto every DNSPublishPolicy,
+// cluster-wide, that lists kind among its sources and for which relevant holds. A
+// policy's selector is not evaluated here (that would re-run the matching the reconciler
+// already does), so the change wakes the policy, which decides for itself.
+func enqueuePoliciesListingSource(c client.Client, kind uddiv1alpha1.SourceKind, relevant policyRelevance) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		var list uddiv1alpha1.DNSPublishPolicyList
+		if err := c.List(ctx, &list); err != nil {
+			return nil
+		}
+		var out []reconcile.Request
+		for i := range list.Items {
+			p := &list.Items[i]
+			if slices.Contains(p.Spec.Sources, kind) && relevant(p, obj) {
+				out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(p)})
+			}
+		}
+		return out
+	}
+}
+
 // SetupWithManager registers the controller, the AuthZone dependency index, and the
 // watches DESIGN.md 4.7 lists: owned Records, Ingresses and Services mapped to every
-// policy in their namespace, Routes the same way when RoutesAvailable, and AuthZones
-// through the zoneRefs dependency index.
+// policy in their namespace, Routes the same way when RoutesAvailable, Nodes mapped to
+// every policy that lists Node, DNSRecords (when DNSRecordsAvailable) to every policy
+// that lists DNSRecord and reads their namespace, HTTPRoutes (when GatewayAPIAvailable) to
+// the HTTPRoute policies in their namespace, Gateways to every policy that lists
+// HTTPRoute, and AuthZones through the zoneRefs dependency index. Only zoneRefs by name
+// are indexed: a zone given by id has no CR to wait for.
 func (r *DNSPublishPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
 	if err := RegisterDependencyIndex(ctx, mgr, &uddiv1alpha1.DNSPublishPolicy{}, func(o client.Object) []string {
-		p := o.(*uddiv1alpha1.DNSPublishPolicy)
-		refs := make([]*uddiv1alpha1.ObjectRef, 0, len(p.Spec.ZoneRefs))
-		for i := range p.Spec.ZoneRefs {
-			refs = append(refs, &p.Spec.ZoneRefs[i])
-		}
-		return RefNames(refs...)
+		return zoneRefNames(o.(*uddiv1alpha1.DNSPublishPolicy))
 	}); err != nil {
 		return err
 	}
 
+	c := mgr.GetClient()
 	newPolicyList := func() client.ObjectList { return &uddiv1alpha1.DNSPublishPolicyList{} }
-	toNamespacePolicies := handler.EnqueueRequestsFromMapFunc(enqueueNamespacePolicies(mgr.GetClient()))
+	toNamespacePolicies := handler.EnqueueRequestsFromMapFunc(enqueueNamespacePolicies(c))
+	policies := func(kind uddiv1alpha1.SourceKind, relevant policyRelevance) handler.EventHandler {
+		return handler.EnqueueRequestsFromMapFunc(enqueuePoliciesListingSource(c, kind, relevant))
+	}
 
 	bldr := ctrl.NewControllerManagedBy(mgr).
 		For(&uddiv1alpha1.DNSPublishPolicy{}).
 		Owns(&uddiv1alpha1.Record{}).
 		Watches(&networkingv1.Ingress{}, toNamespacePolicies).
 		Watches(&corev1.Service{}, toNamespacePolicies).
+		Watches(&corev1.Node{}, policies(uddiv1alpha1.SourceKindNode, anywhere)).
 		Watches(
 			&uddiv1alpha1.AuthZone{},
-			handler.EnqueueRequestsFromMapFunc(EnqueueForIndex(mgr.GetClient(), IndexDependencyRefs, newPolicyList)),
+			handler.EnqueueRequestsFromMapFunc(EnqueueForIndex(c, IndexDependencyRefs, newPolicyList)),
 		)
 
 	if r.RoutesAvailable {
 		bldr = bldr.Watches(&routev1.Route{}, toNamespacePolicies)
+	}
+	if r.DNSRecordsAvailable {
+		bldr = bldr.Watches(&operatoringressv1.DNSRecord{}, policies(uddiv1alpha1.SourceKindDNSRecord, readsObjectNamespace))
+	}
+	if r.GatewayAPIAvailable {
+		route := &unstructured.Unstructured{}
+		route.SetGroupVersionKind(gatewayapi.HTTPRouteGVK)
+		gateway := &unstructured.Unstructured{}
+		gateway.SetGroupVersionKind(gatewayapi.GatewayGVK)
+		bldr = bldr.
+			Watches(route, policies(uddiv1alpha1.SourceKindHTTPRoute, inObjectNamespace)).
+			Watches(gateway, policies(uddiv1alpha1.SourceKindHTTPRoute, anywhere))
 	}
 
 	return bldr.Named("dnspublishpolicy").Complete(r)

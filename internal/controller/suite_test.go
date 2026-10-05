@@ -39,6 +39,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/ingressapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/routeapi"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
@@ -176,6 +177,8 @@ var _ = BeforeSuite(func() {
 	err = uddiv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 	err = routeapi.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = ingressapi.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme

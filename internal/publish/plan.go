@@ -269,7 +269,7 @@ func buildRecord(policy *uddiv1alpha1.DNSPublishPolicy, ep Endpoint, t Target, z
 			Tags:          tags,
 			Lifecycle:     policy.Spec.RecordLifecycle,
 		},
-		ZoneRef: uddiv1alpha1.ObjectRef{Name: zone.Name},
+		ZoneRef: zoneRefFor(zone),
 		Name:    nameInZone,
 		Type:    uddiv1alpha1.RecordType(t.Type),
 		RData:   rdataFor(t),
@@ -298,6 +298,15 @@ func buildRecord(policy *uddiv1alpha1.DNSPublishPolicy, ep Endpoint, t Target, z
 		},
 		Spec: spec,
 	}
+}
+
+// zoneRefFor is the zoneRef a generated Record carries for zone: the Universal DDI id for
+// a zone given by id, else the AuthZone CR name.
+func zoneRefFor(zone Zone) uddiv1alpha1.ObjectRef {
+	if zone.ID != "" {
+		return uddiv1alpha1.ObjectRef{ID: zone.ID}
+	}
+	return uddiv1alpha1.ObjectRef{Name: zone.Name}
 }
 
 // effectiveTTL prefers the endpoint's own ttl (from a source's ttl annotation) and

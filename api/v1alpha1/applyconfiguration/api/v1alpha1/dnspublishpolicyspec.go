@@ -39,9 +39,9 @@ type DNSPublishPolicySpecApplyConfiguration struct {
 	// Selector selects the source objects in this namespace. Empty selects every
 	// object of the configured source kinds.
 	Selector *v1.LabelSelectorApplyConfiguration `json:"selector,omitempty"`
-	// ZoneRefs are the AuthZone CRs in this namespace considered for the generated
-	// Records. Only name is supported here; a Universal DDI zone id is not accepted.
-	ZoneRefs []ObjectRefApplyConfiguration `json:"zoneRefs,omitempty"`
+	// ZoneRefs are the zones considered for the generated Records: AuthZone CRs in this
+	// namespace (name), or Universal DDI zones addressed directly (id plus fqdn).
+	ZoneRefs []ZoneRefApplyConfiguration `json:"zoneRefs,omitempty"`
 	// Target selects the DNS record type generated for matched hostnames.
 	Target *DNSPublishTargetApplyConfiguration `json:"target,omitempty"`
 	// TTL is the default TTL in seconds for generated Records, used when a source does
@@ -98,7 +98,7 @@ func (b *DNSPublishPolicySpecApplyConfiguration) WithSelector(value *v1.LabelSel
 // WithZoneRefs adds the given value to the ZoneRefs field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the ZoneRefs field.
-func (b *DNSPublishPolicySpecApplyConfiguration) WithZoneRefs(values ...*ObjectRefApplyConfiguration) *DNSPublishPolicySpecApplyConfiguration {
+func (b *DNSPublishPolicySpecApplyConfiguration) WithZoneRefs(values ...*ZoneRefApplyConfiguration) *DNSPublishPolicySpecApplyConfiguration {
 	for i := range values {
 		if values[i] == nil {
 			panic("nil value passed to WithZoneRefs")

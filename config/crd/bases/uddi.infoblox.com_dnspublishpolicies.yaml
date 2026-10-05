@@ -237,33 +237,45 @@ spec:
                 type: integer
               zoneRefs:
                 description: |-
-                  ZoneRefs are the AuthZone CRs in this namespace considered for the generated
-                  Records. Only name is supported here; a Universal DDI zone id is not accepted.
+                  ZoneRefs are the zones considered for the generated Records: AuthZone CRs in this
+                  namespace (name), or Universal DDI zones addressed directly (id plus fqdn).
                 items:
                   description: |-
-                    ObjectRef points at another object-layer CR in the same namespace, or directly
-                    at a Universal DDI object by its API id (for example "dns/view/2c1a...").
-                    Exactly one of name and id is set.
+                    ZoneRef is one zone a DNSPublishPolicy may publish into. It names either an AuthZone CR
+                    in the policy namespace (name), or a Universal DDI zone directly (id plus fqdn, both
+                    required together). A zone given by id counts as ready and resolved, is matched through
+                    the given fqdn, and the generated Records reference it as zoneRef.id, so many namespaces
+                    can publish into one zone that is adopted once, in a platform namespace.
                   properties:
-                    id:
-                      description: ID is a Universal DDI resource id, for example
-                        "dns/view/2c1a...".
+                    fqdn:
+                      description: |-
+                        FQDN of the zone behind id, a canonical DNS name with or without the trailing dot.
+                        Hostnames are matched against it, so it must equal the zone's real fqdn.
                       maxLength: 256
+                      minLength: 1
+                      pattern: ^([A-Za-z0-9_]([-A-Za-z0-9_]{0,61}[A-Za-z0-9_])?)(\.[A-Za-z0-9_]([-A-Za-z0-9_]{0,61}[A-Za-z0-9_])?)*\.?$
+                      type: string
+                    id:
+                      description: |-
+                        ID is a Universal DDI auth zone id, for example "dns/auth_zone/2c1a...". Set it
+                        together with fqdn.
+                      maxLength: 256
+                      minLength: 1
                       type: string
                     name:
-                      description: Name of an object-layer CR in this namespace.
+                      description: Name of an AuthZone CR in this namespace.
                       maxLength: 253
+                      minLength: 1
                       type: string
                   type: object
                   x-kubernetes-validations:
                   - message: exactly one of name or id must be set
                     rule: has(self.name) != has(self.id)
+                  - message: fqdn is required with id, and only valid with id
+                    rule: has(self.id) == has(self.fqdn)
                 minItems: 1
                 type: array
                 x-kubernetes-list-type: atomic
-                x-kubernetes-validations:
-                - message: every zoneRefs entry must set name
-                  rule: self.all(z, has(z.name) && z.name != '')
             required:
             - zoneRefs
             type: object

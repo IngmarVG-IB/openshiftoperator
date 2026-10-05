@@ -187,6 +187,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.ViewSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ViewStatus"):
 		return &apiv1alpha1.ViewStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ZoneRef"):
+		return &apiv1alpha1.ZoneRefApplyConfiguration{}
 
 	}
 	return nil

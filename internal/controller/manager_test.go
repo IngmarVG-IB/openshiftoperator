@@ -29,6 +29,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -37,6 +38,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/gatewayapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/hostreg"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/ipalloc"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/publish"
@@ -158,7 +160,10 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		Expect((&RangeReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&AddressReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&FixedAddressReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
-		Expect((&DNSPublishPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, RoutesAvailable: true}).SetupWithManager(mgr)).To(Succeed())
+		Expect((&DNSPublishPolicyReconciler{
+			Client: mgr.GetClient(), Runtime: rt,
+			RoutesAvailable: true, DNSRecordsAvailable: true, GatewayAPIAvailable: true,
+		}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&IPAllocationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&HostRegistrationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, NMStateAvailable: true}).SetupWithManager(mgr)).To(Succeed())
 
@@ -336,7 +341,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			ObjectMeta: metav1.ObjectMeta{Name: "watch-policy", Namespace: mgrNS},
 			Spec: uddiv1alpha1.DNSPublishPolicySpec{
 				Sources:  []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindIngress},
-				ZoneRefs: []uddiv1alpha1.ObjectRef{{Name: zone.Name}},
+				ZoneRefs: []uddiv1alpha1.ZoneRef{{Name: zone.Name}},
 			},
 		}
 		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
@@ -472,5 +477,137 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			HaveField("Action", uddisync.ActionRegister),
 			HaveField("Related.Name", node.Name),
 		)))
+	})
+
+	// readyManagedZone creates a View and an AuthZone in the manager's namespace and waits
+	// for the manager's own controllers to give the zone a status.id.
+	readyManagedZone := func(name, fqdn string) *uddiv1alpha1.AuthZone {
+		view := &uddiv1alpha1.View{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-view", Namespace: mgrNS},
+			Spec:       uddiv1alpha1.ViewSpec{Name: name + "-view"},
+		}
+		Expect(k8sClient.Create(ctx, view)).To(Succeed())
+		Eventually(readyCondition(view, func() []metav1.Condition { return view.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		zone := &uddiv1alpha1.AuthZone{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: mgrNS},
+			Spec: uddiv1alpha1.AuthZoneSpec{
+				FQDN:        fqdn,
+				ViewRef:     uddiv1alpha1.ObjectRef{Name: view.Name},
+				PrimaryType: uddiv1alpha1.AuthZonePrimaryCloud,
+			},
+		}
+		Expect(k8sClient.Create(ctx, zone)).To(Succeed())
+		Eventually(func() string {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(zone), zone); err != nil {
+				return ""
+			}
+			return zone.Status.ID
+		}).WithTimeout(settle).WithPolling(poll).ShouldNot(BeEmpty())
+		return zone
+	}
+
+	// policyRecordCount counts the Records a DNSPublishPolicy owns in the manager's namespace.
+	policyRecordCount := func(policy string) func() int {
+		return func() int {
+			var list uddiv1alpha1.RecordList
+			if err := k8sClient.List(ctx, &list, client.InNamespace(mgrNS),
+				client.MatchingLabels{publish.LabelPolicy: policy}); err != nil {
+				return -1
+			}
+			return len(list.Items)
+		}
+	}
+
+	It("publishes a Record for a labelled Node created after the DNSPublishPolicy, purely through the watch", func() {
+		zone := readyManagedZone("node-watch-zone", "nodes.watch.example.com.")
+
+		policy := &uddiv1alpha1.DNSPublishPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "watch-node-policy", Namespace: mgrNS},
+			Spec: uddiv1alpha1.DNSPublishPolicySpec{
+				Sources:  []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindNode},
+				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"dnspub-watch-test": "true"}},
+				ZoneRefs: []uddiv1alpha1.ZoneRef{{Name: zone.Name}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "watch-dns-node.nodes.watch.example.com",
+				Labels: map[string]string{"dnspub-watch-test": "true"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, node))).To(Succeed())
+		})
+		node.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.124"}}
+		Expect(k8sClient.Status().Update(ctx, node)).To(Succeed())
+
+		// No direct Reconcile call: the Node watch wakes the policy, which lists the Node.
+		Eventually(policyRecordCount(policy.Name)).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
+	})
+
+	It("publishes an HTTPRoute hostname once its Gateway reports an address, purely through the Gateway watch", func() {
+		zone := readyManagedZone("gw-watch-zone", "gw.watch.example.com.")
+
+		policy := &uddiv1alpha1.DNSPublishPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "watch-httproute-policy", Namespace: mgrNS},
+			Spec: uddiv1alpha1.DNSPublishPolicySpec{
+				Sources:  []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindHTTPRoute},
+				ZoneRefs: []uddiv1alpha1.ZoneRef{{Name: zone.Name}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		gw := &unstructured.Unstructured{}
+		gw.SetGroupVersionKind(gatewayapi.GatewayGVK)
+		gw.SetNamespace(mgrNS)
+		gw.SetName("watched-gateway")
+		Expect(unstructured.SetNestedField(gw.Object, "example", "spec", "gatewayClassName")).To(Succeed())
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+
+		route := &unstructured.Unstructured{}
+		route.SetGroupVersionKind(gatewayapi.HTTPRouteGVK)
+		route.SetNamespace(mgrNS)
+		route.SetName("watched-route")
+		Expect(unstructured.SetNestedStringSlice(route.Object, []string{"web.gw.watch.example.com"}, "spec", "hostnames")).To(Succeed())
+		Expect(unstructured.SetNestedSlice(route.Object, []interface{}{
+			map[string]interface{}{"name": gw.GetName()},
+		}, "spec", "parentRefs")).To(Succeed())
+		Expect(k8sClient.Create(ctx, route)).To(Succeed())
+		Expect(unstructured.SetNestedSlice(route.Object, []interface{}{map[string]interface{}{
+			"parentRef":      map[string]interface{}{"name": gw.GetName()},
+			"controllerName": "example.com/gateway-controller",
+			"conditions": []interface{}{map[string]interface{}{
+				"type": "Accepted", "status": "True", "reason": "Accepted", "message": "",
+				"lastTransitionTime": "2026-10-04T00:00:00Z",
+			}},
+		}}, "status", "parents")).To(Succeed())
+		Expect(k8sClient.Status().Update(ctx, route)).To(Succeed())
+
+		// The route is accepted but its Gateway has no address, so the policy skips it.
+		Eventually(func() []uddiv1alpha1.SkippedSource {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(policy), policy); err != nil {
+				return nil
+			}
+			return policy.Status.Skipped
+		}).WithTimeout(settle).WithPolling(poll).Should(ContainElement(And(
+			HaveField("Source", "HTTPRoute/watched-route"),
+			HaveField("Reason", "NoTarget"),
+		)))
+		Expect(policyRecordCount(policy.Name)()).To(Equal(0))
+
+		// The address arrives on the Gateway alone; only the Gateway watch can notice.
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gw), gw)).To(Succeed())
+		Expect(unstructured.SetNestedSlice(gw.Object, []interface{}{
+			map[string]interface{}{"type": "IPAddress", "value": "192.0.2.125"},
+		}, "status", "addresses")).To(Succeed())
+		Expect(k8sClient.Status().Update(ctx, gw)).To(Succeed())
+
+		Eventually(policyRecordCount(policy.Name)).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
 	})
 })

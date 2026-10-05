@@ -553,3 +553,91 @@ func TestEndpointsFromHTTPRoute(t *testing.T) {
 		})
 	}
 }
+
+// TestEndpointsFromHTTPRoute_ExternalDNSFallback proves the external-dns hostname, ttl and
+// target annotations are read for an HTTPRoute exactly as for the other source kinds,
+// because the fallback lives in the shared annotation parsing.
+func TestEndpointsFromHTTPRoute_ExternalDNSFallback(t *testing.T) {
+	src := SourceRef{Kind: SourceHTTPRoute, Namespace: "team-a", Name: "web", UID: "web-uid"}
+	gateways := hrGateways(hrGateway("team-a", "gw", [2]string{"IPAddress", "192.0.2.10"}))
+	accepted := hrParent("", "gw", "True")
+	gatewayTarget := Target{Type: TargetA, Value: "192.0.2.10"}
+
+	cases := []struct {
+		name        string
+		annotations map[string]string
+		hostnames   []string
+		external    bool
+		wantEps     []Endpoint
+		wantSkips   []Skip
+	}{
+		{
+			name:        "the hostname annotation alone is enough",
+			annotations: map[string]string{ExternalDNSHostname: "ext1.example.com, ext2.example.com"},
+			external:    true,
+			wantEps: []Endpoint{
+				{Source: src, Hostname: "ext1.example.com.", Targets: []Target{gatewayTarget}},
+				{Source: src, Hostname: "ext2.example.com.", Targets: []Target{gatewayTarget}},
+			},
+		},
+		{
+			name:        "the hostname is added to spec.hostnames",
+			annotations: map[string]string{ExternalDNSHostname: "ext.example.com"},
+			hostnames:   []string{"app.example.com"},
+			external:    true,
+			wantEps: []Endpoint{
+				{Source: src, Hostname: "app.example.com.", Targets: []Target{gatewayTarget}},
+				{Source: src, Hostname: "ext.example.com.", Targets: []Target{gatewayTarget}},
+			},
+		},
+		{
+			name:        "the ttl accepts a duration",
+			annotations: map[string]string{ExternalDNSTTL: "5m"},
+			hostnames:   []string{"app.example.com"},
+			external:    true,
+			wantEps:     []Endpoint{{Source: src, Hostname: "app.example.com.", Targets: []Target{gatewayTarget}, TTL: int32p(300)}},
+		},
+		{
+			name:        "the target replaces the Gateway addresses",
+			annotations: map[string]string{ExternalDNSTarget: "203.0.113.5"},
+			hostnames:   []string{"app.example.com"},
+			external:    true,
+			wantEps: []Endpoint{{
+				Source: src, Hostname: "app.example.com.", Targets: []Target{{Type: TargetA, Value: "203.0.113.5"}},
+			}},
+		},
+		{
+			name:        "the uddi annotation wins when both are set",
+			annotations: map[string]string{"uddi.infoblox.com/hostname": "uddi.example.com", ExternalDNSHostname: "ext.example.com"},
+			external:    true,
+			wantEps:     []Endpoint{{Source: src, Hostname: "uddi.example.com.", Targets: []Target{gatewayTarget}}},
+		},
+		{
+			name:        "compatibility off ignores the external-dns annotations",
+			annotations: map[string]string{ExternalDNSHostname: "ext.example.com"},
+			external:    false,
+			wantSkips: []Skip{{
+				Source: src, Reason: SkipNoHostname,
+				Message: "no spec.hostnames and no uddi.infoblox.com/hostname annotation",
+			}},
+		},
+		{
+			name:        "an invalid external-dns hostname names its key",
+			annotations: map[string]string{ExternalDNSHostname: "bad_host!"},
+			hostnames:   []string{"app.example.com"},
+			external:    true,
+			wantSkips: []Skip{{
+				Source: src, Reason: SkipInvalidAnnotation,
+				Message: `external-dns.alpha.kubernetes.io/hostname: "bad_host!" is not a valid DNS name`,
+			}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			route := hrRoute(tc.annotations, tc.hostnames, accepted)
+			gotEps, gotSkips := EndpointsFromHTTPRoute(route, gateways, SourceOptions{ExternalDNS: tc.external})
+			assertResult(t, gotEps, gotSkips, tc.wantEps, tc.wantSkips)
+		})
+	}
+}

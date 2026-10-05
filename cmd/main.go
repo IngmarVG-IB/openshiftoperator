@@ -45,6 +45,8 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/clusterid"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/controller"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/gatewayapi"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/ingressapi"
 	uddimetrics "github.com/IngmarVG-IB/openshiftoperator/internal/metrics"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/nmstateapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/routeapi"
@@ -62,6 +64,7 @@ func init() {
 
 	utilruntime.Must(uddiv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(routeapi.AddToScheme(scheme))
+	utilruntime.Must(ingressapi.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -342,10 +345,34 @@ func main() {
 	}
 	setupLog.Info("discovered Route API availability", "routesAvailable", routesAvailable)
 
+	// The ingress operator DNSRecord API (OpenShift only) and the Gateway API (installed by
+	// the cluster admin) are the same kind of optional dependency: a missing API makes that
+	// DNSPublishPolicy source inert and is logged here, once.
+	dnsRecordsAvailable, err := ingressapi.Available(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to determine whether the DNSRecord API is available")
+		os.Exit(1)
+	}
+	setupLog.Info("discovered DNSRecord API availability", "dnsRecordsAvailable", dnsRecordsAvailable)
+	if !dnsRecordsAvailable {
+		setupLog.Info("the DNSRecord API is not served, so the DNSRecord source of DNSPublishPolicy is inert")
+	}
+	gatewayAPIAvailable, err := gatewayapi.Available(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to determine whether the Gateway API is available")
+		os.Exit(1)
+	}
+	setupLog.Info("discovered Gateway API availability", "gatewayAPIAvailable", gatewayAPIAvailable)
+	if !gatewayAPIAvailable {
+		setupLog.Info("the Gateway API is not served, so the HTTPRoute source of DNSPublishPolicy is inert")
+	}
+
 	if err := (&controller.DNSPublishPolicyReconciler{
-		Client:          mgr.GetClient(),
-		Runtime:         runtimeCtx,
-		RoutesAvailable: routesAvailable,
+		Client:              mgr.GetClient(),
+		Runtime:             runtimeCtx,
+		RoutesAvailable:     routesAvailable,
+		DNSRecordsAvailable: dnsRecordsAvailable,
+		GatewayAPIAvailable: gatewayAPIAvailable,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DNSPublishPolicy")
 		os.Exit(1)

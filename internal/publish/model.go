@@ -153,11 +153,18 @@ type Skip struct {
 	Message  string
 }
 
-// Zone is an AuthZone CR as the planner sees it.
+// Zone is a zone as the planner sees it: an AuthZone CR, or a Universal DDI zone given by
+// id in spec.zoneRefs.
 type Zone struct {
-	Name  string // the AuthZone CR name, used for the generated Record's zoneRef
+	// Name is the AuthZone CR name, used for the generated Record's zoneRef. It is empty
+	// for a zone given by id.
+	Name string
+	// ID is the Universal DDI zone id of a zone given by id; empty for an AuthZone CR. A
+	// zone with an ID is always Ready, takes its FQDN from the spec, and the generated
+	// Record's zoneRef is {id} instead of {name}.
+	ID    string
 	FQDN  string // canonical zone fqdn, lower-case with a trailing dot
-	Ready bool   // the CR has a status.id, so Records can reference it
+	Ready bool   // the CR has a status.id (or the zone is given by id), so Records can reference it
 }
 
 // Annotation keys relative to the prefix.
