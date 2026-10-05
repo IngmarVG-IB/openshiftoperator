@@ -19,6 +19,7 @@ package uddi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -53,7 +54,8 @@ type Config struct {
 	RateLimitRPS float64
 	// RateLimitBurst is the client-side token bucket size.
 	RateLimitBurst int
-	// Timeout bounds a single HTTP request. Zero means 30s.
+	// Timeout bounds one API call end to end: the wait for a rate-limit token, every
+	// attempt and the backoff between retries (see newHTTPClient). Zero means 30s.
 	Timeout time.Duration
 	// Debug turns on SDK request and response logging. Never enable it against a real
 	// tenant: it writes the Authorization header.
@@ -84,8 +86,9 @@ func (c *sdkClient) lockAllocation(address string) func() {
 // Note on options: v0.4.0 of universal-ddi-go-client exposes only WithCSPUrl,
 // WithAPIKey, WithClientName, WithDefaultTags, WithHTTPClient and WithDebug. It has no
 // WithRateLimit and no WithRetryDisabled because it carries neither a limiter nor a
-// retry loop (both were bloxone-go-client features). Rate limiting is therefore applied
-// through a custom transport, and there is no SDK retry to disable.
+// retry loop (both were bloxone-go-client features). Rate limiting and retrying are
+// therefore applied through the custom transport chain built by newHTTPClient, and there
+// is no SDK retry to disable.
 func NewSDKClient(cfg Config) (*Client, error) {
 	if cfg.APIKey == "" {
 		return nil, ErrNoAPIKey
@@ -94,7 +97,7 @@ func NewSDKClient(cfg Config) (*Client, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	httpClient := newRateLimitedClient(&http.Client{Timeout: timeout}, cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.ConnectionLabel)
+	httpClient := newHTTPClient(&http.Client{Timeout: timeout}, cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.ConnectionLabel)
 
 	opts := []option.ClientOption{
 		option.WithAPIKey(cfg.APIKey),
@@ -115,6 +118,99 @@ func NewSDKClient(cfg Config) (*Client, error) {
 
 	c := &sdkClient{api: sdk.NewAPIClient(opts...)}
 	return &Client{DNSConfig: c, DNSData: c, IPAM: c, DHCP: c}, nil
+}
+
+// --- listing and pagination ---
+
+const (
+	// listPageSize is the _limit of every page fetched when ListOptions.Limit is zero.
+	listPageSize = 1000
+	// listMaxPages caps how many pages one List call fetches, 100,000 objects in all. A
+	// cursor that never ends, or a tenant far larger than the operator expects, ends in
+	// an error instead of an endless loop.
+	listMaxPages = 100
+)
+
+// ErrTooManyPages is returned, wrapped, by a List call that still had a full page left
+// after listMaxPages pages. Narrow the filter or ask for one page with a Limit.
+var ErrTooManyPages = errors.New("uddi: list result set too large")
+
+// Pagination in this SDK is by offset, not by page token. Every generated list request
+// has a PageToken parameter (sent as _page_token), but none of the nine list responses
+// the operator uses (dnsconfig.ListViewResponse, ListAuthZoneResponse,
+// dnsdata.ListRecordResponse, ipam.ListIPSpaceResponse, ListAddressBlockResponse,
+// ListSubnetResponse, ListRangeResponse, ListAddressResponse and ListFixedAddressResponse)
+// has a field to carry a token back: each holds only "results". The ApiPageInfo type with
+// page_token exists only in the inframgmt, infraprovision and clouddiscovery packages,
+// which the operator does not use. So listAll walks _offset and _limit pages of
+// listPageSize and stops at the first short page.
+
+// listRequest is what the nine generated list request builders have in common. Each
+// method returns the builder's own type, so R is that type.
+type listRequest[R any] interface {
+	Filter(string) R
+	Tfilter(string) R
+	Fields(string) R
+	OrderBy(string) R
+	Limit(int32) R
+	Offset(int32) R
+}
+
+// applyListOptions copies the set fields of o onto a generated list request.
+func applyListOptions[R listRequest[R]](req R, o ListOptions) R {
+	if o.Filter != "" {
+		req = req.Filter(o.Filter)
+	}
+	if o.TFilter != "" {
+		req = req.Tfilter(o.TFilter)
+	}
+	if o.Fields != "" {
+		req = req.Fields(o.Fields)
+	}
+	if o.OrderBy != "" {
+		req = req.OrderBy(o.OrderBy)
+	}
+	if o.Limit > 0 {
+		req = req.Limit(o.Limit)
+	}
+	if o.Offset > 0 {
+		req = req.Offset(o.Offset)
+	}
+	return req
+}
+
+// listAll runs fetch, which issues one list request with the options it is given, and
+// returns every result.
+//
+// With a non-zero opts.Limit the caller asked for one page, so fetch runs once with the
+// options as given. With a zero Limit it runs once per page of listPageSize results,
+// starting at opts.Offset, until a page comes back short; method names the call in the
+// error returned when listMaxPages full pages in a row leave the end still unseen. An
+// error on any page fails the whole call and no partial result is returned.
+//
+// A server that capped _limit below listPageSize would make every page look short and
+// truncate the list at its first page. Universal DDI documents only that the service
+// "may impose a maximum", so this has to be confirmed against a tenant.
+func listAll[T any](method string, opts ListOptions, fetch func(ListOptions) ([]T, error)) ([]T, error) {
+	if opts.Limit > 0 {
+		return fetch(opts)
+	}
+	var all []T
+	page := opts
+	page.Limit = listPageSize
+	for range listMaxPages {
+		res, err := fetch(page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, res...)
+		if len(res) < listPageSize {
+			return all, nil
+		}
+		page.Offset += int32(len(res))
+	}
+	return nil, fmt.Errorf("%w: %s returned more than %d pages of %d results; narrow the filter or set a limit",
+		ErrTooManyPages, method, listMaxPages, listPageSize)
 }
 
 // --- dnsconfig: View ---
@@ -138,30 +234,13 @@ func (c *sdkClient) GetView(ctx context.Context, id string) (*dnsconfig.View, er
 }
 
 func (c *sdkClient) ListViews(ctx context.Context, opts ListOptions) ([]dnsconfig.View, error) {
-	req := c.api.DNSConfigurationAPI.ViewAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainDNSConfig, "ListViews", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListViews", opts, func(page ListOptions) ([]dnsconfig.View, error) {
+		res, resp, err := applyListOptions(c.api.DNSConfigurationAPI.ViewAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainDNSConfig, "ListViews", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateView(ctx context.Context, id string, patch dnsconfig.View) (*dnsconfig.View, error) {
@@ -199,30 +278,13 @@ func (c *sdkClient) GetAuthZone(ctx context.Context, id string) (*dnsconfig.Auth
 }
 
 func (c *sdkClient) ListAuthZones(ctx context.Context, opts ListOptions) ([]dnsconfig.AuthZone, error) {
-	req := c.api.DNSConfigurationAPI.AuthZoneAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainDNSConfig, "ListAuthZones", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListAuthZones", opts, func(page ListOptions) ([]dnsconfig.AuthZone, error) {
+		res, resp, err := applyListOptions(c.api.DNSConfigurationAPI.AuthZoneAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainDNSConfig, "ListAuthZones", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateAuthZone(ctx context.Context, id string, patch dnsconfig.AuthZone) (*dnsconfig.AuthZone, error) {
@@ -260,30 +322,13 @@ func (c *sdkClient) GetRecord(ctx context.Context, id string) (*dnsdata.Record, 
 }
 
 func (c *sdkClient) ListRecords(ctx context.Context, opts ListOptions) ([]dnsdata.Record, error) {
-	req := c.api.DNSDataAPI.RecordAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainDNSData, "ListRecords", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListRecords", opts, func(page ListOptions) ([]dnsdata.Record, error) {
+		res, resp, err := applyListOptions(c.api.DNSDataAPI.RecordAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainDNSData, "ListRecords", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateRecord(ctx context.Context, id string, patch dnsdata.Record) (*dnsdata.Record, error) {
@@ -321,30 +366,13 @@ func (c *sdkClient) GetIPSpace(ctx context.Context, id string) (*ipam.IPSpace, e
 }
 
 func (c *sdkClient) ListIPSpaces(ctx context.Context, opts ListOptions) ([]ipam.IPSpace, error) {
-	req := c.api.IPAddressManagementAPI.IpSpaceAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainIPAM, "ListIPSpaces", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListIPSpaces", opts, func(page ListOptions) ([]ipam.IPSpace, error) {
+		res, resp, err := applyListOptions(c.api.IPAddressManagementAPI.IpSpaceAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainIPAM, "ListIPSpaces", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateIPSpace(ctx context.Context, id string, patch ipam.IPSpace) (*ipam.IPSpace, error) {
@@ -383,30 +411,13 @@ func (c *sdkClient) GetAddressBlock(ctx context.Context, id string) (*ipam.Addre
 }
 
 func (c *sdkClient) ListAddressBlocks(ctx context.Context, opts ListOptions) ([]ipam.AddressBlock, error) {
-	req := c.api.IPAddressManagementAPI.AddressBlockAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainIPAM, "ListAddressBlocks", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListAddressBlocks", opts, func(page ListOptions) ([]ipam.AddressBlock, error) {
+		res, resp, err := applyListOptions(c.api.IPAddressManagementAPI.AddressBlockAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainIPAM, "ListAddressBlocks", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateAddressBlock(ctx context.Context, id string, patch ipam.AddressBlock) (*ipam.AddressBlock, error) {
@@ -445,30 +456,13 @@ func (c *sdkClient) GetSubnet(ctx context.Context, id string) (*ipam.Subnet, err
 }
 
 func (c *sdkClient) ListSubnets(ctx context.Context, opts ListOptions) ([]ipam.Subnet, error) {
-	req := c.api.IPAddressManagementAPI.SubnetAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainIPAM, "ListSubnets", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListSubnets", opts, func(page ListOptions) ([]ipam.Subnet, error) {
+		res, resp, err := applyListOptions(c.api.IPAddressManagementAPI.SubnetAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainIPAM, "ListSubnets", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateSubnet(ctx context.Context, id string, patch ipam.Subnet) (*ipam.Subnet, error) {
@@ -506,30 +500,13 @@ func (c *sdkClient) GetRange(ctx context.Context, id string) (*ipam.Range, error
 }
 
 func (c *sdkClient) ListRanges(ctx context.Context, opts ListOptions) ([]ipam.Range, error) {
-	req := c.api.IPAddressManagementAPI.RangeAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainIPAM, "ListRanges", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListRanges", opts, func(page ListOptions) ([]ipam.Range, error) {
+		res, resp, err := applyListOptions(c.api.IPAddressManagementAPI.RangeAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainIPAM, "ListRanges", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateRange(ctx context.Context, id string, patch ipam.Range) (*ipam.Range, error) {
@@ -568,30 +545,13 @@ func (c *sdkClient) GetAddress(ctx context.Context, id string) (*ipam.Address, e
 }
 
 func (c *sdkClient) ListAddresses(ctx context.Context, opts ListOptions) ([]ipam.Address, error) {
-	req := c.api.IPAddressManagementAPI.AddressAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainIPAM, "ListAddresses", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListAddresses", opts, func(page ListOptions) ([]ipam.Address, error) {
+		res, resp, err := applyListOptions(c.api.IPAddressManagementAPI.AddressAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainIPAM, "ListAddresses", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateAddress(ctx context.Context, id string, patch ipam.Address) (*ipam.Address, error) {
@@ -629,30 +589,13 @@ func (c *sdkClient) GetFixedAddress(ctx context.Context, id string) (*ipam.Fixed
 }
 
 func (c *sdkClient) ListFixedAddresses(ctx context.Context, opts ListOptions) ([]ipam.FixedAddress, error) {
-	req := c.api.IPAddressManagementAPI.FixedAddressAPI.List(ctx)
-	if opts.Filter != "" {
-		req = req.Filter(opts.Filter)
-	}
-	if opts.TFilter != "" {
-		req = req.Tfilter(opts.TFilter)
-	}
-	if opts.Fields != "" {
-		req = req.Fields(opts.Fields)
-	}
-	if opts.OrderBy != "" {
-		req = req.OrderBy(opts.OrderBy)
-	}
-	if opts.Limit > 0 {
-		req = req.Limit(opts.Limit)
-	}
-	if opts.Offset > 0 {
-		req = req.Offset(opts.Offset)
-	}
-	res, resp, err := req.Execute()
-	if err != nil {
-		return nil, wrap(DomainDHCP, "ListFixedAddresses", resp, err)
-	}
-	return res.GetResults(), nil
+	return listAll("ListFixedAddresses", opts, func(page ListOptions) ([]ipam.FixedAddress, error) {
+		res, resp, err := applyListOptions(c.api.IPAddressManagementAPI.FixedAddressAPI.List(ctx), page).Execute()
+		if err != nil {
+			return nil, wrap(DomainDHCP, "ListFixedAddresses", resp, err)
+		}
+		return res.GetResults(), nil
+	})
 }
 
 func (c *sdkClient) UpdateFixedAddress(ctx context.Context, id string, patch ipam.FixedAddress) (*ipam.FixedAddress, error) {

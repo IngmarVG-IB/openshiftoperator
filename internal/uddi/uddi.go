@@ -47,9 +47,13 @@ type ListOptions struct {
 	// TFilter is a _tfilter expression over tag keys, for example
 	// `"uddi_operator_uid"=="<uid>"`.
 	TFilter string
-	// Limit caps the page size. Zero means the server default.
+	// Limit, when non-zero, asks for a single page of at most Limit results and the call
+	// makes exactly one request. Zero returns every match: the SDK client pages through
+	// the collection itself, 1000 results per request and at most 100 requests, and fails
+	// with ErrTooManyPages beyond that.
 	Limit int32
-	// Offset is the zero-origin index into the collection.
+	// Offset is the zero-origin index of the first result. With a zero Limit the paging
+	// starts there.
 	Offset int32
 	// Fields is a comma-separated _fields projection.
 	Fields string
