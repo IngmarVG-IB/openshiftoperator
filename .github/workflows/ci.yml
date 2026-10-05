@@ -120,6 +120,31 @@ jobs:
         run: |
           git diff --exit-code -I '^ *createdAt: ' -- bundle/ config/manifests/
 
+  rules:
+    name: Prometheus rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v7
+
+      - name: Install promtool (checksum-verified)
+        env:
+          PROMETHEUS_VERSION: 3.15.0
+        run: |
+          set -euo pipefail
+          archive="prometheus-${PROMETHEUS_VERSION}.linux-amd64"
+          base="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}"
+          curl -sSLO "${base}/sha256sums.txt"
+          curl -sSLO "${base}/${archive}.tar.gz"
+          grep " ${archive}.tar.gz\$" sha256sums.txt | sha256sum -c -
+          tar -xzf "${archive}.tar.gz" "${archive}/promtool"
+          sudo install -m 0755 "${archive}/promtool" /usr/local/bin/promtool
+          rm -rf "${archive}" "${archive}.tar.gz" sha256sums.txt
+          promtool --version
+
+      - name: Check and unit-test the alert rules
+        run: bash hack/check-rules.sh
+
   image:
     name: Build container image
     runs-on: ubuntu-latest

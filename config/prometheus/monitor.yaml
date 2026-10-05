@@ -1,4 +1,8 @@
 # Prometheus Monitor Service (Metrics)
+#
+# This is the kubebuilder scaffold for a plain Prometheus Operator whose Prometheus service
+# account may read /metrics. It does not work with OpenShift user-workload monitoring, which
+# rejects bearerTokenFile; use ../observability there (see docs/observability.md).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

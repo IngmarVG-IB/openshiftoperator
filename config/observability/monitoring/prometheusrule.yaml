@@ -1,0 +1,153 @@
+# Alerts for the operator. Every alert links to its runbook section in docs/observability.md;
+# hack/check-rules.sh checks that the anchors exist, that each alert has a unit test under
+# ../tests, and runs `promtool check rules` and `promtool test rules` on this file.
+#
+# Label notes, because they shape every expression below:
+#  - Prometheus renames the operator's own `namespace` label (the namespace of the custom
+#    resource) to `exported_namespace`, because the scrape adds a `namespace` target label
+#    of its own. OpenShift user-workload monitoring does the same and enforces the install
+#    namespace as `namespace`. Rules therefore use `exported_namespace`.
+#  - Two operator replicas (the config/ha overlay) both export the object and policy
+#    gauges, so those are collapsed with `max without (instance, pod)` before they are
+#    summed or compared. Summing the raw series would count every object twice.
+#  - `job="uddi-operator"` comes from `jobLabel` in the ServiceMonitor and keeps the
+#    controller-runtime series of other operators out of the reconcile error alert.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: uddi-operator
+  namespace: uddi-operator-system
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    - name: uddi-operator.readiness
+      rules:
+        - alert: UDDIConnectionNotReady
+          expr: |
+            sum by (exported_namespace) (
+              max without (instance, pod) (
+                uddi_operator_objects{kind="Connection", ready!="true"}
+              )
+            ) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: A Universal DDI Connection is not Ready.
+            description: >-
+              {{ $value }} Connection(s) in namespace {{ $labels.exported_namespace }}
+              have not been Ready for 10 minutes. Nothing that uses them can sync with
+              Universal DDI.
+            runbook_url: https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiconnectionnotready
+
+        - alert: UDDIObjectsNotReady
+          expr: |
+            sum by (exported_namespace, kind) (
+              max without (instance, pod) (
+                uddi_operator_objects{kind!="Connection", ready!="true"}
+              )
+            ) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Universal DDI objects are not Ready.
+            description: >-
+              {{ $value }} {{ $labels.kind }} object(s) in namespace
+              {{ $labels.exported_namespace }} have not been Ready for 15 minutes.
+            runbook_url: https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiobjectsnotready
+
+    - name: uddi-operator.api
+      rules:
+        - alert: UDDIAPIServerErrors
+          expr: |
+            sum by (connection, domain) (
+              rate(uddi_operator_api_requests_total{code=~"5.."}[5m])
+            ) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: The Universal DDI API keeps answering with server errors.
+            description: >-
+              Connection {{ $labels.connection }} is getting 5xx responses from the
+              Universal DDI {{ $labels.domain }} API at {{ $value | printf "%.2f" }}
+              requests per second.
+            runbook_url: https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiapiservererrors
+
+        - alert: UDDIAPIThrottled
+          expr: |
+            sum by (connection, domain) (
+              rate(uddi_operator_api_requests_total{code="429"}[5m])
+            ) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Universal DDI is throttling the operator.
+            description: >-
+              Connection {{ $labels.connection }} is getting 429 responses from the
+              Universal DDI {{ $labels.domain }} API at {{ $value | printf "%.2f" }}
+              requests per second.
+            runbook_url: https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiapithrottled
+
+    - name: uddi-operator.policies
+      rules:
+        - alert: UDDIAddressesPending
+          # allocated minus assigned: Services that have an Address object whose address is
+          # not yet on the Service. ignoring(state) drops the state label from the result.
+          expr: |
+            (
+              max without (instance, pod) (
+                uddi_operator_policy_objects{kind="IPAllocationPolicy", state="allocated"}
+              )
+              - ignoring (state)
+              max without (instance, pod) (
+                uddi_operator_policy_objects{kind="IPAllocationPolicy", state="assigned"}
+              )
+            ) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: An IPAllocationPolicy has addresses that are not assigned.
+            description: >-
+              IPAllocationPolicy {{ $labels.policy }} in namespace
+              {{ $labels.exported_namespace }} has had {{ $value }} Service(s) with an
+              allocated address that is not assigned for 15 minutes.
+            runbook_url: https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiaddressespending
+
+        - alert: UDDIRegistrationsPending
+          expr: |
+            max without (instance, pod, state) (
+              uddi_operator_policy_objects{kind="HostRegistrationPolicy", state="pending"}
+            ) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: A HostRegistrationPolicy has registrations that are not Ready.
+            description: >-
+              HostRegistrationPolicy {{ $labels.policy }} in namespace
+              {{ $labels.exported_namespace }} has had {{ $value }} registration(s) that
+              are not Ready for 15 minutes.
+            runbook_url: https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddiregistrationspending
+
+    - name: uddi-operator.controllers
+      rules:
+        - alert: UDDIReconcileErrors
+          expr: |
+            sum by (controller) (
+              rate(controller_runtime_reconcile_errors_total{job="uddi-operator"}[5m])
+            ) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: A uddi-operator controller keeps failing to reconcile.
+            description: >-
+              Controller {{ $labels.controller }} has returned reconcile errors for 15
+              minutes, currently {{ $value | printf "%.2f" }} per second.
+            runbook_url: https://github.com/IngmarVG-IB/openshiftoperator/blob/main/docs/observability.md#uddireconcileerrors

@@ -1,0 +1,9 @@
+# Everything that lives in the operator's namespace: the ServiceMonitor, the alert rules and
+# the credentials the ServiceMonitor scrapes with. To install the operator into another
+# namespace, build this directory from your own overlay with a different `namespace:`.
+namespace: uddi-operator-system
+
+resources:
+  - servicemonitor.yaml
+  - scraper-rbac.yaml
+  - prometheusrule.yaml

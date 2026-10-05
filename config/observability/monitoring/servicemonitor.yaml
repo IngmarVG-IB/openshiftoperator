@@ -1,0 +1,40 @@
+# Scrapes the operator's authenticated metrics endpoint (HTTPS, port 8443, served by
+# controller-runtime with its authentication and authorization filter) for OpenShift
+# user-workload monitoring and for a plain Prometheus Operator.
+#
+# Differences from the kubebuilder scaffold in ../../prometheus:
+#  - The bearer token comes from a Secret (`authorization`), not from `bearerTokenFile`.
+#    OpenShift's user-workload Prometheus does not let a ServiceMonitor read files from its
+#    own file system, so `bearerTokenFile` is rejected there.
+#  - `jobLabel` makes the job name `uddi-operator`, which the alert rules select on.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: uddi-operator
+  namespace: uddi-operator-system
+  labels:
+    app.kubernetes.io/name: uddi-operator
+    app.kubernetes.io/component: monitoring
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: uddi-operator
+  endpoints:
+    - port: https
+      path: /metrics
+      scheme: https
+      interval: 30s
+      authorization:
+        type: Bearer
+        credentials:
+          name: uddi-operator-metrics-scraper-token
+          key: token
+      tlsConfig:
+        # The metrics server serves a self-signed certificate it generates at start-up
+        # unless --metrics-cert-path is set, so there is no CA to verify it against. The
+        # bearer token still authenticates the scraper to the operator; what is not
+        # verified is the operator to the scraper. docs/observability.md describes how to
+        # serve a certificate from the OpenShift service CA and turn verification on.
+        insecureSkipVerify: true
