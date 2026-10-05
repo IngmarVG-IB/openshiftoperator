@@ -30,14 +30,15 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	uddiapply "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/publish"
 	uddisync "github.com/IngmarVG-IB/openshiftoperator/internal/sync"
 )
@@ -79,6 +80,7 @@ type DNSPublishPolicyReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile brings the Records owned by one DNSPublishPolicy into agreement with its
 // selected sources, per DESIGN.md section 4.7.
@@ -149,12 +151,11 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	for _, dr := range desired {
 		desiredNames[dr.Name] = true
 
-		rec := desiredRecordObject(policy, dr)
-		if err := controllerutil.SetControllerReference(policy, rec, r.Scheme()); err != nil {
+		rec, err := desiredRecordApplyConfiguration(policy, dr, r.Scheme())
+		if err != nil {
 			return ctrl.Result{}, err
 		}
-		//nolint:staticcheck // client.Apply is the typed server-side apply Patch; see DESIGN.md 4.7 step 4.
-		if err := r.Patch(ctx, rec, client.Apply, client.FieldOwner(publish.FieldManager), client.ForceOwnership); err != nil {
+		if err := r.Apply(ctx, rec, client.FieldOwner(publish.FieldManager), client.ForceOwnership); err != nil {
 			return ctrl.Result{}, fmt.Errorf("applying Record %s: %w", dr.Name, err)
 		}
 	}
@@ -377,24 +378,29 @@ func (r *DNSPublishPolicyReconciler) collectEndpoints(
 	return endpoints, skips, nil
 }
 
-// desiredRecordObject builds the typed Record CR a DesiredRecord applies as. TypeMeta
-// is set explicitly (apiVersion/kind), and resourceVersion and managedFields are left
-// zero, as server-side apply requires: the object is a pure declaration of intent, not
-// a read-modify-write of the current one.
-func desiredRecordObject(policy *uddiv1alpha1.DNSPublishPolicy, dr publish.DesiredRecord) *uddiv1alpha1.Record {
-	return &uddiv1alpha1.Record{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: uddiv1alpha1.GroupVersion.String(),
-			Kind:       "Record",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        dr.Name,
-			Namespace:   policy.Namespace,
-			Labels:      dr.Labels,
-			Annotations: dr.Annotations,
-		},
-		Spec: dr.Spec,
+// desiredRecordApplyConfiguration builds the server-side apply configuration a
+// DesiredRecord is applied as: name, namespace, labels, annotations, the policy as
+// controller owner, and the spec. It is a pure declaration of intent, not a
+// read-modify-write of the current object, so only these fields end up owned by the
+// policy's field manager.
+func desiredRecordApplyConfiguration(
+	policy *uddiv1alpha1.DNSPublishPolicy,
+	dr publish.DesiredRecord,
+	scheme *runtime.Scheme,
+) (*uddiapply.RecordApplyConfiguration, error) {
+	spec, err := specApplyConfiguration[uddiapply.RecordSpecApplyConfiguration](dr.Spec)
+	if err != nil {
+		return nil, err
 	}
+	owner, err := controllerOwnerReference(policy, scheme)
+	if err != nil {
+		return nil, err
+	}
+	return uddiapply.Record(dr.Name, policy.Namespace).
+		WithLabels(dr.Labels).
+		WithAnnotations(dr.Annotations).
+		WithOwnerReferences(owner).
+		WithSpec(spec), nil
 }
 
 // sortSkips orders skips by source then hostname, matching the order
@@ -448,8 +454,8 @@ func (r *DNSPublishPolicyReconciler) emitEvents(
 	}
 
 	if len(missingZones) > 0 {
-		r.Runtime.Recorder.Event(policy, corev1.EventTypeWarning, uddiv1alpha1.ReasonZoneNotFound,
-			zonesNotFoundMessage(missingZones))
+		r.Runtime.Eventf(policy, nil, corev1.EventTypeWarning, uddiv1alpha1.ReasonZoneNotFound, uddisync.ActionPublish,
+			"%s", zonesNotFoundMessage(missingZones))
 	}
 
 	byReason := make(map[publish.SkipReason][]publish.Skip, len(skips))
@@ -465,12 +471,13 @@ func (r *DNSPublishPolicyReconciler) emitEvents(
 		reason := publish.SkipReason(reasonStr)
 		list := byReason[reason]
 		examples := exampleSources(list, maxSkipExamples)
-		r.Runtime.Recorder.Eventf(policy, corev1.EventTypeWarning, "Skipped",
+		r.Runtime.Eventf(policy, nil, corev1.EventTypeWarning, "Skipped", uddisync.ActionPublish,
 			"%d source(s) skipped: %s (e.g. %s)", len(list), reason, strings.Join(examples, ", "))
 	}
 
 	if setsDiffer(priorNames, desiredNames) {
-		r.Runtime.Recorder.Eventf(policy, corev1.EventTypeNormal, "Published", "published %d record(s)", desiredCount)
+		r.Runtime.Eventf(policy, nil, corev1.EventTypeNormal, "Published", uddisync.ActionPublish,
+			"published %d record(s)", desiredCount)
 	}
 }
 

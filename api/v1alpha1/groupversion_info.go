@@ -16,6 +16,7 @@ limitations under the License.
 
 // Package v1alpha1 contains API Schema definitions for the uddi v1alpha1 API group.
 // +kubebuilder:object:generate=true
+// +kubebuilder:ac:generate=true
 // +groupName=uddi.infoblox.com
 package v1alpha1
 
@@ -27,6 +28,10 @@ import (
 var (
 	// GroupVersion is group version used to register these objects.
 	GroupVersion = schema.GroupVersion{Group: "uddi.infoblox.com", Version: "v1alpha1"}
+
+	// SchemeGroupVersion is GroupVersion under the name client-go's code generators use;
+	// the generated apply configurations (applyconfiguration/utils.go) refer to it.
+	SchemeGroupVersion = GroupVersion
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
 	//

@@ -253,6 +253,45 @@ var _ = Describe("HostRegistrationPolicy controller", func() {
 		Expect(collectEvents()).To(ContainElement(ContainSubstring("Registered")))
 	})
 
+	It("removes a field from a generated FixedAddress when the policy stops setting it", func() {
+		space := readySpace("space-ssa")
+		node := newNode(nil, map[string]string{"uddi.infoblox.com/mac": "52:54:00:aa:bb:03"}, corev1.NodeInternalIP, "10.1.0.50")
+
+		policy := &uddiv1alpha1.HostRegistrationPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "ssa", Namespace: ns},
+			Spec: uddiv1alpha1.HostRegistrationPolicySpec{
+				Selector: selectorFor(nil),
+				SpaceRef: uddiv1alpha1.ObjectRef{Name: space.Name},
+				Tags:     map[string]string{"team": "net", "env": "prod"},
+				Register: uddiv1alpha1.Register{DHCPOptions: []uddiv1alpha1.DHCPOption{{
+					Type:        uddiv1alpha1.DHCPOptionTypeOption,
+					OptionCode:  "dhcp/option_code/aaa",
+					OptionValue: "10.0.10.1",
+				}}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+		Expect(reconcilePolicy(policy)).To(Succeed())
+
+		fa := getFixedAddress(policy, node.Name)
+		Expect(fa.Spec.Tags).To(HaveKeyWithValue("env", "prod"))
+		Expect(fa.Spec.DHCPOptions).To(HaveLen(1))
+		Expect(appliedBy(fa, hostreg.FieldManager)).To(BeTrue())
+
+		// The policy drops a tag and its DHCP options. Server-side apply removes exactly the
+		// fields this field manager owned and no longer sends, and leaves the rest alone.
+		policy.Spec.Register.DHCPOptions = nil
+		policy.Spec.Tags = map[string]string{"team": "net"}
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+		Expect(reconcilePolicy(policy)).To(Succeed())
+
+		fa = getFixedAddress(policy, node.Name)
+		Expect(fa.Spec.DHCPOptions).To(BeEmpty())
+		Expect(fa.Spec.Tags).To(HaveKeyWithValue("team", "net"))
+		Expect(fa.Spec.Tags).NotTo(HaveKey("env"))
+		Expect(fa.Spec.Tags).To(HaveKey(hostreg.TagSource))
+	})
+
 	It("registers a Node with no known MAC as an Address in Auto mode, then switches to a FixedAddress once a MAC annotation appears", func() {
 		space := readySpace("space-2")
 		node := newNode(nil, nil, corev1.NodeInternalIP, "10.1.0.20")

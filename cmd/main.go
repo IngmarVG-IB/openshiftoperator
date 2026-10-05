@@ -252,7 +252,7 @@ func main() {
 	runtimeCtx := &uddisync.Runtime{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
-		Recorder:    mgr.GetEventRecorderFor("uddi-operator"), //nolint:staticcheck // legacy recorder API, see PLAN.md
+		Recorder:    mgr.GetEventRecorder("uddi-operator"),
 		Connections: resolver,
 		ClusterID:   clusterID,
 	}
@@ -260,7 +260,7 @@ func main() {
 	if err := (&controller.ConnectionReconciler{
 		Client:      mgr.GetClient(),
 		Connections: resolver,
-		Recorder:    mgr.GetEventRecorderFor("uddi-connection"), //nolint:staticcheck // legacy recorder API, see PLAN.md
+		Recorder:    mgr.GetEventRecorder("uddi-connection"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Connection")
 		os.Exit(1)

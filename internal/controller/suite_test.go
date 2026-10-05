@@ -31,7 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -62,8 +62,10 @@ var (
 	testResolver *connection.Resolver
 	// testRuntime is the shared object-layer runtime.
 	testRuntime *uddisync.Runtime
-	// testRecorder captures the events the loop emits.
-	testRecorder *record.FakeRecorder
+	// testRecorder captures the events the loop emits. Its channel carries one string per
+	// event, "<type> <reason> <note>", exactly as the legacy fake recorder did; the new
+	// recorder drops the action and the related object.
+	testRecorder *events.FakeRecorder
 
 	nsCounter int
 )
@@ -210,7 +212,7 @@ var _ = BeforeSuite(func() {
 			return testFake.Client(), nil
 		},
 	}
-	testRecorder = record.NewFakeRecorder(1024)
+	testRecorder = events.NewFakeRecorder(1024)
 	testRuntime = &uddisync.Runtime{
 		Client:      k8sClient,
 		Scheme:      scheme.Scheme,

@@ -21,12 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -76,25 +77,75 @@ const (
 	EventAPIError = "APIError"
 )
 
+// Event actions, the "action" field of an events.k8s.io/v1 Event: what the operator was
+// doing when the event happened. They are shared by the object-layer loop and the three
+// policy controllers so that kubectl events reads the same on every kind.
+const (
+	ActionCreate    = "Create"
+	ActionAdopt     = "Adopt"
+	ActionUpdate    = "Update"
+	ActionDelete    = "Delete"
+	ActionOrphan    = "Orphan"
+	ActionRecreate  = "Recreate"
+	ActionReconcile = "Reconcile"
+	ActionPublish   = "Publish"
+	ActionAllocate  = "Allocate"
+	ActionAssign    = "Assign"
+	ActionRelease   = "Release"
+	ActionRegister  = "Register"
+)
+
 // Runtime holds everything the loop needs that is not per-kind.
 type Runtime struct {
 	// Client is the Kubernetes client.
 	Client client.Client
 	// Scheme is used to resolve the CR's kind for events.
 	Scheme *runtime.Scheme
-	// Recorder emits Kubernetes events.
-	Recorder record.EventRecorder
+	// Recorder emits Kubernetes events through the events.k8s.io/v1 API.
+	Recorder events.EventRecorder
 	// Connections resolves Connection CRs into Universal DDI clients.
 	Connections *connection.Resolver
 	// ClusterID goes into the uddi_operator_cluster ownership tag.
 	ClusterID string
 }
 
-func (rt *Runtime) event(obj client.Object, eventType, reason, format string, args ...any) {
-	if rt.Recorder == nil {
+// maxEventNote is the longest note events.k8s.io/v1 accepts; the API server rejects an
+// Event whose note is longer.
+const maxEventNote = 1024
+
+// Eventf records an event about regarding, with related as the optional secondary
+// object (nil for none). action says what the operator did, in UpperCamelCase (Create,
+// Adopt, Update, Delete, ...); reason keeps the stable values listed above. The note is
+// formatted here and cut to the API limit, so a long Universal DDI error message cannot
+// make the whole Event fail validation. It is safe on a nil Runtime or Recorder, which
+// is how a controller built without an event recorder behaves.
+func (rt *Runtime) Eventf(regarding, related client.Object, eventType, reason, action, format string, args ...any) {
+	if rt == nil {
 		return
 	}
-	rt.Recorder.Eventf(obj, eventType, reason, format, args...)
+	Emit(rt.Recorder, regarding, related, eventType, reason, action, format, args...)
+}
+
+// Emit is Runtime.Eventf for a caller that holds only the recorder, such as the
+// Connection controller.
+func Emit(rec events.EventRecorder, regarding, related client.Object, eventType, reason, action, format string, args ...any) {
+	if rec == nil {
+		return
+	}
+	rec.Eventf(regarding, related, eventType, reason, action, "%s", eventNote(fmt.Sprintf(format, args...)))
+}
+
+// eventNote cuts s to maxEventNote bytes without splitting a UTF-8 sequence.
+func eventNote(s string) string {
+	if len(s) <= maxEventNote {
+		return s
+	}
+	const ellipsis = "..."
+	cut := maxEventNote - len(ellipsis)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + ellipsis
 }
 
 // Reconcile runs the object-layer reconcile loop for one CR.
@@ -137,7 +188,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 		if !controllerutil.ContainsFinalizer(obj, uddiv1alpha1.Finalizer) {
 			return ctrl.Result{}, false, nil
 		}
-		rt.event(obj, corev1.EventTypeNormal, EventOrphaned,
+		rt.Eventf(obj, nil, corev1.EventTypeNormal, EventOrphaned, ActionOrphan,
 			"deletionPolicy is Orphan, leaving Universal DDI %s %s in place", ad.Kind(), status.ID)
 		return ctrl.Result{}, false, removeFinalizer(ctx, rt, obj)
 	}
@@ -214,7 +265,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 		switch {
 		case uddi.IsNotFound(err):
 			log.Info("Universal DDI object disappeared, recreating", "kind", ad.Kind(), "id", status.ID)
-			rt.event(obj, corev1.EventTypeWarning, EventRecreated,
+			rt.Eventf(obj, nil, corev1.EventTypeWarning, EventRecreated, ActionRecreate,
 				"Universal DDI %s %s no longer exists, recreating it", ad.Kind(), status.ID)
 			status.ID = ""
 			current = nil
@@ -230,7 +281,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 			return apiFailure(rt, obj, status, err)
 		}
 		if current != nil {
-			rt.event(obj, corev1.EventTypeNormal, EventAdopted,
+			rt.Eventf(obj, nil, corev1.EventTypeNormal, EventAdopted, ActionAdopt,
 				"recovered Universal DDI %s %s by ownership tag", ad.Kind(), ad.IDOf(current))
 		}
 	}
@@ -245,7 +296,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 				// conflict with the adapter's message and stop: no create, no adopt, no
 				// patch, no delete.
 				msg := ferr.Error()
-				rt.event(obj, corev1.EventTypeWarning, EventConflict, "%s", msg)
+				rt.Eventf(obj, nil, corev1.EventTypeWarning, EventConflict, ActionAdopt, "%s", msg)
 				setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,
 					uddiv1alpha1.ReasonAlreadyExists, msg, obj.GetGeneration())
 				setCondition(status, uddiv1alpha1.ConditionSynced, metav1.ConditionFalse,
@@ -263,16 +314,16 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 				return apiFailure(rt, obj, status, cerr)
 			}
 			current = created
-			rt.event(obj, corev1.EventTypeNormal, EventCreated,
+			rt.Eventf(obj, nil, corev1.EventTypeNormal, EventCreated, ActionCreate,
 				"created Universal DDI %s %s", ad.Kind(), ad.IDOf(current))
 		case tags.OwnedBy(ad.TagsOf(found), uid), lifecycle.AdoptExisting:
 			current = found
-			rt.event(obj, corev1.EventTypeNormal, EventAdopted,
+			rt.Eventf(obj, nil, corev1.EventTypeNormal, EventAdopted, ActionAdopt,
 				"adopted existing Universal DDI %s %s", ad.Kind(), ad.IDOf(current))
 		default:
 			msg := fmt.Sprintf("Universal DDI %s %s already exists and is not managed by this operator; "+
 				"set spec.lifecycle.adoptExisting to take it over", ad.Kind(), ad.IDOf(found))
-			rt.event(obj, corev1.EventTypeWarning, EventConflict, "%s", msg)
+			rt.Eventf(obj, nil, corev1.EventTypeWarning, EventConflict, ActionAdopt, "%s", msg)
 			setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,
 				uddiv1alpha1.ReasonAlreadyExists, msg, obj.GetGeneration())
 			setCondition(status, uddiv1alpha1.ConditionSynced, metav1.ConditionFalse,
@@ -289,7 +340,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 		updated, uerr := ad.Update(ctx, uc, status.ID, patch)
 		if uerr != nil {
 			if uddi.IsNotFound(uerr) {
-				rt.event(obj, corev1.EventTypeWarning, EventRecreated,
+				rt.Eventf(obj, nil, corev1.EventTypeWarning, EventRecreated, ActionRecreate,
 					"Universal DDI %s %s vanished during update, recreating it", ad.Kind(), status.ID)
 				status.ID = ""
 				return ctrl.Result{RequeueAfter: RequeueSoon}, true, nil
@@ -297,7 +348,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 			return apiFailure(rt, obj, status, uerr)
 		}
 		current = updated
-		rt.event(obj, corev1.EventTypeNormal, EventUpdated,
+		rt.Eventf(obj, nil, corev1.EventTypeNormal, EventUpdated, ActionUpdate,
 			"updated Universal DDI %s %s", ad.Kind(), status.ID)
 	}
 
@@ -352,7 +403,7 @@ func finalize[S any, U any](
 	}
 
 	if !tags.OwnedBy(ad.TagsOf(current), uid) {
-		rt.event(obj, corev1.EventTypeWarning, EventOrphaned,
+		rt.Eventf(obj, nil, corev1.EventTypeWarning, EventOrphaned, ActionOrphan,
 			"Universal DDI %s %s does not carry this object's ownership tag, leaving it in place", ad.Kind(), id)
 		logf.FromContext(ctx).Info("ownership tag mismatch on delete, orphaning",
 			"kind", ad.Kind(), "id", id)
@@ -366,7 +417,7 @@ func finalize[S any, U any](
 		return deleteFailure(rt, obj, status, derr)
 	}
 
-	rt.event(obj, corev1.EventTypeNormal, EventDeleted, "deleted Universal DDI %s %s", ad.Kind(), id)
+	rt.Eventf(obj, nil, corev1.EventTypeNormal, EventDeleted, ActionDelete, "deleted Universal DDI %s %s", ad.Kind(), id)
 	return ctrl.Result{}, false, removeFinalizer(ctx, rt, obj)
 }
 
@@ -381,7 +432,7 @@ func orphanMissingConnection(ctx context.Context, rt *Runtime, obj client.Object
 	if id == "" {
 		id = "(no id recorded)"
 	}
-	rt.event(obj, corev1.EventTypeWarning, EventConnectionMissing,
+	rt.Eventf(obj, nil, corev1.EventTypeWarning, EventConnectionMissing, ActionOrphan,
 		"the Connection this object uses no longer exists, so Universal DDI cannot be reached; "+
 			"%s %s was left in place with its ownership tags and has to be removed by hand or re-adopted by a new CR",
 		kind, id)
@@ -405,7 +456,7 @@ func apiFailure(rt *Runtime, obj client.Object, status *uddiv1alpha1.ObjectStatu
 		uddiv1alpha1.ReasonAPIError, err.Error(), obj.GetGeneration())
 	setCondition(status, uddiv1alpha1.ConditionSynced, metav1.ConditionFalse,
 		uddiv1alpha1.ReasonAPIError, err.Error(), obj.GetGeneration())
-	rt.event(obj, corev1.EventTypeWarning, EventAPIError, "%s", err.Error())
+	rt.Eventf(obj, nil, corev1.EventTypeWarning, EventAPIError, ActionReconcile, "%s", err.Error())
 	return ctrl.Result{}, true, err
 }
 
@@ -414,7 +465,7 @@ func apiFailure(rt *Runtime, obj client.Object, status *uddiv1alpha1.ObjectStatu
 func deleteFailure(rt *Runtime, obj client.Object, status *uddiv1alpha1.ObjectStatus, err error) (ctrl.Result, bool, error) {
 	setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,
 		uddiv1alpha1.ReasonDeleting, err.Error(), obj.GetGeneration())
-	rt.event(obj, corev1.EventTypeWarning, EventDeleteBlocked, "%s", err.Error())
+	rt.Eventf(obj, nil, corev1.EventTypeWarning, EventDeleteBlocked, ActionDelete, "%s", err.Error())
 	return ctrl.Result{}, true, err
 }
 

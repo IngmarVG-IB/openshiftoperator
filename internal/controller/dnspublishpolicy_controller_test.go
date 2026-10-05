@@ -225,6 +225,48 @@ var _ = Describe("DNSPublishPolicy controller", func() {
 			Expect(records[0].Spec.RData.A.Address).To(Equal("192.0.2.10"))
 		})
 
+		It("removes a field from a generated Record when the policy stops setting it", func() {
+			ingress := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: "ssa", Namespace: ns},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{{Host: "ssa.apps.example.com"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ingress)).To(Succeed())
+			ingress.Status.LoadBalancer.Ingress = []networkingv1.IngressLoadBalancerIngress{{IP: "192.0.2.40"}}
+			Expect(k8sClient.Status().Update(ctx, ingress)).To(Succeed())
+
+			policy := &uddiv1alpha1.DNSPublishPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "ssa-policy", Namespace: ns},
+				Spec: uddiv1alpha1.DNSPublishPolicySpec{
+					Sources:  []uddiv1alpha1.SourceKind{uddiv1alpha1.SourceKindIngress},
+					ZoneRefs: []uddiv1alpha1.ObjectRef{{Name: zone.Name}},
+					Tags:     map[string]string{"team": "net", "env": "prod"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+			Expect(reconcilePolicy(policy)).To(Succeed())
+
+			records := policyRecords(policy)
+			Expect(records).To(HaveLen(1))
+			recordName := records[0].Name
+			Expect(records[0].Spec.Tags).To(HaveKeyWithValue("env", "prod"))
+			Expect(appliedBy(&records[0], publish.FieldManager)).To(BeTrue())
+
+			// The policy drops a tag. Server-side apply removes exactly the fields this field
+			// manager owned and no longer sends, and leaves the rest alone.
+			policy.Spec.Tags = map[string]string{"team": "net"}
+			Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+			Expect(reconcilePolicy(policy)).To(Succeed())
+
+			records = policyRecords(policy)
+			Expect(records).To(HaveLen(1))
+			Expect(records[0].Name).To(Equal(recordName))
+			Expect(records[0].Spec.Tags).To(HaveKeyWithValue("team", "net"))
+			Expect(records[0].Spec.Tags).NotTo(HaveKey("env"))
+			Expect(records[0].Spec.Tags).To(HaveKey(publish.TagSource))
+		})
+
 		It("publishes a LoadBalancer Service with the hostname annotation and skips the others", func() {
 			lbWithHostname := &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{

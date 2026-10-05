@@ -18,12 +18,14 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,9 +64,28 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 	var (
 		mgrNS     string
 		mgrFake   *uddi.Fake
+		mgrRT     *uddisync.Runtime
 		mgrCancel context.CancelFunc
 		mgrDone   chan struct{}
 	)
+
+	// eventsFor lists the events.k8s.io/v1 Events the manager's recorder has written about
+	// the named object in the manager's namespace.
+	eventsFor := func(name string) func() []eventsv1.Event {
+		return func() []eventsv1.Event {
+			var list eventsv1.EventList
+			if err := k8sClient.List(ctx, &list, client.InNamespace(mgrNS)); err != nil {
+				return nil
+			}
+			var out []eventsv1.Event
+			for _, e := range list.Items {
+				if e.Regarding.Name == name {
+					out = append(out, e)
+				}
+			}
+			return out
+		}
+	}
 
 	// secretAndConnection creates a Secret plus a Connection and leaves both to the
 	// manager's Connection controller to verify.
@@ -117,15 +138,16 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		rt := &uddisync.Runtime{
 			Client:      mgr.GetClient(),
 			Scheme:      mgr.GetScheme(),
-			Recorder:    mgr.GetEventRecorderFor("uddi-operator"), //nolint:staticcheck // legacy recorder API, see PLAN.md
+			Recorder:    mgr.GetEventRecorder("uddi-operator"),
 			Connections: resolver,
 			ClusterID:   TestClusterID,
 		}
+		mgrRT = rt
 
 		Expect((&ConnectionReconciler{
 			Client:      mgr.GetClient(),
 			Connections: resolver,
-			Recorder:    mgr.GetEventRecorderFor("uddi-connection"), //nolint:staticcheck // legacy recorder API, see PLAN.md
+			Recorder:    mgr.GetEventRecorder("uddi-connection"),
 		}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&ViewReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&AuthZoneReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
@@ -173,6 +195,46 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			WithTimeout(settle).WithPolling(poll).
 			Should(HaveField("Status", metav1.ConditionTrue))
 		Expect(v.Status.ID).To(HavePrefix(uddi.PrefixView + "/"))
+	})
+
+	It("writes events.k8s.io/v1 Events that name what the loop did", func() {
+		secretAndConnection("event-connection")
+		v := &uddiv1alpha1.View{
+			ObjectMeta: metav1.ObjectMeta{Name: "event-view", Namespace: mgrNS},
+			Spec: uddiv1alpha1.ViewSpec{
+				CommonSpec: uddiv1alpha1.CommonSpec{
+					ConnectionRef: uddiv1alpha1.ConnectionRef{Name: "event-connection"},
+				},
+				Name: "event-view",
+			},
+		}
+		Expect(k8sClient.Create(ctx, v)).To(Succeed())
+
+		Eventually(eventsFor(v.Name)).WithTimeout(settle).WithPolling(poll).Should(ContainElement(And(
+			HaveField("Reason", uddisync.EventCreated),
+			HaveField("Action", uddisync.ActionCreate),
+			HaveField("Type", corev1.EventTypeNormal),
+			HaveField("ReportingController", "uddi-operator"),
+			HaveField("Note", ContainSubstring("created Universal DDI View")),
+		)))
+	})
+
+	It("cuts an over-long note to the 1024 bytes events.k8s.io/v1 accepts instead of losing the Event", func() {
+		v := &uddiv1alpha1.View{
+			ObjectMeta: metav1.ObjectMeta{Name: "note-view", Namespace: mgrNS},
+			Spec:       uddiv1alpha1.ViewSpec{Name: "note-view"},
+		}
+		Expect(k8sClient.Create(ctx, v)).To(Succeed())
+
+		// The API server rejects an Event whose note is longer than 1024 bytes, and a
+		// Universal DDI error message can easily be.
+		mgrRT.Eventf(v, nil, corev1.EventTypeWarning, uddisync.EventAPIError, uddisync.ActionReconcile,
+			"%s", strings.Repeat("x", 5000))
+
+		Eventually(eventsFor(v.Name)).WithTimeout(settle).WithPolling(poll).Should(ContainElement(And(
+			HaveField("Reason", uddisync.EventAPIError),
+			HaveField("Note", HaveLen(1024)),
+		)))
 	})
 
 	It("requeues a Record through the dependency index when its AuthZone gains a status.id", func() {
@@ -352,6 +414,13 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			}
 			return len(list.Items)
 		}).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
+
+		// The policy's event names the Service it allocated for as the related object.
+		Eventually(eventsFor(policy.Name)).WithTimeout(settle).WithPolling(poll).Should(ContainElement(And(
+			HaveField("Reason", "Allocated"),
+			HaveField("Action", uddisync.ActionAllocate),
+			HaveField("Related.Name", svc.Name),
+		)))
 	})
 
 	It("registers a Node labelled after the HostRegistrationPolicy exists, purely through the watch", func() {
@@ -396,5 +465,12 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			}
 			return len(list.Items)
 		}).WithTimeout(settle).WithPolling(poll).Should(Equal(1))
+
+		// The policy's event names the Node it registered as the related object.
+		Eventually(eventsFor(policy.Name)).WithTimeout(settle).WithPolling(poll).Should(ContainElement(And(
+			HaveField("Reason", "Registered"),
+			HaveField("Action", uddisync.ActionRegister),
+			HaveField("Related.Name", node.Name),
+		)))
 	})
 })
