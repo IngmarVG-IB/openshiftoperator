@@ -197,8 +197,9 @@ var _ = Describe("IPAllocationPolicy controller", func() {
 		Expect(owner.UID).To(Equal(svc.UID))
 		Expect(owner.Controller).NotTo(BeNil())
 		Expect(*owner.Controller).To(BeTrue())
-		Expect(owner.BlockOwnerDeletion).NotTo(BeNil())
-		Expect(*owner.BlockOwnerDeletion).To(BeTrue())
+		// No blockOwnerDeletion: OpenShift's OwnerReferencesPermissionEnforcement would
+		// reject it, since the operator cannot update the owner's finalizers.
+		Expect(owner.BlockOwnerDeletion).To(BeNil())
 
 		Expect(addr.Spec.NextAvailableFrom).NotTo(BeNil())
 		Expect(addr.Spec.NextAvailableFrom.RangeRef).NotTo(BeNil())

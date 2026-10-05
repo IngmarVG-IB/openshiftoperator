@@ -551,7 +551,7 @@ func desiredRecordApplyConfiguration(
 	if err != nil {
 		return nil, err
 	}
-	owner, err := controllerOwnerReference(policy, scheme)
+	owner, err := controllerOwnerReference(policy, scheme, true)
 	if err != nil {
 		return nil, err
 	}

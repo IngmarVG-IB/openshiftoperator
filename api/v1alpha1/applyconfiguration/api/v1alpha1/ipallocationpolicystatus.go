@@ -36,8 +36,8 @@ type IPAllocationPolicyStatusApplyConfiguration struct {
 	// Assigned is, of those, the number whose assignment field carries every Ready
 	// address.
 	Assigned *int32 `json:"assigned,omitempty"`
-	// Skipped lists Services not allocated or not assigned, and why. Bounded and
-	// sorted by service then reason.
+	// Skipped lists Services and EgressIPs not allocated or not assigned, and pools not
+	// mirrored into MetalLB, and why. Bounded and sorted by service then reason.
 	Skipped []SkippedServiceApplyConfiguration `json:"skipped,omitempty"`
 }
 

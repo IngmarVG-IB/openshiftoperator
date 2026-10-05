@@ -24,9 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	"k8s.io/apimachinery/pkg/util/validation"
-
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/labelvalue"
 )
 
 // maxNameLength is the Kubernetes object name length limit AddressName must respect.
@@ -35,10 +34,6 @@ const maxNameLength = 253
 // nameHashLength is how many hex characters of the sha256 digest AddressName keeps
 // when the plain "<policy>-<service>" name would be too long.
 const nameHashLength = 10
-
-// maxLabelPrefix is how much of a target name a shortened LabelTargetName value keeps
-// before "-<hash>", so the value stays within the 63 character label value limit.
-const maxLabelPrefix = 63 - 1 - nameHashLength
 
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
@@ -81,23 +76,12 @@ func SlotAddressName(policy string, target TargetRef, slot int) string {
 	return policy + "-" + shortHash(target.Name) + suffix
 }
 
-// TargetNameLabelValue is the LabelTargetName value for a target name: the name itself
-// when it is a valid label value (every Service name is), otherwise its first 52
-// characters plus "-<10 hex of sha256(name)>". AnnotationTargetName then carries the full
-// name.
+// TargetNameLabelValue is the LabelTargetName value for a target name: labelvalue.For, so
+// every policy shortens long names the same way. That is the name itself when it fits in
+// a label value (every Service name does), otherwise its first characters plus
+// "-<10 hex of sha256(name)>". AnnotationTargetName then carries the full name.
 func TargetNameLabelValue(name string) string {
-	if len(validation.IsValidLabelValue(name)) == 0 {
-		return name
-	}
-	prefix := name
-	if len(prefix) > maxLabelPrefix {
-		prefix = prefix[:maxLabelPrefix]
-	}
-	prefix = strings.TrimRight(prefix, "-_.")
-	if prefix == "" {
-		return shortHash(name)
-	}
-	return prefix + "-" + shortHash(name)
+	return labelvalue.For(name)
 }
 
 // DefaultHostname is the hostname registered on a Service's Addresses when it does not

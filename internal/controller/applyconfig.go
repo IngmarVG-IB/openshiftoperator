@@ -127,24 +127,34 @@ func dropNulls(v any) any {
 }
 
 // controllerOwnerReference builds the controller ownerReference an object generated for
-// owner carries, taking the owner's group, version and kind from the scheme. It is what
-// controllerutil.SetControllerReference sets on a typed object.
-func controllerOwnerReference(owner client.Object, scheme *runtime.Scheme) (*metav1ac.OwnerReferenceApplyConfiguration, error) {
+// owner carries, taking the owner's group, version and kind from the scheme.
+// blockOwnerDeletion follows the rule documented on controllerReference.
+func controllerOwnerReference(owner client.Object, scheme *runtime.Scheme, blockOwnerDeletion bool) (*metav1ac.OwnerReferenceApplyConfiguration, error) {
 	gvk, err := apiutil.GVKForObject(owner, scheme)
 	if err != nil {
 		return nil, err
 	}
-	return controllerReference(gvk.GroupVersion().String(), gvk.Kind, owner.GetName(), owner.GetUID()), nil
+	return controllerReference(gvk.GroupVersion().String(), gvk.Kind, owner.GetName(), owner.GetUID(), blockOwnerDeletion), nil
 }
 
-// controllerReference is a controller ownerReference with blockOwnerDeletion, the shape
-// Kubernetes garbage collection expects of a generated object's single owner.
-func controllerReference(apiVersion, kind, name string, uid types.UID) *metav1ac.OwnerReferenceApplyConfiguration {
-	return metav1ac.OwnerReference().
+// controllerReference is the controller ownerReference of a generated object.
+//
+// blockOwnerDeletion is set only when the operator may update the owner's finalizers:
+// OpenShift's OwnerReferencesPermissionEnforcement admission plugin rejects
+// blockOwnerDeletion: true from a client without update on the owner's finalizers
+// subresource. Records owned by their DNSPublishPolicy set it, since the operator holds
+// that permission for its own kinds. Addresses and FixedAddresses owned by Services, Nodes
+// and EgressIPs do not: background garbage collection removes them without it, and
+// granting update on those kinds' finalizers would widen the operator's permissions.
+func controllerReference(apiVersion, kind, name string, uid types.UID, blockOwnerDeletion bool) *metav1ac.OwnerReferenceApplyConfiguration {
+	ref := metav1ac.OwnerReference().
 		WithAPIVersion(apiVersion).
 		WithKind(kind).
 		WithName(name).
 		WithUID(uid).
-		WithController(true).
-		WithBlockOwnerDeletion(true)
+		WithController(true)
+	if blockOwnerDeletion {
+		ref = ref.WithBlockOwnerDeletion(true)
+	}
+	return ref
 }

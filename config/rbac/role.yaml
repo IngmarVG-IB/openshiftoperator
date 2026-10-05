@@ -58,12 +58,33 @@ rules:
   - list
   - watch
 - apiGroups:
+  - k8s.ovn.org
+  resources:
+  - egressips
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
   - metal3.io
   resources:
   - baremetalhosts
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - metallb.io
+  resources:
+  - ipaddresspools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - networking.k8s.io

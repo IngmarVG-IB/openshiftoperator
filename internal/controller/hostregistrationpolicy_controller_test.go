@@ -223,8 +223,9 @@ var _ = Describe("HostRegistrationPolicy controller", func() {
 		Expect(owner.UID).To(Equal(node.UID))
 		Expect(owner.Controller).NotTo(BeNil())
 		Expect(*owner.Controller).To(BeTrue())
-		Expect(owner.BlockOwnerDeletion).NotTo(BeNil())
-		Expect(*owner.BlockOwnerDeletion).To(BeTrue())
+		// No blockOwnerDeletion: OpenShift's OwnerReferencesPermissionEnforcement would
+		// reject it, since the operator cannot update the owner's finalizers.
+		Expect(owner.BlockOwnerDeletion).To(BeNil())
 
 		Expect(fa.Spec.MatchType).To(Equal(uddiv1alpha1.FixedAddressMatchType("mac")))
 		Expect(fa.Spec.MatchValue).To(Equal("52:54:00:aa:bb:01"))

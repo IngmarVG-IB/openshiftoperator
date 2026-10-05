@@ -32,6 +32,25 @@ const (
 	ReasonPoolNotReady = "PoolNotReady"
 )
 
+// Skip reasons IPAllocationPolicy.status.skipped carries besides the claim skip reasons of
+// internal/ipalloc (ipalloc.SkipReason). None of them changes the Ready condition. See
+// DESIGN.md section 4.7, milestone 7 extensions.
+const (
+	// SkipReasonAPIUnavailable means spec.targets lists EgressIP but the cluster does not
+	// serve k8s.ovn.org/v1 EgressIP (entry "EgressIP"), or spec.metallb.mirrorPools is true
+	// but the cluster does not serve metallb.io/v1beta1 IPAddressPool (entry
+	// "IPAddressPool"). That target, or the mirroring, is inert.
+	SkipReasonAPIUnavailable = "APIUnavailable"
+	// SkipReasonMetalLBPoolInvalid means a pool the policy uses cannot be mirrored into a
+	// MetalLB IPAddressPool, for example a Subnet whose address is not known yet (entry
+	// "<pool kind>/<pool name>").
+	SkipReasonMetalLBPoolInvalid = "MetalLBPoolInvalid"
+	// SkipReasonMetalLBPoolConflict means the IPAddressPool a pool would be mirrored into
+	// already exists without this policy's labels; it is left alone (entry
+	// "<pool kind>/<pool name>").
+	SkipReasonMetalLBPoolConflict = "MetalLBPoolConflict"
+)
+
 // AssignMode selects how an allocated address is written back onto a Service.
 // +kubebuilder:validation:Enum=Annotation;LoadBalancerIP
 type AssignMode string
@@ -182,11 +201,15 @@ type IPAllocationPolicySpec struct {
 	AddressLifecycle Lifecycle `json:"addressLifecycle,omitempty"`
 }
 
-// SkippedService is one Service that did not get an address, or did not get its
-// address assigned, and why. See internal/ipalloc.Skip.
+// SkippedService is one Service or EgressIP that did not get its addresses, or did not
+// get them assigned, or one pool that could not be mirrored into MetalLB, and why. See
+// internal/ipalloc.Skip.
 type SkippedService struct {
-	// Service is the name of the Service that was skipped.
-	// +kubebuilder:validation:MaxLength=253
+	// Service names what was skipped: the name of a Service; "EgressIP/<name>" for an
+	// EgressIP; "<pool kind>/<pool name>" (for example "Range/lb-pool") for a pool that
+	// cannot be mirrored into MetalLB; or "EgressIP" or "IPAddressPool" alone when the
+	// cluster does not serve that API. At most "AddressBlock/" plus a 253 character name.
+	// +kubebuilder:validation:MaxLength=266
 	// +optional
 	Service string `json:"service,omitempty"`
 
@@ -223,8 +246,8 @@ type IPAllocationPolicyStatus struct {
 	// +optional
 	Assigned int32 `json:"assigned,omitempty"`
 
-	// Skipped lists Services not allocated or not assigned, and why. Bounded and
-	// sorted by service then reason.
+	// Skipped lists Services and EgressIPs not allocated or not assigned, and pools not
+	// mirrored into MetalLB, and why. Bounded and sorted by service then reason.
 	// +kubebuilder:validation:MaxItems=50
 	// +listType=atomic
 	// +optional

@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
@@ -156,33 +157,62 @@ func TestDesiredRecordApplyConfigurationCarriesTheDesiredObject(t *testing.T) {
 func TestDesiredAddressApplyConfigurationCarriesTheDesiredObject(t *testing.T) {
 	policy := &uddiv1alpha1.IPAllocationPolicy{ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "ns"}}
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "ns", UID: types.UID("svc-uid")}}
-	da := ipalloc.DesiredAddress{
-		Name:        "policy-web",
-		Labels:      map[string]string{ipalloc.LabelPolicy: "policy", ipalloc.LabelService: "web"},
-		Annotations: map[string]string{"example.com/note": "x"},
-		Spec:        fullAddressSpec(),
-	}
-
-	ac, err := desiredAddressApplyConfiguration(policy, da, svc, unitScheme(t))
+	svcOwner, err := controllerOwnerReference(svc, unitScheme(t), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var addr uddiv1alpha1.Address
-	roundTrip(t, ac, &addr)
-	if *ac.Kind != "Address" || addr.Name != da.Name || addr.Namespace != "ns" {
-		t.Errorf("kind/name/namespace = %s %s/%s", *ac.Kind, addr.Namespace, addr.Name)
-	}
-	if !equality.Semantic.DeepEqual(addr.Labels, da.Labels) || !equality.Semantic.DeepEqual(addr.Annotations, da.Annotations) {
-		t.Errorf("labels/annotations = %v / %v", addr.Labels, addr.Annotations)
-	}
-	owner := metav1.GetControllerOf(&addr)
-	if owner == nil || owner.APIVersion != "v1" || owner.Kind != "Service" || owner.Name != "web" ||
-		owner.UID != "svc-uid" || owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
-		t.Errorf("owner = %+v", owner)
-	}
-	if !equality.Semantic.DeepEqual(addr.Spec, da.Spec) {
-		t.Errorf("spec = %+v, want %+v", addr.Spec, da.Spec)
+	for _, tc := range []struct {
+		name  string
+		owner *metav1ac.OwnerReferenceApplyConfiguration
+		want  metav1.OwnerReference
+	}{
+		{
+			name:  "Service slot",
+			owner: svcOwner,
+			want:  metav1.OwnerReference{APIVersion: "v1", Kind: "Service", Name: "web", UID: "svc-uid"},
+		},
+		{
+			name:  "EgressIP slot",
+			owner: egressIPOwnerReference("egress-a", types.UID("eip-uid")),
+			want:  metav1.OwnerReference{APIVersion: "k8s.ovn.org/v1", Kind: "EgressIP", Name: "egress-a", UID: "eip-uid"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			da := ipalloc.DesiredAddress{
+				Name:        "policy-web",
+				Labels:      map[string]string{ipalloc.LabelPolicy: "policy", ipalloc.LabelService: "web"},
+				Annotations: map[string]string{"example.com/note": "x"},
+				Spec:        fullAddressSpec(),
+			}
+
+			ac, err := desiredAddressApplyConfiguration(policy, da, tc.owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var addr uddiv1alpha1.Address
+			roundTrip(t, ac, &addr)
+			if *ac.Kind != "Address" || addr.Name != da.Name || addr.Namespace != "ns" {
+				t.Errorf("kind/name/namespace = %s %s/%s", *ac.Kind, addr.Namespace, addr.Name)
+			}
+			if !equality.Semantic.DeepEqual(addr.Labels, da.Labels) || !equality.Semantic.DeepEqual(addr.Annotations, da.Annotations) {
+				t.Errorf("labels/annotations = %v / %v", addr.Labels, addr.Annotations)
+			}
+			owner := metav1.GetControllerOf(&addr)
+			if owner == nil || owner.APIVersion != tc.want.APIVersion || owner.Kind != tc.want.Kind || owner.Name != tc.want.Name ||
+				owner.UID != tc.want.UID || owner.BlockOwnerDeletion != nil {
+				// No blockOwnerDeletion: OpenShift would reject it without update on the
+				// Service's or EgressIP's finalizers.
+				t.Errorf("owner = %+v", owner)
+			}
+			if len(addr.OwnerReferences) != 1 {
+				t.Errorf("ownerReferences = %+v", addr.OwnerReferences)
+			}
+			if !equality.Semantic.DeepEqual(addr.Spec, da.Spec) {
+				t.Errorf("spec = %+v, want %+v", addr.Spec, da.Spec)
+			}
+		})
 	}
 }
 
@@ -196,7 +226,7 @@ func TestDesiredRegistrationApplyConfigurationCarriesTheDesiredObject(t *testing
 		t.Helper()
 		owner := metav1.GetControllerOf(o)
 		if owner == nil || owner.APIVersion != "v1" || owner.Kind != "Node" || owner.Name != "node-1" ||
-			owner.UID != "node-uid" || owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
+			owner.UID != "node-uid" || owner.BlockOwnerDeletion != nil {
 			t.Errorf("owner = %+v", owner)
 		}
 	}

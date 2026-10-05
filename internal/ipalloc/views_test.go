@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/labelvalue"
 )
 
 func TestViewServiceFamilies(t *testing.T) {
@@ -459,8 +460,9 @@ func TestTargetNameLabelValue(t *testing.T) {
 	if again := TargetNameLabelValue(long); again != got {
 		t.Errorf("not deterministic: %q != %q", again, got)
 	}
-	if got := TargetNameLabelValue(strings.Repeat("-", 70)); len(got) != nameHashLength {
-		t.Errorf("all-separator name = %q, want a bare hash", got)
+	// Every policy shortens long names the same way.
+	if want := labelvalue.For(long); got != want {
+		t.Errorf("TargetNameLabelValue = %q, labelvalue.For = %q", got, want)
 	}
 
 	// The planner stamps the full name in an annotation and AddressStateOf reads it back.

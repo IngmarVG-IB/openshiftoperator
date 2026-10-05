@@ -38,6 +38,7 @@ import (
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/connection"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/egressip"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/gatewayapi"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/hostreg"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/ipalloc"
@@ -166,7 +167,9 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			Client: mgr.GetClient(), Runtime: rt,
 			RoutesAvailable: true, DNSRecordsAvailable: true, GatewayAPIAvailable: true,
 		}).SetupWithManager(mgr)).To(Succeed())
-		Expect((&IPAllocationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt}).SetupWithManager(mgr)).To(Succeed())
+		Expect((&IPAllocationPolicyReconciler{
+			Client: mgr.GetClient(), Runtime: rt, EgressIPAvailable: true, MetalLBAvailable: true,
+		}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&HostRegistrationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, NMStateAvailable: true, Metal3Available: true}).SetupWithManager(mgr)).To(Succeed())
 
 		var mgrCtx context.Context
@@ -428,6 +431,73 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			HaveField("Action", uddisync.ActionAllocate),
 			HaveField("Related.Name", svc.Name),
 		)))
+	})
+
+	It("allocates for an EgressIP created after the IPAllocationPolicy exists, purely through the watch", func() {
+		space := &uddiv1alpha1.IPSpace{
+			ObjectMeta: metav1.ObjectMeta{Name: "egress-space", Namespace: mgrNS},
+			Spec:       uddiv1alpha1.IPSpaceSpec{Name: "egress-space"},
+		}
+		Expect(k8sClient.Create(ctx, space)).To(Succeed())
+		Eventually(readyCondition(space, func() []metav1.Condition { return space.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		rg := &uddiv1alpha1.Range{
+			ObjectMeta: metav1.ObjectMeta{Name: "egress-range", Namespace: mgrNS},
+			Spec: uddiv1alpha1.RangeSpec{
+				SpaceRef: uddiv1alpha1.ObjectRef{Name: space.Name},
+				Start:    "10.0.61.10",
+				End:      "10.0.61.20",
+			},
+		}
+		Expect(k8sClient.Create(ctx, rg)).To(Succeed())
+		Eventually(readyCondition(rg, func() []metav1.Condition { return rg.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+
+		// EgressIPs are cluster-scoped, so the selector keeps this policy to its own.
+		policy := &uddiv1alpha1.IPAllocationPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "watch-egress-policy", Namespace: mgrNS},
+			Spec: uddiv1alpha1.IPAllocationPolicySpec{
+				Targets:      []uddiv1alpha1.TargetKind{uddiv1alpha1.TargetKindEgressIP},
+				Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{"egress-watch-test": mgrNS}},
+				AllocateFrom: uddiv1alpha1.AllocateFrom{RangeRef: &uddiv1alpha1.ObjectRef{Name: rg.Name}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		eip := egressip.New()
+		eip.SetName("watch-egress-" + mgrNS)
+		eip.SetLabels(map[string]string{"egress-watch-test": mgrNS})
+		eip.SetAnnotations(map[string]string{"uddi.infoblox.com/allocate": "true"})
+		Expect(unstructured.SetNestedField(eip.Object, map[string]interface{}{
+			"egressIPs":         []interface{}{},
+			"namespaceSelector": map[string]interface{}{},
+		}, "spec")).To(Succeed())
+		Expect(k8sClient.Create(ctx, eip)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, eip))).To(Succeed())
+		})
+
+		// No direct Reconcile call on IPAllocationPolicyReconciler: the EgressIP watch
+		// wakes it, it creates the Address, and once the Address controller allocated it,
+		// writes it into spec.egressIPs.
+		Eventually(func() []string {
+			fresh := egressip.New()
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), fresh); err != nil {
+				return nil
+			}
+			ips, _, _ := egressip.EgressIPs(fresh)
+			return ips
+		}).WithTimeout(settle).WithPolling(poll).Should(Equal([]string{"10.0.61.10"}))
+
+		var addr uddiv1alpha1.Address
+		Expect(k8sClient.Get(ctx, client.ObjectKey{
+			Namespace: mgrNS,
+			Name:      ipalloc.SlotAddressName(policy.Name, ipalloc.TargetRef{Kind: ipalloc.TargetEgressIP, Name: eip.GetName()}, 0),
+		}, &addr)).To(Succeed())
+		Expect(metav1.GetControllerOf(&addr)).To(HaveField("Kind", egressip.GVK.Kind))
 	})
 
 	It("registers a Node labelled after the HostRegistrationPolicy exists, purely through the watch", func() {

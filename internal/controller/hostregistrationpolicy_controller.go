@@ -436,7 +436,7 @@ func desiredRegistrationApplyConfiguration(
 	policy *uddiv1alpha1.HostRegistrationPolicy,
 	d hostreg.DesiredRegistration,
 ) (runtime.ApplyConfiguration, error) {
-	owner := controllerReference("v1", "Node", d.Node.Name, d.Node.UID)
+	owner := controllerReference("v1", "Node", d.Node.Name, d.Node.UID, false)
 
 	switch d.Kind {
 	case hostreg.KindFixedAddress:
