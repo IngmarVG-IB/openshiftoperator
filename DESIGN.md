@@ -718,9 +718,11 @@ spec:
 - **Metal3 as a third MAC source.** After the annotation and NodeNetworkState, the
   operator reads `metal3.io/v1alpha1 BareMetalHost` objects (unstructured) in
   `macSource.metal3.namespace` when that API exists: the host whose
-  `status.hardwareDetails.nics[].ip` equals the registered address gives that NIC's `mac`;
-  failing that, the host whose `status.hardwareDetails.hostname` equals the Node name gives
+  `status.hardware.nics[].ip` equals the registered address gives that NIC's `mac`;
+  failing that, the host whose `status.hardware.hostname` equals the Node name gives
   `spec.bootMACAddress`. `MACFrom` is then `metal3`. This closes open question 2.
+  (The Go field is `HardwareDetails`, but its JSON name, and so the path in the CRD, is
+  `hardware`.)
 - **Additional interfaces.** For each selected Node and each entry, the address is the first
   IP inside `cidr` found among the Node's `status.addresses`, then among the NodeNetworkState
   interface addresses; the MAC is the one of the NodeNetworkState interface or Metal3 NIC
@@ -728,7 +730,10 @@ spec:
   Node's registered hostname. Each becomes its own registration named
   `<policy>-<node>-<name>` with the label `uddi.infoblox.com/interface: <name>`, using the
   policy's `register.mode`. An interface without a matching IP is skipped with `NoAddress`
-  naming the interface. Opting a Node out releases all its registrations.
+  naming the interface, and an unparsable CIDR or a suffix that makes the hostname invalid
+  with `InvalidInterface`. Interface and primary registrations are planned independently,
+  and every registration object counts towards `registered` and `pending`. Opting a Node
+  out releases all its registrations.
 - **PTR records for nodes** come from a DNSPublishPolicy with the Node source and
   `createPtr`; host registration stays an IPAM and DHCP concern. `docs/patterns.md` shows
   the combination.
