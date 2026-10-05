@@ -198,15 +198,21 @@ func listAll[T any](method string, opts ListOptions, fetch func(ListOptions) ([]
 	var all []T
 	page := opts
 	page.Limit = listPageSize
+	longest := 0
 	for range listMaxPages {
 		res, err := fetch(page)
 		if err != nil {
 			return nil, err
 		}
 		all = append(all, res...)
-		if len(res) < listPageSize {
+		// The last page is the first one shorter than the longest page seen so far, or an
+		// empty one. Comparing with the requested size instead would silently truncate
+		// the walk after one page if a tenant caps _limit below listPageSize, which the
+		// API documents as possible. A short first page costs one extra, empty request.
+		if len(res) == 0 || len(res) < longest {
 			return all, nil
 		}
+		longest = len(res)
 		page.Offset += int32(len(res))
 	}
 	return nil, fmt.Errorf("%w: %s returned more than %d pages of %d results; narrow the filter or set a limit",

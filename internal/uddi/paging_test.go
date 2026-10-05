@@ -355,7 +355,9 @@ func TestListEndsWithAnEmptyPageWhenTheCountIsAMultipleOfThePageSize(t *testing.
 	}
 }
 
-func TestListOfASmallCollectionIsOneRequest(t *testing.T) {
+// A short first page cannot be told apart from a tenant capping _limit, so a small
+// collection costs one extra request that comes back empty.
+func TestListOfASmallCollectionChecksForASecondPage(t *testing.T) {
 	f := NewFake()
 	seedKind(t, f, viewKind(), 3)
 	srv := newListServer(t, f)
@@ -365,8 +367,8 @@ func TestListOfASmallCollectionIsOneRequest(t *testing.T) {
 	if err != nil || len(got) != 3 {
 		t.Fatalf("ListViews = (%d views, %v), want 3", len(got), err)
 	}
-	if n := len(srv.requests()); n != 1 {
-		t.Fatalf("server saw %d requests, want 1", n)
+	if n := len(srv.requests()); n != 2 {
+		t.Fatalf("server saw %d requests, want 2 (the second comes back empty)", n)
 	}
 }
 
@@ -516,6 +518,47 @@ func TestListAFailedPageFailsTheWholeCall(t *testing.T) {
 	}
 	if n := len(srv.requests()); n != 2 {
 		t.Fatalf("server saw %d requests, want 2: a 500 is not retried and ends the walk", n)
+	}
+}
+
+// TestListAllSurvivesAServerSidePageCap proves a tenant that returns at most 100 results
+// per request, whatever _limit asks for, still yields every result.
+func TestListAllSurvivesAServerSidePageCap(t *testing.T) {
+	const total, serverCap = 250, 100
+	var offsets []int32
+	fetch := func(page ListOptions) ([]int, error) {
+		offsets = append(offsets, page.Offset)
+		start := int(page.Offset)
+		end := min(start+min(int(page.Limit), serverCap), total)
+		out := []int{}
+		for i := start; i < end; i++ {
+			out = append(out, i)
+		}
+		return out, nil
+	}
+	got, err := listAll("ListThings", ListOptions{}, fetch)
+	if err != nil || len(got) != total {
+		t.Fatalf("listAll = (%d items, %v), want %d items", len(got), err, total)
+	}
+	if !slices.Equal(offsets, []int32{0, 100, 200}) {
+		t.Fatalf("offsets = %v, want [0 100 200]: the 50-item page is shorter than 100 and ends the walk", offsets)
+	}
+}
+
+// TestListAllShortFirstPageChecksForMore proves a short first page is followed by one more
+// request, because a short first page cannot be told apart from a server-side cap.
+func TestListAllShortFirstPageChecksForMore(t *testing.T) {
+	calls := 0
+	fetch := func(page ListOptions) ([]int, error) {
+		calls++
+		if page.Offset == 0 {
+			return []int{1, 2, 3}, nil
+		}
+		return nil, nil
+	}
+	got, err := listAll("ListThings", ListOptions{}, fetch)
+	if err != nil || len(got) != 3 || calls != 2 {
+		t.Fatalf("listAll = (%d items, %v) after %d calls, want 3 items after 2 calls", len(got), err, calls)
 	}
 }
 

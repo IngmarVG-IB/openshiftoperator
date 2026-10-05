@@ -165,6 +165,8 @@ func (r *Resolver) ClientFor(ctx context.Context, conn *uddiv1alpha1.Connection)
 		DefaultTags:    conn.Spec.DefaultTags,
 		RateLimitRPS:   rps,
 		RateLimitBurst: burst,
+		// Every API metric carries this as its connection label.
+		ConnectionLabel: conn.Namespace + "/" + conn.Name,
 	}
 
 	factory := r.Factory
