@@ -50,8 +50,9 @@ func (addressblockAdapter) Kind() string { return "AddressBlock" }
 // Resolve turns spaceRef into a Universal DDI ip space id, and parentRef into a
 // Universal DDI address block id when address is omitted (next-available allocation).
 // parentRef is otherwise not needed and is left unresolved, matching DESIGN.md 4.4: it
-// is required only when address is empty (CEL already enforces that combination).
-func (addressblockAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.AddressBlockSpec) (uddisync.Deps, error) {
+// is required only when address is empty (CEL already enforces that combination). It also
+// looks up the option codes that dhcpOptions names by optionName.
+func (addressblockAdapter) Resolve(ctx context.Context, c client.Client, uc *uddi.Client, obj client.Object, spec *uddiv1alpha1.AddressBlockSpec) (uddisync.Deps, error) {
 	deps := uddisync.Deps{}
 
 	spaceID, err := uddisync.ResolveRef(ctx, c, obj.GetNamespace(), spec.SpaceRef, &uddiv1alpha1.IPSpace{}, "IPSpace")
@@ -69,6 +70,10 @@ func (addressblockAdapter) Resolve(ctx context.Context, c client.Client, obj cli
 			return nil, err
 		}
 		deps[depParent] = parentID
+	}
+
+	if err := resolveOptionCodes(ctx, uc, spec.DHCPOptions, deps); err != nil {
+		return nil, err
 	}
 	return deps, nil
 }
@@ -121,7 +126,7 @@ func (addressblockAdapter) Create(ctx context.Context, uc *uddi.Client, spec *ud
 	if spec.Comment != "" {
 		in.Comment = &spec.Comment
 	}
-	in.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	in.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 	in.Tags = uddi.ToAPITags(t)
 	return uc.IPAM.CreateAddressBlock(ctx, in)
 }
@@ -133,7 +138,7 @@ func (addressblockAdapter) Get(ctx context.Context, uc *uddi.Client, id string) 
 
 // Diff compares the managed fields and builds a partial patch. Address, cidr and space
 // are immutable (CEL on address and parentRef, always on cidr) and are never patched.
-func (addressblockAdapter) Diff(spec *uddiv1alpha1.AddressBlockSpec, _ uddisync.Deps, t tags.Desired, current *ipam.AddressBlock) (*ipam.AddressBlock, bool) {
+func (addressblockAdapter) Diff(spec *uddiv1alpha1.AddressBlockSpec, deps uddisync.Deps, t tags.Desired, current *ipam.AddressBlock) (*ipam.AddressBlock, bool) {
 	patch := &ipam.AddressBlock{}
 	changed := false
 
@@ -147,8 +152,8 @@ func (addressblockAdapter) Diff(spec *uddiv1alpha1.AddressBlockSpec, _ uddisync.
 		patch.Comment = &comment
 		changed = true
 	}
-	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions) {
-		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions, deps) {
+		patch.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 		changed = true
 	}
 	if merged, tagsChanged := tags.ForPatchAPI(current.Tags, t); tagsChanged {

@@ -173,7 +173,7 @@ func hasStaticSource(source []string) bool {
 }
 
 // Resolve turns spec.zoneRef into a Universal DDI auth zone id.
-func (recordAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.RecordSpec) (uddisync.Deps, error) {
+func (recordAdapter) Resolve(ctx context.Context, c client.Client, _ *uddi.Client, obj client.Object, spec *uddiv1alpha1.RecordSpec) (uddisync.Deps, error) {
 	zoneID, err := uddisync.ResolveRef(ctx, c, obj.GetNamespace(), spec.ZoneRef, &uddiv1alpha1.AuthZone{}, "AuthZone")
 	if err != nil {
 		return nil, err

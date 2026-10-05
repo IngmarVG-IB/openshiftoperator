@@ -188,7 +188,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 
 	// 4. Dependencies.
 	spec := obj.SpecOf()
-	deps, err := ad.Resolve(ctx, rt.Client, obj, spec)
+	deps, err := ad.Resolve(ctx, rt.Client, uc, obj, spec)
 	if err != nil {
 		if errors.Is(err, ErrDependencyNotReady) {
 			setCondition(status, uddiv1alpha1.ConditionReady, metav1.ConditionFalse,

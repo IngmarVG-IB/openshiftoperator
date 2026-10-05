@@ -71,8 +71,10 @@ spec:
                 description: DHCPOptions applied to everything in the space.
                 items:
                   description: |-
-                    DHCPOption maps to the Universal DDI ipam.OptionItem. Option codes and groups are
-                    opaque Universal DDI resource ids in v1alpha1; lookup by name is a later convenience.
+                    DHCPOption maps to the Universal DDI ipam.OptionItem. Option groups are opaque
+                    Universal DDI resource ids. An option code is named either by its Universal DDI
+                    resource id (optionCode) or by its name (optionName), which the operator looks up in
+                    Universal DDI, optionally narrowed to one option space (optionSpace).
                   properties:
                     group:
                       description: |-
@@ -83,8 +85,29 @@ spec:
                     optionCode:
                       description: |-
                         OptionCode is a Universal DDI option code id, for example "dhcp/option_code/<uuid>".
-                        Required when type is "option".
+                        When type is "option", exactly one of optionCode and optionName is set.
                       maxLength: 256
+                      type: string
+                    optionName:
+                      description: |-
+                        OptionName is the name of a DHCP option code, for example "routers" or
+                        "domain-name-servers", looked up in Universal DDI instead of giving the option
+                        code id. A name that exists in more than one option space needs optionSpace; a
+                        name that does not resolve keeps the object at Ready=False with reason
+                        DependencyNotReady and is retried, so a code created later is picked up without
+                        editing the object. When type is "option", exactly one of optionCode and
+                        optionName is set.
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                    optionSpace:
+                      description: |-
+                        OptionSpace is the Universal DDI option space id, for example
+                        "dhcp/option_space/<uuid>", that optionName is looked up in. It may only be set
+                        together with optionName. Leave it out when the name exists in exactly one option
+                        space.
+                      maxLength: 256
+                      minLength: 1
                       type: string
                     optionValue:
                       description: OptionValue is the value for the option code.
@@ -101,9 +124,14 @@ spec:
                   - type
                   type: object
                   x-kubernetes-validations:
-                  - message: type option requires optionCode, type group requires
-                      group
-                    rule: 'self.type == ''option'' ? has(self.optionCode) : has(self.group)'
+                  - message: type option requires exactly one of optionCode and optionName,
+                      type group requires group
+                    rule: 'self.type == ''option'' ? has(self.optionCode) != has(self.optionName)
+                      : has(self.group)'
+                  - message: optionSpace may only be set together with optionName
+                    rule: '!has(self.optionSpace) || has(self.optionName)'
+                  - message: type group takes neither optionCode nor optionName
+                    rule: self.type != 'group' || (!has(self.optionCode) && !has(self.optionName))
                 type: array
                 x-kubernetes-list-type: atomic
               lifecycle:

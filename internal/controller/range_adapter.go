@@ -41,13 +41,18 @@ var _ uddisync.Adapter[uddiv1alpha1.RangeSpec, ipam.Range] = rangeAdapter{}
 // Kind returns the CR kind name.
 func (rangeAdapter) Kind() string { return "Range" }
 
-// Resolve turns spec.spaceRef into a Universal DDI ip space id.
-func (rangeAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.RangeSpec) (uddisync.Deps, error) {
+// Resolve turns spec.spaceRef into a Universal DDI ip space id, and looks up the option
+// codes that dhcpOptions names by optionName.
+func (rangeAdapter) Resolve(ctx context.Context, c client.Client, uc *uddi.Client, obj client.Object, spec *uddiv1alpha1.RangeSpec) (uddisync.Deps, error) {
 	spaceID, err := uddisync.ResolveRef(ctx, c, obj.GetNamespace(), spec.SpaceRef, &uddiv1alpha1.IPSpace{}, "IPSpace")
 	if err != nil {
 		return nil, err
 	}
-	return uddisync.Deps{rangeDepSpace: spaceID}, nil
+	deps := uddisync.Deps{rangeDepSpace: spaceID}
+	if err := resolveOptionCodes(ctx, uc, spec.DHCPOptions, deps); err != nil {
+		return nil, err
+	}
+	return deps, nil
 }
 
 // Find looks a range up by its natural key: start plus end plus space.
@@ -89,7 +94,7 @@ func (rangeAdapter) Create(ctx context.Context, uc *uddi.Client, spec *uddiv1alp
 		Name:            optStr(spec.Name),
 		Comment:         optStr(spec.Comment),
 		DhcpHost:        optStr(spec.DHCPHost),
-		DhcpOptions:     toOptionItems(spec.DHCPOptions),
+		DhcpOptions:     toOptionItems(spec.DHCPOptions, deps),
 		ExclusionRanges: toExclusionRanges(spec.ExclusionRanges),
 		Tags:            uddi.ToAPITags(t),
 	}
@@ -126,8 +131,8 @@ func (rangeAdapter) Diff(spec *uddiv1alpha1.RangeSpec, deps uddisync.Deps, t tag
 		patch.DhcpHost = optStr(spec.DHCPHost)
 		changed = true
 	}
-	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions) {
-		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions, deps) {
+		patch.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 		changed = true
 	}
 	if !sameExclusionRanges(current.ExclusionRanges, spec.ExclusionRanges) {

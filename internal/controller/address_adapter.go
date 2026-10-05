@@ -58,7 +58,7 @@ func (addressAdapter) Kind() string { return "Address" }
 // "<parent id>/nextavailableip" create address. Exactly one of subnetRef, rangeRef or
 // addressBlockRef is set; the CRD enforces that with CEL, but Resolve still guards it so
 // a stale or hand-edited object cannot allocate against a garbage parent.
-func (addressAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.AddressSpec) (uddisync.Deps, error) {
+func (addressAdapter) Resolve(ctx context.Context, c client.Client, _ *uddi.Client, obj client.Object, spec *uddiv1alpha1.AddressSpec) (uddisync.Deps, error) {
 	spaceID, err := uddisync.ResolveRef(ctx, c, obj.GetNamespace(), spec.SpaceRef, &uddiv1alpha1.IPSpace{}, "IPSpace")
 	if err != nil {
 		return nil, err

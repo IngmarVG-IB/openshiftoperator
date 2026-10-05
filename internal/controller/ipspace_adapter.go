@@ -49,10 +49,14 @@ func ipSpaceCRName(obj client.Object, spec *uddiv1alpha1.IPSpaceSpec) string {
 	return obj.GetName()
 }
 
-// Resolve defaults the IP space name. IPSpace has no dependencies on other object-layer
-// kinds.
-func (ipspaceAdapter) Resolve(_ context.Context, _ client.Client, obj client.Object, spec *uddiv1alpha1.IPSpaceSpec) (uddisync.Deps, error) {
-	return uddisync.Deps{depIPSpaceName: ipSpaceCRName(obj, spec)}, nil
+// Resolve defaults the IP space name and looks up the option codes that dhcpOptions names
+// by optionName. IPSpace has no dependencies on other object-layer kinds.
+func (ipspaceAdapter) Resolve(ctx context.Context, _ client.Client, uc *uddi.Client, obj client.Object, spec *uddiv1alpha1.IPSpaceSpec) (uddisync.Deps, error) {
+	deps := uddisync.Deps{depIPSpaceName: ipSpaceCRName(obj, spec)}
+	if err := resolveOptionCodes(ctx, uc, spec.DHCPOptions, deps); err != nil {
+		return nil, err
+	}
+	return deps, nil
 }
 
 // Find looks an IP space up by its natural key, the name.
@@ -92,7 +96,7 @@ func (ipspaceAdapter) Create(ctx context.Context, uc *uddi.Client, spec *uddiv1a
 	if spec.Comment != "" {
 		in.Comment = &spec.Comment
 	}
-	in.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	in.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 	in.Tags = uddi.ToAPITags(t)
 	return uc.IPAM.CreateIPSpace(ctx, in)
 }
@@ -115,8 +119,8 @@ func (ipspaceAdapter) Diff(spec *uddiv1alpha1.IPSpaceSpec, deps uddisync.Deps, t
 		patch.Comment = &comment
 		changed = true
 	}
-	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions) {
-		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions, deps) {
+		patch.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 		changed = true
 	}
 	if merged, tagsChanged := tags.ForPatchAPI(current.Tags, t); tagsChanged {

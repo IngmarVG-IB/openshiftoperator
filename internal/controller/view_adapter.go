@@ -57,7 +57,7 @@ func viewName(obj client.Object, spec *uddiv1alpha1.ViewSpec) string {
 }
 
 // Resolve defaults the view name and turns spec.ipSpaces into Universal DDI ip space ids.
-func (viewAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.ViewSpec) (uddisync.Deps, error) {
+func (viewAdapter) Resolve(ctx context.Context, c client.Client, _ *uddi.Client, obj client.Object, spec *uddiv1alpha1.ViewSpec) (uddisync.Deps, error) {
 	deps := uddisync.Deps{depName: viewName(obj, spec)}
 	if len(spec.IPSpaces) == 0 {
 		return deps, nil

@@ -39,13 +39,18 @@ var _ uddisync.Adapter[uddiv1alpha1.FixedAddressSpec, ipam.FixedAddress] = fixed
 // Kind returns the CR kind name.
 func (fixedaddressAdapter) Kind() string { return "FixedAddress" }
 
-// Resolve turns spec.spaceRef into a Universal DDI ip space id.
-func (fixedaddressAdapter) Resolve(ctx context.Context, c client.Client, obj client.Object, spec *uddiv1alpha1.FixedAddressSpec) (uddisync.Deps, error) {
+// Resolve turns spec.spaceRef into a Universal DDI ip space id, and looks up the option
+// codes that dhcpOptions names by optionName.
+func (fixedaddressAdapter) Resolve(ctx context.Context, c client.Client, uc *uddi.Client, obj client.Object, spec *uddiv1alpha1.FixedAddressSpec) (uddisync.Deps, error) {
 	spaceID, err := uddisync.ResolveRef(ctx, c, obj.GetNamespace(), spec.SpaceRef, &uddiv1alpha1.IPSpace{}, "IPSpace")
 	if err != nil {
 		return nil, err
 	}
-	return uddisync.Deps{fixedAddressDepSpace: spaceID}, nil
+	deps := uddisync.Deps{fixedAddressDepSpace: spaceID}
+	if err := resolveOptionCodes(ctx, uc, spec.DHCPOptions, deps); err != nil {
+		return nil, err
+	}
+	return deps, nil
 }
 
 // Find looks a fixed address up by its natural key: address plus ip space.
@@ -87,7 +92,7 @@ func (fixedaddressAdapter) Create(ctx context.Context, uc *uddi.Client, spec *ud
 		Name:        optStr(spec.Name),
 		Hostname:    optStr(spec.Hostname),
 		Comment:     optStr(spec.Comment),
-		DhcpOptions: toOptionItems(spec.DHCPOptions),
+		DhcpOptions: toOptionItems(spec.DHCPOptions, deps),
 		Tags:        uddi.ToAPITags(t),
 	}
 	if spec.DisableDHCP {
@@ -136,8 +141,8 @@ func (fixedaddressAdapter) Diff(spec *uddiv1alpha1.FixedAddressSpec, deps uddisy
 		patch.DisableDhcp = &disable
 		changed = true
 	}
-	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions) {
-		patch.DhcpOptions = toOptionItems(spec.DHCPOptions)
+	if !sameOptionItems(current.DhcpOptions, spec.DHCPOptions, deps) {
+		patch.DhcpOptions = toOptionItems(spec.DHCPOptions, deps)
 		changed = true
 	}
 	if merged, tagsChanged := tags.ForPatchAPI(current.Tags, t); tagsChanged {
