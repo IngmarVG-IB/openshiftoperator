@@ -1,12 +1,15 @@
 # Build the manager binary.
 #
-# Builder base: registry.access.redhat.com/ubi9/go-toolset, pinned to the 1.26.7 build that
-# ships Go 1.26.7 (>= the go.mod floor of 1.26.0), multi-arch (amd64/arm64/ppc64le/s390x).
-# Looked up 2026-09-14 via:
+# Builder base: registry.access.redhat.com/ubi9/go-toolset, pinned to the newest 1.26 build
+# (Go 1.26.7, rebuilt 2026-09-23), multi-arch (amd64/arm64/ppc64le/s390x). Looked up
+# 2026-10-04 via:
 #   https://catalog.redhat.com/api/containers/v1/repositories/registry/registry.access.redhat.com/repository/ubi9/go-toolset/images?page_size=25&sort_by=creation_date%5Bdesc%5D
-FROM registry.access.redhat.com/ubi9/go-toolset:1.26.7-1789040808 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.26.7-1790174511 AS builder
 ARG TARGETOS
 ARG TARGETARCH
+# go.mod names a newer toolchain for developer and CI builds. The image keeps Red Hat's
+# bundled toolchain instead of downloading one mid-build, which certification expects.
+ENV GOTOOLCHAIN=local
 
 # The go-toolset image runs as a non-root user by default; switch to root just to get a
 # predictable, writable build workspace (this stage's filesystem is discarded).

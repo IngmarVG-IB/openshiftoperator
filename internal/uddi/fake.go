@@ -237,6 +237,15 @@ func filtered[T any](
 	return out, nil
 }
 
+// Filter field names shared by several kinds. The fake's filter evaluator reads these keys
+// from the per-kind field maps below.
+const (
+	fieldName    = "name"
+	fieldComment = "comment"
+	fieldAddress = "address"
+	fieldSpace   = "space"
+)
+
 // --- View ---
 
 func cloneView(in dnsconfig.View) dnsconfig.View {
@@ -248,9 +257,9 @@ func cloneView(in dnsconfig.View) dnsconfig.View {
 
 func viewFields(v dnsconfig.View) map[string]any {
 	return map[string]any{
-		"id":      strv(v.Id),
-		"name":    v.Name,
-		"comment": strv(v.Comment),
+		"id":         strv(v.Id),
+		fieldName:    v.Name,
+		fieldComment: strv(v.Comment),
 	}
 }
 
@@ -383,7 +392,7 @@ func authZoneFields(z dnsconfig.AuthZone) map[string]any {
 		"protocol_fqdn": strv(z.ProtocolFqdn),
 		"view":          strv(z.View),
 		"primary_type":  strv(z.PrimaryType),
-		"comment":       strv(z.Comment),
+		fieldComment:    strv(z.Comment),
 	}
 }
 
@@ -539,7 +548,7 @@ func recordFields(r dnsdata.Record) map[string]any {
 		"type":               strv(r.Type),
 		"absolute_name_spec": strv(r.AbsoluteNameSpec),
 		"view":               strv(r.View),
-		"comment":            strv(r.Comment),
+		fieldComment:         strv(r.Comment),
 	}
 }
 
@@ -681,9 +690,9 @@ func cloneIPSpace(in ipam.IPSpace) ipam.IPSpace {
 
 func ipSpaceFields(s ipam.IPSpace) map[string]any {
 	return map[string]any{
-		"id":      strv(s.Id),
-		"name":    s.Name,
-		"comment": strv(s.Comment),
+		"id":         strv(s.Id),
+		fieldName:    s.Name,
+		fieldComment: strv(s.Comment),
 	}
 }
 
@@ -799,12 +808,12 @@ func cloneAddressBlock(in ipam.AddressBlock) ipam.AddressBlock {
 
 func addressBlockFields(b ipam.AddressBlock) map[string]any {
 	return map[string]any{
-		"id":      strv(b.Id),
-		"address": strv(b.Address),
-		"cidr":    i64v(b.Cidr),
-		"space":   strv(b.Space),
-		"name":    strv(b.Name),
-		"comment": strv(b.Comment),
+		"id":         strv(b.Id),
+		fieldAddress: strv(b.Address),
+		"cidr":       i64v(b.Cidr),
+		fieldSpace:   strv(b.Space),
+		fieldName:    strv(b.Name),
+		fieldComment: strv(b.Comment),
 	}
 }
 
@@ -938,12 +947,12 @@ func cloneSubnet(in ipam.Subnet) ipam.Subnet {
 
 func subnetFields(s ipam.Subnet) map[string]any {
 	return map[string]any{
-		"id":      strv(s.Id),
-		"address": strv(s.Address),
-		"cidr":    i64v(s.Cidr),
-		"space":   strv(s.Space),
-		"name":    strv(s.Name),
-		"comment": strv(s.Comment),
+		"id":         strv(s.Id),
+		fieldAddress: strv(s.Address),
+		"cidr":       i64v(s.Cidr),
+		fieldSpace:   strv(s.Space),
+		fieldName:    strv(s.Name),
+		fieldComment: strv(s.Comment),
 	}
 }
 
@@ -1089,12 +1098,12 @@ func cloneRange(in ipam.Range) ipam.Range {
 
 func rangeFields(r ipam.Range) map[string]any {
 	return map[string]any{
-		"id":      strv(r.Id),
-		"start":   r.Start,
-		"end":     r.End,
-		"space":   strv(r.Space),
-		"name":    strv(r.Name),
-		"comment": strv(r.Comment),
+		"id":         strv(r.Id),
+		"start":      r.Start,
+		"end":        r.End,
+		fieldSpace:   strv(r.Space),
+		fieldName:    strv(r.Name),
+		fieldComment: strv(r.Comment),
 	}
 }
 
@@ -1226,13 +1235,13 @@ func cloneAddress(in ipam.Address) ipam.Address {
 
 func addressFields(a ipam.Address) map[string]any {
 	return map[string]any{
-		"id":      strv(a.Id),
-		"address": a.Address,
-		"space":   strv(a.Space),
-		"state":   strv(a.State),
-		"parent":  strv(a.Parent),
-		"comment": strv(a.Comment),
-		"hwaddr":  strv(a.Hwaddr),
+		"id":         strv(a.Id),
+		fieldAddress: a.Address,
+		fieldSpace:   strv(a.Space),
+		"state":      strv(a.State),
+		"parent":     strv(a.Parent),
+		fieldComment: strv(a.Comment),
+		"hwaddr":     strv(a.Hwaddr),
 	}
 }
 
@@ -1382,12 +1391,12 @@ func cloneFixedAddress(in ipam.FixedAddress) ipam.FixedAddress {
 func fixedAddressFields(a ipam.FixedAddress) map[string]any {
 	return map[string]any{
 		"id":          strv(a.Id),
-		"address":     a.Address,
+		fieldAddress:  a.Address,
 		"ip_space":    strv(a.IpSpace),
 		"match_type":  a.MatchType,
 		"match_value": a.MatchValue,
-		"name":        strv(a.Name),
-		"comment":     strv(a.Comment),
+		fieldName:     strv(a.Name),
+		fieldComment:  strv(a.Comment),
 	}
 }
 

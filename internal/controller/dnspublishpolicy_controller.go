@@ -225,7 +225,7 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			// Another writer (most likely RecordReconciler touching a different
 			// field) won the race. The next pass sees the fresh object.
 			log.V(1).Info("conflict while writing the DNSPublishPolicy status, requeueing")
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: uddisync.RequeueSoon}, nil
 		}
 		return ctrl.Result{}, err
 	}

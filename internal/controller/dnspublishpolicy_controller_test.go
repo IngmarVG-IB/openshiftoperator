@@ -305,7 +305,7 @@ var _ = Describe("DNSPublishPolicy controller", func() {
 			Expect(reconcilePolicy(policy)).To(Succeed())
 
 			Expect(policy.Status.Published).To(Equal(int32(0)))
-			var reasons []string
+			reasons := make([]string, 0, len(policy.Status.Skipped))
 			for _, sk := range policy.Status.Skipped {
 				reasons = append(reasons, sk.Reason)
 			}

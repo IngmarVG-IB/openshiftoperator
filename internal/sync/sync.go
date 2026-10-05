@@ -43,6 +43,11 @@ import (
 // only a safety net.
 const RequeueNotReady = 30 * time.Second
 
+// RequeueSoon is the short delay used when the loop has to run again right away: a write
+// conflict with another writer, or a Universal DDI object that vanished mid-update. It
+// replaces controller-runtime's deprecated Result.Requeue.
+const RequeueSoon = 200 * time.Millisecond
+
 // Event reasons emitted by the loop. They are the same for every object-layer kind.
 const (
 	// EventCreated: a Universal DDI object was created for this CR.
@@ -284,7 +289,7 @@ func reconcile[S any, U any](ctx context.Context, rt *Runtime, obj Object[S], ad
 				rt.event(obj, corev1.EventTypeWarning, EventRecreated,
 					"Universal DDI %s %s vanished during update, recreating it", ad.Kind(), status.ID)
 				status.ID = ""
-				return ctrl.Result{Requeue: true}, true, nil
+				return ctrl.Result{RequeueAfter: RequeueSoon}, true, nil
 			}
 			return apiFailure(rt, obj, status, uerr)
 		}

@@ -57,7 +57,7 @@ func (r *SubnetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if apierrors.IsConflict(err) {
 		// Another writer won the race. The next pass sees the fresh object.
 		logf.FromContext(ctx).V(1).Info("conflict while writing the Subnet, requeueing")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: uddisync.RequeueSoon}, nil
 	}
 	if apierrors.IsNotFound(err) {
 		// The CR went away mid-reconcile; there is nothing left to do.

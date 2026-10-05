@@ -36,6 +36,11 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # Tests repeat literal fixtures (names, addresses, MACs) on purpose; hoisting them
+      # into constants makes each case harder to read. goconst still runs on non-test code.
+      - linters:
+          - goconst
+        path: _test\.go
     paths:
       - third_party$
       - builtin$

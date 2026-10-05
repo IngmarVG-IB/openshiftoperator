@@ -1,8 +1,8 @@
 # uddi-operator design
 
-Status: draft v0.1, 2026-09-14. Captures the decisions from the kickoff interview and the
-resulting architecture. Anything marked **verify** is pending confirmation against the
-Universal DDI API and the Go SDK.
+Status: v0.1, updated 2026-10-04. Captures the decisions from the kickoff interview and the
+architecture as built through milestone 4; [ROADMAP.md](ROADMAP.md) plans what follows.
+Anything marked **verify** is pending confirmation against a real Universal DDI tenant.
 
 ## 1. Purpose
 

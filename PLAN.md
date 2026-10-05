@@ -89,9 +89,11 @@ Review and correctness pass:
 
 Owned by the second wave 3 agent:
 
-- API metrics, real-tenant `test/integration` gated by `UDDI_API_KEY` with a run-scoped
-  prefix and cleanup, covering create / adopt / update / delete for every kind.
-- kind e2e installing from the bundle.
+- [x] API request metrics, and the real-tenant `test/integration` suite gated by
+      `UDDI_API_KEY` with a run-scoped prefix and cleanup. The suite exists but has not
+      yet run against a tenant; that run is ROADMAP.md milestone 5.
+- Moved to ROADMAP.md milestone 5: a kind e2e that installs from the bundle. The e2e suite
+  in `test/e2e` is still the operator-sdk scaffold and tests no Universal DDI behaviour.
 
 ### Known limitations
 

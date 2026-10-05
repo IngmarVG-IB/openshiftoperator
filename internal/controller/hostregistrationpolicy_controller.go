@@ -210,7 +210,7 @@ func (r *HostRegistrationPolicyReconciler) Reconcile(ctx context.Context, req ct
 		if apierrors.IsConflict(err) {
 			// Another writer won the race. The next pass sees the fresh object.
 			log.V(1).Info("conflict while writing the HostRegistrationPolicy status, requeueing")
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: uddisync.RequeueSoon}, nil
 		}
 		return ctrl.Result{}, err
 	}
