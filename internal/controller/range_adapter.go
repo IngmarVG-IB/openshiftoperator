@@ -110,7 +110,7 @@ func (rangeAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*ipam.
 // ipam.Range models them as required, non-pointer fields; the value sent always equals
 // what Universal DDI already has, so this is harmless, the same way view_adapter.go
 // handles dnsconfig.View.Name.
-func (rangeAdapter) Diff(spec *uddiv1alpha1.RangeSpec, deps uddisync.Deps, t map[string]string, current *ipam.Range) (*ipam.Range, bool) {
+func (rangeAdapter) Diff(spec *uddiv1alpha1.RangeSpec, deps uddisync.Deps, t tags.Desired, current *ipam.Range) (*ipam.Range, bool) {
 	patch := &ipam.Range{Start: current.Start, End: current.End}
 	changed := false
 

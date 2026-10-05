@@ -319,10 +319,10 @@ spec:
             - message: createPtr is only valid for A and AAAA records
               rule: '!has(self.createPtr) || !self.createPtr || self.type == ''A''
                 || self.type == ''AAAA'''
-            - message: 'name is immutable: a record created at the zone apex must
-                stay at the apex, and a set name must not change'
-              rule: (!has(oldSelf.name) && !has(self.name)) || (has(oldSelf.name)
-                && has(self.name) && oldSelf.name == self.name)
+            - message: 'name is immutable: an omitted name and @ both mean the zone
+                apex and may be swapped, any other change is rejected'
+              rule: '(has(oldSelf.name) && size(oldSelf.name) > 0 ? oldSelf.name :
+                ''@'') == (has(self.name) && size(self.name) > 0 ? self.name : ''@'')'
           status:
             description: RecordStatus reports the observed state of the record.
             properties:
@@ -330,6 +330,18 @@ spec:
                 description: AbsoluteName is the fully qualified name observed in
                   Universal DDI.
                 type: string
+              appliedTags:
+                description: |-
+                  AppliedTags lists, sorted, the tag keys the operator wrote on the Universal DDI
+                  object at the last successful sync: the ownership tags, the Connection's
+                  defaultTags and spec.tags. It is written together with Synced=True for
+                  observedGeneration. On the next sync a key listed here that is no longer wanted
+                  is removed from the object; keys the operator never wrote are left alone, and an
+                  empty list removes nothing.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               conditions:
                 description: Conditions hold Ready and Synced.
                 items:

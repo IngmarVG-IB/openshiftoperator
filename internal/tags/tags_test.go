@@ -99,21 +99,158 @@ func TestOwnedBy(t *testing.T) {
 	}
 }
 
-func TestForPatchPreservesUnknownKeys(t *testing.T) {
-	current := map[string]string{"set-by-hand": "keep", "env": "old"}
-	desired := map[string]string{"env": "new", KeyUID: "uid-1"}
+func TestNewDesired(t *testing.T) {
+	want := Merge(Ownership("cluster-1", "team-a", "View", "default", "uid-1"),
+		map[string]string{"env": "prod"}, map[string]string{"app": "web"})
 
-	got, changed := ForPatch(current, desired)
-	if !changed {
-		t.Fatal("ForPatch reported no change")
+	cases := []struct {
+		name              string
+		want              map[string]string
+		previouslyApplied []string
+		wantRemove        []string
+	}{
+		{"nil previouslyApplied removes nothing", want, nil, nil},
+		{"empty previouslyApplied removes nothing", want, []string{}, nil},
+		{"every applied key still wanted", want, []string{"app", "env", KeyManaged, KeyUID}, nil},
+		{"dropped keys are removed, sorted", want, []string{"zeta", "app", "alpha", "env"}, []string{"alpha", "zeta"}},
+		{"duplicates collapse", want, []string{"old", "old"}, []string{"old"}},
+		{
+			// Ownership keys are never removed, even when they are absent from want, for
+			// example a cluster tag that a later configuration no longer sets.
+			"ownership keys are never removed",
+			map[string]string{"app": "web"},
+			[]string{KeyManaged, KeyCluster, KeyOwner, KeyUID, "old"},
+			[]string{"old"},
+		},
 	}
-	want := map[string]string{"set-by-hand": "keep", "env": "new", KeyUID: "uid-1"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("ForPatch() = %#v, want %#v", got, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NewDesired(tc.want, tc.previouslyApplied)
+			if !reflect.DeepEqual(got.Remove, tc.wantRemove) {
+				t.Fatalf("NewDesired(Remove) = %#v, want %#v", got.Remove, tc.wantRemove)
+			}
+			if !reflect.DeepEqual(got.Want, tc.want) {
+				t.Fatalf("NewDesired(Want) = %#v, want %#v", got.Want, tc.want)
+			}
+		})
 	}
+}
 
-	if _, changed := ForPatch(want, desired); changed {
-		t.Fatal("ForPatch reported a change when the desired tags were already present")
+func TestForPatch(t *testing.T) {
+	owner := Ownership("cluster-1", "team-a", "View", "default", "uid-1")
+	applied := func(extra map[string]string) map[string]string { return Merge(owner, nil, extra) }
+
+	cases := []struct {
+		name        string
+		current     map[string]string
+		want        map[string]string
+		applied     []string
+		expect      map[string]string
+		wantChanged bool
+	}{
+		{
+			name:        "a key dropped from the desired set is removed",
+			current:     applied(map[string]string{"env": "prod", "app": "web"}),
+			want:        applied(map[string]string{"env": "prod"}),
+			applied:     Keys(applied(map[string]string{"env": "prod", "app": "web"})),
+			expect:      applied(map[string]string{"env": "prod"}),
+			wantChanged: true,
+		},
+		{
+			name:        "a foreign key the operator never wrote is kept",
+			current:     applied(map[string]string{"env": "prod", "set-by-hand": "keep"}),
+			want:        applied(map[string]string{"env": "prod"}),
+			applied:     Keys(applied(map[string]string{"env": "prod"})),
+			expect:      applied(map[string]string{"env": "prod", "set-by-hand": "keep"}),
+			wantChanged: false,
+		},
+		{
+			// The desired set no longer carries a cluster tag (an empty cluster id), and
+			// the applied keys list every ownership key: "old" goes, the cluster tag
+			// already on the object stays.
+			name:        "ownership keys are never removed",
+			current:     applied(map[string]string{"old": "x"}),
+			want:        Ownership("", "team-a", "View", "default", "uid-1"),
+			applied:     []string{KeyManaged, KeyCluster, KeyOwner, KeyUID, "old"},
+			expect:      applied(nil),
+			wantChanged: true,
+		},
+		{
+			name:        "an empty previouslyApplied removes nothing",
+			current:     applied(map[string]string{"env": "prod", "app": "web"}),
+			want:        applied(map[string]string{"env": "prod"}),
+			applied:     nil,
+			expect:      applied(map[string]string{"env": "prod", "app": "web"}),
+			wantChanged: false,
+		},
+		{
+			name:        "a changed value is a change",
+			current:     applied(map[string]string{"env": "old", "set-by-hand": "keep"}),
+			want:        applied(map[string]string{"env": "new"}),
+			applied:     Keys(applied(map[string]string{"env": "old"})),
+			expect:      applied(map[string]string{"env": "new", "set-by-hand": "keep"}),
+			wantChanged: true,
+		},
+		{
+			name:        "a new key is a change",
+			current:     applied(nil),
+			want:        applied(map[string]string{"env": "prod"}),
+			applied:     Keys(applied(nil)),
+			expect:      applied(map[string]string{"env": "prod"}),
+			wantChanged: true,
+		},
+		{
+			name:        "no-op when everything already matches",
+			current:     applied(map[string]string{"env": "prod"}),
+			want:        applied(map[string]string{"env": "prod"}),
+			applied:     Keys(applied(map[string]string{"env": "prod"})),
+			expect:      applied(map[string]string{"env": "prod"}),
+			wantChanged: false,
+		},
+		{
+			name:        "a Remove key already absent from current is not a change",
+			current:     applied(map[string]string{"env": "prod"}),
+			want:        applied(map[string]string{"env": "prod"}),
+			applied:     Keys(applied(map[string]string{"env": "prod", "gone-already": "x"})),
+			expect:      applied(map[string]string{"env": "prod"}),
+			wantChanged: false,
+		},
+		{
+			name:        "an untagged object gets the desired tags",
+			current:     nil,
+			want:        applied(nil),
+			applied:     nil,
+			expect:      applied(nil),
+			wantChanged: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := make(map[string]string, len(tc.current))
+			for k, v := range tc.current {
+				before[k] = v
+			}
+			got, changed := ForPatch(tc.current, NewDesired(tc.want, tc.applied))
+			if changed != tc.wantChanged {
+				t.Fatalf("ForPatch changed = %v, want %v", changed, tc.wantChanged)
+			}
+			if !reflect.DeepEqual(got, tc.expect) {
+				t.Fatalf("ForPatch() = %#v, want %#v", got, tc.expect)
+			}
+			if len(tc.current) > 0 && !reflect.DeepEqual(tc.current, before) {
+				t.Fatalf("ForPatch mutated current: %#v, was %#v", tc.current, before)
+			}
+		})
+	}
+}
+
+func TestKeysIsSorted(t *testing.T) {
+	got := Keys(map[string]string{"b": "1", "a": "2", "c": "3"})
+	if want := []string{"a", "b", "c"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Keys() = %#v, want %#v", got, want)
+	}
+	if got := Keys(nil); got != nil {
+		t.Fatalf("Keys(nil) = %#v, want nil", got)
 	}
 }
 

@@ -99,7 +99,7 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Step 2: zones.
-	zones, err := r.resolveZones(ctx, policy)
+	zones, missingZones, err := r.resolveZones(ctx, policy)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -187,7 +187,7 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
-	r.emitEvents(policy, skips, priorNames, desiredNames, len(desired))
+	r.emitEvents(policy, skips, missingZones, priorNames, desiredNames, len(desired))
 
 	// Step 6: status.
 	hasZoneNotReadySkip := false
@@ -219,6 +219,8 @@ func (r *DNSPublishPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		cond.Message = fmt.Sprintf("%d of %d records ready", readyCount, len(desired))
 	}
 	meta.SetStatusCondition(&policy.Status.Conditions, cond)
+	// ZonesResolved is reported next to Ready and never feeds into it.
+	meta.SetStatusCondition(&policy.Status.Conditions, zonesResolvedCondition(missingZones, policy.Generation))
 
 	if err := r.Status().Update(ctx, policy); err != nil {
 		if apierrors.IsConflict(err) {
@@ -252,23 +254,30 @@ func selectorFor(policy *uddiv1alpha1.DNSPublishPolicy) (labels.Selector, error)
 
 // resolveZones builds the publish.Zone list DESIGN.md 4.7 step 2 describes: one entry
 // per spec.zoneRefs[].name, in order. A zoneRef whose AuthZone CR does not exist
-// yields a Zone with no FQDN (so it can never match a hostname) and Ready false; any
-// other read error is returned so the caller retries with backoff.
-func (r *DNSPublishPolicyReconciler) resolveZones(ctx context.Context, policy *uddiv1alpha1.DNSPublishPolicy) ([]publish.Zone, error) {
+// yields a Zone with no FQDN (so it can never match a hostname) and Ready false, and
+// its name is returned in missing, sorted and without duplicates, for the
+// ZonesResolved condition. Any other read error is returned so the caller retries with
+// backoff.
+func (r *DNSPublishPolicyReconciler) resolveZones(ctx context.Context, policy *uddiv1alpha1.DNSPublishPolicy) (zones []publish.Zone, missing []string, err error) {
 	log := logf.FromContext(ctx)
-	zones := make([]publish.Zone, 0, len(policy.Spec.ZoneRefs))
+	zones = make([]publish.Zone, 0, len(policy.Spec.ZoneRefs))
+	seenMissing := map[string]bool{}
 	for _, ref := range policy.Spec.ZoneRefs {
 		if ref.Name == "" {
 			continue
 		}
 		zone := &uddiv1alpha1.AuthZone{}
-		err := r.Get(ctx, client.ObjectKey{Namespace: policy.Namespace, Name: ref.Name}, zone)
+		gerr := r.Get(ctx, client.ObjectKey{Namespace: policy.Namespace, Name: ref.Name}, zone)
 		switch {
-		case apierrors.IsNotFound(err):
+		case apierrors.IsNotFound(gerr):
 			log.V(1).Info("AuthZone not found", "zone", ref.Name)
 			zones = append(zones, publish.Zone{Name: ref.Name, Ready: false})
-		case err != nil:
-			return nil, err
+			if !seenMissing[ref.Name] {
+				seenMissing[ref.Name] = true
+				missing = append(missing, ref.Name)
+			}
+		case gerr != nil:
+			return nil, nil, gerr
 		default:
 			zones = append(zones, publish.Zone{
 				Name:  zone.Name,
@@ -277,7 +286,35 @@ func (r *DNSPublishPolicyReconciler) resolveZones(ctx context.Context, policy *u
 			})
 		}
 	}
-	return zones, nil
+	sort.Strings(missing)
+	return zones, missing, nil
+}
+
+// zonesResolvedCondition builds the ZonesResolved condition from the sorted names of
+// the zoneRefs that name no existing AuthZone CR.
+func zonesResolvedCondition(missing []string, generation int64) metav1.Condition {
+	if len(missing) == 0 {
+		return metav1.Condition{
+			Type:               uddiv1alpha1.ConditionZonesResolved,
+			Status:             metav1.ConditionTrue,
+			Reason:             uddiv1alpha1.ReasonZonesFound,
+			Message:            "every zoneRef names an existing AuthZone",
+			ObservedGeneration: generation,
+		}
+	}
+	return metav1.Condition{
+		Type:               uddiv1alpha1.ConditionZonesResolved,
+		Status:             metav1.ConditionFalse,
+		Reason:             uddiv1alpha1.ReasonZoneNotFound,
+		Message:            zonesNotFoundMessage(missing),
+		ObservedGeneration: generation,
+	}
+}
+
+// zonesNotFoundMessage is the ZonesResolved=False message and the ZoneNotFound event
+// text.
+func zonesNotFoundMessage(missing []string) string {
+	return "zoneRefs not found: " + strings.Join(missing, ", ")
 }
 
 // collectEndpoints lists every selected source kind in the policy's namespace and
@@ -395,17 +432,24 @@ func toSkippedSources(skips []publish.Skip) []uddiv1alpha1.SkippedSource {
 	return out
 }
 
-// emitEvents records one Warning "Skipped" event per distinct skip reason (with the
-// count and up to three example sources) and a Normal "Published" event whenever the
-// applied Record set differs from the one this policy owned before this reconcile.
+// emitEvents records one Warning "ZoneNotFound" event naming every zoneRef without an
+// AuthZone CR, one Warning "Skipped" event per distinct skip reason (with the count and
+// up to three example sources), and a Normal "Published" event whenever the applied
+// Record set differs from the one this policy owned before this reconcile.
 func (r *DNSPublishPolicyReconciler) emitEvents(
 	policy *uddiv1alpha1.DNSPublishPolicy,
 	skips []publish.Skip,
+	missingZones []string,
 	priorNames, desiredNames map[string]bool,
 	desiredCount int,
 ) {
 	if r.Runtime == nil || r.Runtime.Recorder == nil {
 		return
+	}
+
+	if len(missingZones) > 0 {
+		r.Runtime.Recorder.Event(policy, corev1.EventTypeWarning, uddiv1alpha1.ReasonZoneNotFound,
+			zonesNotFoundMessage(missingZones))
 	}
 
 	byReason := make(map[publish.SkipReason][]publish.Skip, len(skips))

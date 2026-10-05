@@ -283,7 +283,7 @@ func (recordAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*dnsd
 // Diff compares the mutable managed fields (rdata, ttl, comment, disabled, tags) and
 // builds a partial patch. type, zone and name are immutable (enforced by CEL on the CRD)
 // and are never diffed; options is create-only and is never re-sent on update.
-func (recordAdapter) Diff(spec *uddiv1alpha1.RecordSpec, deps uddisync.Deps, t map[string]string, current *dnsdata.Record) (*dnsdata.Record, bool) {
+func (recordAdapter) Diff(spec *uddiv1alpha1.RecordSpec, deps uddisync.Deps, t tags.Desired, current *dnsdata.Record) (*dnsdata.Record, bool) {
 	// The SDK serialises rdata unconditionally (no omitempty), so a patch that left it nil
 	// would send "rdata": null and clobber the record data. The desired rdata therefore
 	// rides along on every patch, whether or not it is what changed.

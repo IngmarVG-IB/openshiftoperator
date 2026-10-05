@@ -133,7 +133,7 @@ func (addressblockAdapter) Get(ctx context.Context, uc *uddi.Client, id string) 
 
 // Diff compares the managed fields and builds a partial patch. Address, cidr and space
 // are immutable (CEL on address and parentRef, always on cidr) and are never patched.
-func (addressblockAdapter) Diff(spec *uddiv1alpha1.AddressBlockSpec, _ uddisync.Deps, t map[string]string, current *ipam.AddressBlock) (*ipam.AddressBlock, bool) {
+func (addressblockAdapter) Diff(spec *uddiv1alpha1.AddressBlockSpec, _ uddisync.Deps, t tags.Desired, current *ipam.AddressBlock) (*ipam.AddressBlock, bool) {
 	patch := &ipam.AddressBlock{}
 	changed := false
 

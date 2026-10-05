@@ -31,6 +31,21 @@ const (
 	ReasonZonesNotReady = "ZonesNotReady"
 )
 
+// ConditionZonesResolved is the second DNSPublishPolicy condition type. It is True when
+// every zoneRef names an existing AuthZone CR, and False with reason ZoneNotFound and
+// the missing names otherwise. It never changes Ready: a mistyped zoneRef next to
+// working ones is reported without taking the policy out of service.
+const ConditionZonesResolved = "ZonesResolved"
+
+// Reasons for the ZonesResolved condition.
+const (
+	// ReasonZonesFound means every zoneRef names an existing AuthZone CR.
+	ReasonZonesFound = "ZonesFound"
+	// ReasonZoneNotFound means at least one zoneRef names no existing AuthZone CR. It is
+	// also the reason of the Warning event emitted alongside.
+	ReasonZoneNotFound = "ZoneNotFound"
+)
+
 // TargetMode selects how DNSPublishPolicy resolves the DNS record type for the Records
 // it generates.
 // +kubebuilder:validation:Enum=Auto;CNAME;A
@@ -160,7 +175,7 @@ type DNSPublishPolicyStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Conditions hold Ready.
+	// Conditions hold Ready and ZonesResolved.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

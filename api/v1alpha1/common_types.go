@@ -161,6 +161,16 @@ type ObjectStatus struct {
 	// +optional
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 
+	// AppliedTags lists, sorted, the tag keys the operator wrote on the Universal DDI
+	// object at the last successful sync: the ownership tags, the Connection's
+	// defaultTags and spec.tags. It is written together with Synced=True for
+	// observedGeneration. On the next sync a key listed here that is no longer wanted
+	// is removed from the object; keys the operator never wrote are left alone, and an
+	// empty list removes nothing.
+	// +listType=set
+	// +optional
+	AppliedTags []string `json:"appliedTags,omitempty"`
+
 	// Conditions hold Ready and Synced.
 	// +listType=map
 	// +listMapKey=type

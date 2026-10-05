@@ -104,7 +104,7 @@ func (ipspaceAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*ipa
 
 // Diff compares the managed fields and builds a partial patch. Name is mutable in the
 // API, so it is treated as managed and patched like comment, dhcpOptions and tags.
-func (ipspaceAdapter) Diff(spec *uddiv1alpha1.IPSpaceSpec, deps uddisync.Deps, t map[string]string, current *ipam.IPSpace) (*ipam.IPSpace, bool) {
+func (ipspaceAdapter) Diff(spec *uddiv1alpha1.IPSpaceSpec, deps uddisync.Deps, t tags.Desired, current *ipam.IPSpace) (*ipam.IPSpace, bool) {
 	// ipam.IPSpace.Name is a required, non-pointer field, so it always rides along on a
 	// patch, exactly like dnsconfig.View.Name in the reference adapter.
 	patch := &ipam.IPSpace{Name: deps[depIPSpaceName]}

@@ -20,6 +20,7 @@ package tags
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
@@ -77,24 +78,97 @@ func Merge(owner, connectionDefaults, spec map[string]string) map[string]string 
 	return out
 }
 
+// IsOwnershipKey reports whether key is one of the ownership tag keys, which the
+// operator never removes from an object.
+func IsOwnershipKey(key string) bool {
+	switch key {
+	case KeyManaged, KeyCluster, KeyOwner, KeyUID:
+		return true
+	}
+	return false
+}
+
+// Keys returns the keys of m, sorted. It is what the loop records in
+// status.appliedTags. The result is nil for an empty map.
+func Keys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Desired is the tag state the loop wants on a Universal DDI object: the merged tags to
+// set, and the keys the operator applied at its last successful sync that are no longer
+// wanted and so have to go. See DESIGN.md section 6, "Tag removal".
+type Desired struct {
+	// Want is the merged tag map (ownership tags, Connection defaultTags, spec.tags).
+	Want map[string]string
+	// Remove lists keys to delete from the object, sorted. It never contains a key of
+	// Want or an ownership key.
+	Remove []string
+}
+
+// NewDesired builds a Desired from the merged tags and the keys recorded in
+// status.appliedTags. Remove is previouslyApplied minus the keys of want, minus the
+// ownership keys, sorted and without duplicates. An empty previouslyApplied, as on the
+// first sync after an upgrade from a version that did not record it, removes nothing.
+func NewDesired(want map[string]string, previouslyApplied []string) Desired {
+	d := Desired{Want: want}
+	seen := make(map[string]bool, len(previouslyApplied))
+	for _, k := range previouslyApplied {
+		if seen[k] || IsOwnershipKey(k) {
+			continue
+		}
+		seen[k] = true
+		if _, ok := want[k]; ok {
+			continue
+		}
+		d.Remove = append(d.Remove, k)
+	}
+	sort.Strings(d.Remove)
+	return d
+}
+
 // ForPatch returns the tag map to send on an update and whether it differs from what
-// Universal DDI currently holds. Keys present on the object but absent from the desired
-// set are preserved, because the CRD does not claim exclusive ownership of the object's
-// tags. A consequence is that dropping a key from spec.tags does not remove it from
-// Universal DDI; removing it there is a manual step for now.
-func ForPatch(current, desired map[string]string) (map[string]string, bool) {
-	out := make(map[string]string, len(current)+len(desired))
+// Universal DDI currently holds. It starts from current, deletes every Remove key, then
+// sets every Want key. Keys present on the object that the operator never wrote are
+// kept, because the CRD does not claim exclusive ownership of the object's tags; only
+// keys the operator applied before and no longer wants are removed. A Remove key that is
+// already absent from current is not a change.
+//
+// The result is meant to be sent as the whole tags field of a PATCH, which relies on
+// Universal DDI replacing the tag map rather than merging into it (DESIGN.md section 6).
+func ForPatch(current map[string]string, d Desired) (map[string]string, bool) {
+	out := make(map[string]string, len(current)+len(d.Want))
 	for k, v := range current {
 		out[k] = v
 	}
-	changed := false
-	for k, v := range desired {
-		if cur, ok := current[k]; !ok || cur != v {
-			changed = true
-		}
+	for _, k := range d.Remove {
+		delete(out, k)
+	}
+	for k, v := range d.Want {
 		out[k] = v
 	}
-	return out, changed
+	return out, !sameTags(current, out)
+}
+
+// sameTags reports whether two tag maps hold the same keys and values. A nil map and an
+// empty map are the same.
+func sameTags(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // OwnedBy reports whether the tags carry this operator's uid tag for the given CR UID.

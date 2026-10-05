@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/tags"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
 
@@ -91,16 +92,19 @@ type Adapter[S any, U any] interface {
 	// returns (nil, nil) when nothing matches.
 	FindByUID(ctx context.Context, uc *uddi.Client, uid string) (*U, error)
 
-	// Create makes the Universal DDI object, with tags already merged by the loop.
-	Create(ctx context.Context, uc *uddi.Client, spec *S, deps Deps, tags map[string]string) (*U, error)
+	// Create makes the Universal DDI object. want is the tag map already merged by the
+	// loop (tags.Desired.Want); a new object has nothing to remove.
+	Create(ctx context.Context, uc *uddi.Client, spec *S, deps Deps, want map[string]string) (*U, error)
 
 	// Get reads the Universal DDI object by id. A 404 is reported as an APIError with
 	// IsNotFound() true and makes the loop recreate the object.
 	Get(ctx context.Context, uc *uddi.Client, id string) (*U, error)
 
 	// Diff compares the managed fields only and returns a partial patch. Anything the
-	// CR does not manage is left alone in Universal DDI.
-	Diff(spec *S, deps Deps, tags map[string]string, current *U) (patch *U, changed bool)
+	// CR does not manage is left alone in Universal DDI. Tags go through
+	// tags.ForPatch(current tags, desired), which sets desired.Want, removes
+	// desired.Remove and keeps every key the operator never wrote.
+	Diff(spec *S, deps Deps, desired tags.Desired, current *U) (patch *U, changed bool)
 
 	// Update applies a partial patch.
 	Update(ctx context.Context, uc *uddi.Client, id string, patch *U) (*U, error)

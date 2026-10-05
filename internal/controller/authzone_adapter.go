@@ -236,7 +236,7 @@ func (authzoneAdapter) Get(ctx context.Context, uc *uddi.Client, id string) (*dn
 // Diff compares the mutable managed fields (nsgs, secondaries, primaries, comment,
 // disabled, tags) and builds a partial patch. fqdn, primaryType and view are immutable
 // (enforced by CEL on the CRD) and are never diffed.
-func (authzoneAdapter) Diff(spec *uddiv1alpha1.AuthZoneSpec, deps uddisync.Deps, t map[string]string, current *dnsconfig.AuthZone) (*dnsconfig.AuthZone, bool) {
+func (authzoneAdapter) Diff(spec *uddiv1alpha1.AuthZoneSpec, deps uddisync.Deps, t tags.Desired, current *dnsconfig.AuthZone) (*dnsconfig.AuthZone, bool) {
 	patch := &dnsconfig.AuthZone{}
 	changed := false
 
