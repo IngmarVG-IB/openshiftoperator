@@ -553,8 +553,7 @@ spec:
     mode: Annotation
     annotation: metallb.io/loadBalancerIPs
   metallb:
-    mirrorPools: true
-    namespace: metallb-system
+    mirrorPools: true        # needs team-a in the operator's --cluster-target-namespaces
   tags:
     purpose: loadbalancer
   addressLifecycle:
@@ -563,7 +562,7 @@ spec:
 
 This policy:
 - Allocates dual-stack (IPv4 and IPv6) addresses to Services in `team-a` with `uddi.infoblox.com/allocate: "true"`, from `team-a`'s two Ranges
-- Mirrors those two Ranges into MetalLB's IPAddressPool objects (`uddi-team-a-lb-range-lb-pool` and `uddi-team-a-lb-range-lb-pool-v6` in `metallb-system`, with `autoAssign: false`) so MetalLB announces them
+- Mirrors those two Ranges into MetalLB's IPAddressPool objects (`uddi-team-a-lb-range-lb-pool` and `uddi-team-a-lb-range-lb-pool-v6` in `metallb-system`, with `autoAssign: false` and usable by `team-a`'s Services only) so MetalLB announces them, once the cluster administrator lists `team-a` in `--cluster-target-namespaces`
 - Writes the allocated IPs to `metallb.io/loadBalancerIPs` for MetalLB to use
 
 The platform team's own Ranges in `uddi-system` are unaffected: a policy in `uddi-system` would serve only Services in `uddi-system`.

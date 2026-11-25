@@ -856,7 +856,7 @@ Allocation works on *claims* made of *slots*, one Address each. A dual-stack Ser
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `connectionRef` | ConnectionRef | No | — | Connection providing credentials. Empty means "default". Used for every generated Address. |
-| `targets` | []TargetKind | No | [Service] | Kinds of object that claim addresses: `Service` (type LoadBalancer Services in the policy's namespace) and `EgressIP` (cluster-scoped OVN-Kubernetes EgressIPs). MinItems 1, MaxItems 2, a set. Addresses already allocated for a kind removed from the list are left in place. |
+| `targets` | []TargetKind | No | [Service] | Kinds of object that claim addresses: `Service` (type LoadBalancer Services in the policy's namespace) and `EgressIP` (cluster-scoped OVN-Kubernetes EgressIPs). MinItems 1, MaxItems 2, a set. Addresses already allocated for a kind removed from the list are left in place. `EgressIP` only takes effect in a namespace listed in the operator's `--cluster-target-namespaces` (see [Operator Settings](#ipallocationpolicy-operator-settings)), otherwise it reports `NotPermitted`. |
 | `selector` | *metav1.LabelSelector | No | — | Label selector to filter Services in the namespace and EgressIPs (cluster-wide). Empty selects all. |
 | `requireAnnotation` | *bool | No | true | When true, only Services annotated `uddi.infoblox.com/allocate: "true"` are allocated. When false, all matching Services are allocated by default. EgressIPs always need the annotation. |
 | `allocateFrom` | AllocateFrom | Yes | — | The pool CR to allocate from: exactly one of `subnetRef`, `rangeRef`, or `addressBlockRef` (CEL: exactly one of subnetRef, rangeRef or addressBlockRef must be set). IPv4 slots use it, and IPv6 slots too when it is an IPv6 pool and `allocateFromIPv6` is unset. The pool CR must be in the policy's namespace. |
@@ -868,8 +868,7 @@ Allocation works on *claims* made of *slots*, one Address each. A dual-stack Ser
 | `assignVia.mode` | AssignMode | No | Annotation | `Annotation` (write to a Service annotation, default) or `LoadBalancerIP` (write to `spec.loadBalancerIP`). |
 | `assignVia.annotation` | string | No | metallb.io/loadBalancerIPs | The annotation key to write when mode is Annotation. Defaults to MetalLB key; also supports `lbipam.cilium.io/ips`, `kube-vip.io/loadbalancerIPs`, and legacy `metallb.universe.tf/loadBalancerIPs`. Pattern: valid annotation key format. Max 317 characters. |
 | `metallb` | *MetalLBMirror | No | — | Mirroring of the pools this policy uses into MetalLB IPAddressPools. Off when unset. |
-| `metallb.mirrorPools` | bool | No | false | Mirror every pool this policy uses into a `metallb.io/v1beta1 IPAddressPool` with `autoAssign: false`. While on, the policy carries the finalizer `uddi.infoblox.com/metallb-pools`. |
-| `metallb.namespace` | string | No | metallb-system | Namespace the mirrored IPAddressPools are created in. 1 to 63 characters, a DNS-1123 label (`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`). |
+| `metallb.mirrorPools` | bool | No | false | Mirror every pool this policy uses into a `metallb.io/v1beta1 IPAddressPool` with `autoAssign: false` and `serviceAllocation.namespaces: [<policy namespace>]`, in the operator's MetalLB namespace (`--metallb-namespace`, default `metallb-system`). A pool is mirrored from its CR's `status` only, while the CR is Ready. Only takes effect in a namespace listed in `--cluster-target-namespaces`, otherwise it reports `NotPermitted`. While on, the policy carries the finalizer `uddi.infoblox.com/metallb-pools`. |
 | `tags` | map[string]string | No | — | Tags merged into every generated Address's `spec.tags`. |
 | `addressLifecycle` | Lifecycle | No | — | Adoption and deletion behaviour for generated Addresses (defaults: `adoptExisting: false`, `deletionPolicy: Delete`). |
 
@@ -887,8 +886,8 @@ Allocation works on *claims* made of *slots*, one Address each. A dual-stack Ser
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `service` | string | What was skipped: a Service by its bare name, `EgressIP/<name>` for an EgressIP, `<Kind>/<name>` (for example `Range/lb-pool`) for a pool that cannot be mirrored into MetalLB, or `EgressIP` or `IPAddressPool` alone when the cluster does not serve that API. Max 266 characters (`AddressBlock/` plus a 253 character name). |
-| `reason` | string | Machine-readable skip reason: `NotLoadBalancer`, `InvalidAnnotation`, `PoolNotReady`, `ManuallyAssigned`, `AddressPending`, `NoPoolForFamily`, `DualStackUnsupported`, `NameConflict`, `APIUnavailable`, `MetalLBPoolInvalid`, or `MetalLBPoolConflict`. Max 64 characters. |
+| `service` | string | What was skipped: a Service by its bare name, `EgressIP/<name>` for an EgressIP, `<Kind>/<name>` (for example `Range/lb-pool`) for a pool that cannot be mirrored into MetalLB, or `EgressIP` or `IPAddressPool` alone when the cluster does not serve that API or the policy is not permitted to use it. Max 266 characters (`AddressBlock/` plus a 253 character name). |
+| `reason` | string | Machine-readable skip reason: `NotLoadBalancer`, `InvalidAnnotation`, `PoolNotReady`, `ManuallyAssigned`, `AddressPending`, `NoPoolForFamily`, `DualStackUnsupported`, `NameConflict`, `APIUnavailable`, `NotPermitted`, `MetalLBPoolInvalid`, or `MetalLBPoolConflict`. Max 64 characters. |
 | `message` | string | Human-readable explanation. Max 512 characters. |
 
 The reasons added with dual-stack, EgressIP and MetalLB support:
@@ -899,7 +898,8 @@ The reasons added with dual-stack, EgressIP and MetalLB support:
 | `DualStackUnsupported` | Service | `assignVia.mode: LoadBalancerIP` carries one address but the Service is `RequireDualStack`. |
 | `NameConflict` | Service | The Address name a new slot would get belongs to another target's slot (slot 1 of `web` and slot 0 of `web-1` are both `<policy>-web-1`). The existing Address is never taken over. |
 | `APIUnavailable` | `EgressIP` or `IPAddressPool` | `targets` lists `EgressIP` but `k8s.ovn.org/v1 EgressIP` is not served, or `metallb.mirrorPools` is on but `metallb.io/v1beta1 IPAddressPool` is not. That target or the mirroring is inert. |
-| `MetalLBPoolInvalid` | `<Kind>/<name>` | A pool the policy uses cannot be mirrored, for example a Subnet whose address is not known yet. |
+| `NotPermitted` | `EgressIP` or `IPAddressPool` | `targets` lists `EgressIP` or `metallb.mirrorPools` is on, but the policy's namespace is not in the operator's `--cluster-target-namespaces`. That target or the mirroring is off, and what it had assigned or mirrored is released. |
+| `MetalLBPoolInvalid` | `<Kind>/<name>` | A pool the policy uses cannot be mirrored: its CR is not Ready, its status has no address yet, or the address does not parse. |
 | `MetalLBPoolConflict` | `<Kind>/<name>` | The IPAddressPool the pool would be mirrored into already exists without this policy's labels; it is left alone. |
 
 ### IPAllocationPolicy Conditions
@@ -921,8 +921,9 @@ For a dual-stack Service, `address` takes one IP per wanted family, comma-separa
 
 ### EgressIP Annotations
 
-EgressIPs are matched by `selector` against their labels and take part only with `uddi.infoblox.com/allocate: "true"`, whatever `requireAnnotation` says. Prefix `uddi.infoblox.com/`:
+EgressIPs are matched by `selector` against their labels and take part only with `uddi.infoblox.com/allocate: "true"`, whatever `requireAnnotation` says, and only for the policy named by `uddi.infoblox.com/policy`; other policies ignore them. Prefix `uddi.infoblox.com/`:
 - `allocate: "true"` or `"false"` — opt in (required) or out.
+- `policy: <namespace>/<name>` — the one policy that may manage this EgressIP (required).
 - `count: <n>` — the number of addresses, an integer from 1 to 16 (default 1). Any other value is an `InvalidAnnotation`.
 - `allocate-from: <pool-spec>` — override the policy pool with `subnet/<name>`, `range/<name>` or `addressblock/<name>`.
 
@@ -957,7 +958,7 @@ Names above 253 characters replace the target or pool name with 10 hex digits of
 | exactly one of `subnetRef`, `rangeRef`, `addressBlockRef` | `allocateFrom`, `allocateFromIPv6` | `exactly one of subnetRef, rangeRef or addressBlockRef must be set` |
 | `name` set and non-empty | `subnetRef`, `rangeRef`, `addressBlockRef` | `subnetRef must set name`, `rangeRef must set name`, `addressBlockRef must set name` |
 
-Further constraints: `targets` has `MinItems` 1 and `MaxItems` 2, `metallb.namespace` is a DNS-1123 label of 1 to 63 characters, and `assignVia.annotation` must be a valid annotation key of at most 317 characters.
+Further constraints: `targets` has `MinItems` 1 and `MaxItems` 2, and `assignVia.annotation` must be a valid annotation key of at most 317 characters.
 
 ### IPAllocationPolicy Example
 
@@ -1013,9 +1014,17 @@ spec:
     mode: Annotation
     annotation: metallb.io/loadBalancerIPs
   metallb:
-    mirrorPools: true
-    namespace: metallb-system
+    mirrorPools: true          # needs team-a in --cluster-target-namespaces
 ```
+
+### IPAllocationPolicy Operator Settings
+
+Two operator settings bound what any IPAllocationPolicy may do outside its own namespace. Each is a manager flag, or the environment variable when the flag is not given (on an OLM install, set through the Subscription's `spec.config.env`):
+
+| Flag | Environment variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `--cluster-target-namespaces` | `CLUSTER_TARGET_NAMESPACES` | empty | Comma-separated namespaces whose policies may use the `EgressIP` target and `metallb.mirrorPools`. Empty permits none. |
+| `--metallb-namespace` | `METALLB_NAMESPACE` | `metallb-system` | Namespace the mirrored IPAddressPools are created in. |
 
 Reference: [DESIGN.md](../DESIGN.md) section 4.7.
 

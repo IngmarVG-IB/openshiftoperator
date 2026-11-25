@@ -412,13 +412,16 @@ spec:
 
 The EgressIP API is read as unstructured data. If the cluster does not serve it, the target is inert: no EgressIP is read, Addresses already allocated for EgressIPs are left alone, and the policy reports an `EgressIP` entry with `APIUnavailable`. An address allocated for a target kind that you later remove from `targets` is left in place as well.
 
-**Which EgressIPs.** `spec.selector` is matched against the EgressIP's labels, cluster-wide: the policy's namespace does not limit which EgressIPs it sees, so two policies with overlapping selectors would both claim the same EgressIP. An EgressIP takes part only with the annotation `uddi.infoblox.com/allocate: "true"`, whatever `requireAnnotation` says (it applies to Services only). `"false"`, or removing the annotation, releases it.
+**Only permitted namespaces.** EgressIPs and mirrored MetalLB pools are cluster-scoped effects, which a user with edit rights in one namespace should not get on their own. The operator therefore only lets policies in the namespaces an administrator lists use them: the flag `--cluster-target-namespaces` (comma-separated namespace names), or the environment variable `CLUSTER_TARGET_NAMESPACES` when the flag is not given (on an OLM install, set it through the Subscription's `spec.config.env`). The default is empty, which permits no namespace. A policy elsewhere that lists the `EgressIP` target or sets `metallb.mirrorPools` reports an `EgressIP` or `IPAddressPool` entry with `NotPermitted` and a Warning event; its Service target keeps working. If its namespace loses the permission, the policy releases what it had: it clears the `spec.egressIPs` it wrote, deletes its EgressIP Addresses and deletes its mirrored pools.
+
+**Which EgressIPs.** `spec.selector` is matched against the EgressIP's labels, cluster-wide. An EgressIP takes part only with the annotation `uddi.infoblox.com/allocate: "true"`, whatever `requireAnnotation` says (it applies to Services only), and only for the policy its annotation `uddi.infoblox.com/policy: <namespace>/<name>` names. Every other policy ignores it, and a policy never writes `spec.egressIPs` of an EgressIP that does not name it, so whoever may edit the EgressIP decides which policy serves it. `"false"`, or removing the `allocate` annotation, releases it. Pointing `uddi.infoblox.com/policy` at another policy releases the old policy's Addresses but leaves `spec.egressIPs` as it is; clear it yourself if the new policy reports `ManuallyAssigned`.
 
 **Annotations on the EgressIP**, prefix `uddi.infoblox.com/`:
 
 | Annotation | Meaning |
 | --- | --- |
 | `allocate` | `"true"` opts in (required). |
+| `policy` | `<namespace>/<name>` of the one policy that may manage this EgressIP (required). |
 | `count` | Number of addresses, an integer from 1 to 16 (default 1). Anything else is an `InvalidAnnotation`. |
 | `allocate-from` | Pool override, `subnet/<name>`, `range/<name>` or `addressblock/<name>`. |
 
@@ -454,6 +457,7 @@ metadata:
     egress: uddi
   annotations:
     uddi.infoblox.com/allocate: "true"
+    uddi.infoblox.com/policy: uddi-system/egress
     uddi.infoblox.com/count: "2"
 spec:
   egressIPs: []
@@ -462,7 +466,7 @@ spec:
       team: a
 ```
 
-This creates the Addresses `egress-egressip-team-a-egress-0` and `egress-egressip-team-a-egress-1` in `uddi-system`, and fills `spec.egressIPs` with their two addresses once both are Ready.
+With `uddi-system` in `--cluster-target-namespaces`, this creates the Addresses `egress-egressip-team-a-egress-0` and `egress-egressip-team-a-egress-1` in `uddi-system`, and fills `spec.egressIPs` with their two addresses once both are Ready.
 
 ## MetalLB Pool Mirroring
 
@@ -472,27 +476,31 @@ MetalLB only announces an address that lies in one of its own `IPAddressPool`s. 
 spec:
   metallb:
     mirrorPools: true
-    namespace: metallb-system    # default
 ```
 
-**Which pools.** `allocateFrom`, `allocateFromIPv6`, every pool named by an `allocate-from` annotation, and every pool an existing Address was allocated from. A pool still in use keeps its mirror even while it cannot be rebuilt for a moment, so a transient problem never withdraws an announced range.
+Mirroring is a cluster-scoped effect: only policies in a namespace listed in `--cluster-target-namespaces` may use it (see [Only permitted namespaces](#egressip-allocation)); elsewhere the policy reports `IPAddressPool` with `NotPermitted` and mirrors nothing.
 
-**What is created.** One `metallb.io/v1beta1 IPAddressPool` per pool, in `metallb.namespace`:
+**Which pools.** `allocateFrom`, `allocateFromIPv6`, every pool named by an `allocate-from` annotation, and every pool an existing Address was allocated from. A pool still in use keeps its mirror even while it cannot be rebuilt for a moment (for example while its CR is not Ready), so a transient problem never withdraws an announced range.
+
+**Only what Universal DDI confirmed.** A pool is mirrored from its CR's `status` alone (`status.address` and `status.cidr` of a Subnet or AddressBlock, `status.start` and `status.end` of a Range), and only while the CR is Ready (has a `status.id`). The `spec`, which anyone who may edit the CR writes, is never used. A pool that is not Ready or has no address in its status yet is reported with `MetalLBPoolInvalid`.
+
+**What is created.** One `metallb.io/v1beta1 IPAddressPool` per pool, in the operator's MetalLB namespace: the flag `--metallb-namespace`, or the environment variable `METALLB_NAMESPACE` when the flag is not given, default `metallb-system`. A policy cannot choose the namespace.
 
 - **Name:** `uddi-<policy namespace>-<policy>-<pool kind>-<pool name>`, with the kind in lower case, for example `uddi-my-team-lb-range-lb-pool`. A name above 253 characters is truncated and ends in `-` plus 10 hex digits of the sha256 of the full name.
 - **`spec.addresses`:** one entry, the Subnet or AddressBlock CIDR in network form (`10.0.10.0/24`), or the Range as `start-end`.
 - **`spec.autoAssign: false`**, so MetalLB never hands these addresses out on its own; only Services that ask for one through the annotation get it.
+- **`spec.serviceAllocation.namespaces: [<policy namespace>]`**, so only Services in the policy's namespace can be given an address from the pool.
 - **Labels:** `uddi.infoblox.com/policy`, `uddi.infoblox.com/policy-namespace` and `app.kubernetes.io/managed-by: uddi-operator`.
 
-The operator applies them server-side with the field manager `uddi-operator/ipallocationpolicy-metallb`, and manages only the three labels, `spec.addresses` and `spec.autoAssign`. Other fields someone sets on the pool (`serviceAllocation`, `avoidBuggyIPs`) are left alone. MetalLB also needs an `L2Advertisement` or `BGPAdvertisement` that selects the pools; an `L2Advertisement` without a pool selector covers all of them. The operator creates none.
+The operator applies them server-side with the field manager `uddi-operator/ipallocationpolicy-metallb`, and manages only the three labels, `spec.addresses`, `spec.autoAssign` and `spec.serviceAllocation.namespaces`. Other fields someone sets on the pool (the rest of `serviceAllocation`, `avoidBuggyIPs`) are left alone. MetalLB also needs an `L2Advertisement` or `BGPAdvertisement` that selects the pools; an `L2Advertisement` without a pool selector covers all of them. The operator creates none.
 
-**Finalizer.** A pool in another namespace cannot be owned by the policy. While mirroring is on, the policy therefore carries the finalizer `uddi.infoblox.com/metallb-pools`. Deleting the policy, or turning `mirrorPools` off, deletes the mirrored pools and removes the finalizer. On a cluster without the MetalLB API the finalizer is never added, so deleting the policy never waits.
+**Finalizer.** A pool in another namespace cannot be owned by the policy. While mirroring is on, the policy therefore carries the finalizer `uddi.infoblox.com/metallb-pools`. Deleting the policy, turning `mirrorPools` off, or its namespace losing the permission, deletes the mirrored pools and removes the finalizer. On a cluster without the MetalLB API the finalizer is never added, so deleting the policy never waits.
 
-**Conflicts.** If a pool of the same name already exists without this policy's labels, the policy leaves it alone and reports `<Kind>/<name>` with `MetalLBPoolConflict`. A pool that cannot be mirrored, for example a Subnet whose address is not known yet or an unparsable range, is reported with `MetalLBPoolInvalid`. Neither changes `Ready`.
+**Conflicts.** If a pool of the same name already exists without this policy's labels, the policy leaves it alone and reports `<Kind>/<name>` with `MetalLBPoolConflict`. A pool that cannot be mirrored, for example a pool CR that is not Ready, a Subnet whose address is not in its status yet or an unparsable range, is reported with `MetalLBPoolInvalid`. Neither changes `Ready`.
 
 **Drift and pruning.** The mirrored pools are not watched. The policy repairs an edited or deleted mirror, and deletes mirrors of pools it no longer uses, on each of its own reconciles (triggered by changes to its Services, Addresses, pools or itself), not the instant the MetalLB object changes.
 
-**Moving the pools.** Changing `metallb.namespace` creates the pools in the new namespace and deletes the policy's pools in the old one.
+**Moving the pools.** Restarting the operator with another `--metallb-namespace` creates the pools in the new namespace and deletes the policy's pools in the old one, on each policy's next reconcile.
 
 On a cluster that does not serve `metallb.io/v1beta1 IPAddressPool`, mirroring is inert and the policy reports an `IPAddressPool` entry with `APIUnavailable`.
 
@@ -555,7 +563,7 @@ The `service` field of a skipped entry no longer always holds a Service name. It
 | `web` | A Service, by its bare name (unchanged from before) |
 | `EgressIP/team-a-egress` | An EgressIP, as `EgressIP/<name>` |
 | `Range/lb-pool` | A pool that cannot be mirrored into MetalLB, as `<Kind>/<name>` with `Subnet`, `Range` or `AddressBlock` as the kind |
-| `EgressIP` or `IPAddressPool` | The whole target or mirroring, when the cluster does not serve that API |
+| `EgressIP` or `IPAddressPool` | The whole target or mirroring, when the cluster does not serve that API or the policy's namespace is not permitted to use it |
 
 ### Skip Reasons Added with Dual-Stack, EgressIP and MetalLB Mirroring
 
@@ -565,7 +573,8 @@ The `service` field of a skipped entry no longer always holds a Service name. It
 | `DualStackUnsupported` | Service | `assignVia.mode: LoadBalancerIP` carries one address, but the Service is `RequireDualStack`. | Use `Annotation` mode, or make the Service `PreferDualStack` or single-stack. |
 | `NameConflict` | Service | The Address name a slot would get already belongs to another target's slot, for example slot 1 of `web` and slot 0 of `web-1` (both `<policy>-web-1`). The existing Address is never taken over. | Rename one of the Services. |
 | `APIUnavailable` | `EgressIP` or `IPAddressPool` | `targets` lists `EgressIP` but the cluster does not serve `k8s.ovn.org/v1 EgressIP`, or `metallb.mirrorPools` is on but it does not serve `metallb.io/v1beta1 IPAddressPool`. That target or mirroring is inert. | Install the API, or drop the target or the mirroring from the policy. |
-| `MetalLBPoolInvalid` | `<Kind>/<name>` | A pool the policy uses cannot be mirrored, for example a Subnet that has no address yet. | Wait for the pool to get its address, or check its `spec`. |
+| `NotPermitted` | `EgressIP` or `IPAddressPool` | `targets` lists `EgressIP` or `metallb.mirrorPools` is on, but the policy's namespace is not in the operator's `--cluster-target-namespaces` (`CLUSTER_TARGET_NAMESPACES`). That target or mirroring is off, and what it had assigned or mirrored is released. | Ask the cluster administrator to add the namespace, or drop the target or the mirroring from the policy. |
+| `MetalLBPoolInvalid` | `<Kind>/<name>` | A pool the policy uses cannot be mirrored: its CR is not Ready, or its status has no address yet (the spec is never used), or the address does not parse. | Wait for Universal DDI to confirm the pool, or check its `spec` and conditions. |
 | `MetalLBPoolConflict` | `<Kind>/<name>` | The IPAddressPool the pool would be mirrored into already exists without this policy's labels. It is left alone. | Rename or delete the foreign pool. |
 
 The existing reasons `InvalidAnnotation`, `PoolNotReady`, `ManuallyAssigned` and `AddressPending` apply to EgressIPs too (entry `EgressIP/<name>`); `NotLoadBalancer` is for Services only.
@@ -575,7 +584,7 @@ A claim that reaches any of `InvalidAnnotation`, `PoolNotReady`, `NoPoolForFamil
 ### Counters and Ready
 
 - `allocated` and `assigned` count claims, not Addresses. A dual-stack Service or an EgressIP with three slots counts once. `allocated` is the number of Services and EgressIPs that have their Address CRs, and `assigned` how many of those already carry every slot's Ready address in the assignment field.
-- `APIUnavailable`, `MetalLBPoolInvalid` and `MetalLBPoolConflict` never change the `Ready` condition. `Ready` follows the rules above: `True/Assigned` needs `assigned == allocated` and no `PoolNotReady` or `AddressPending` skip.
+- `APIUnavailable`, `NotPermitted`, `MetalLBPoolInvalid` and `MetalLBPoolConflict` never change the `Ready` condition. `Ready` follows the rules above: `True/Assigned` needs `assigned == allocated` and no `PoolNotReady` or `AddressPending` skip.
 - A Warning `Skipped` event is emitted per distinct reason, with a count and up to three example entries.
 
 ## Release and Deletion Behavior
@@ -673,7 +682,7 @@ If the selected pool has no available IPs, the Address is not allocated and the 
 
 ### Pools and Services Stay in the Policy Namespace
 
-The policy reads pool CRs and Services in its own namespace only; see [Pool CRs Must Live in the Policy Namespace](#pool-crs-must-live-in-the-policy-namespace). EgressIPs are the exception because they are cluster-scoped: the policy sees every EgressIP its selector matches.
+The policy reads pool CRs and Services in its own namespace only; see [Pool CRs Must Live in the Policy Namespace](#pool-crs-must-live-in-the-policy-namespace). EgressIPs are the exception because they are cluster-scoped: a policy in a namespace listed in `--cluster-target-namespaces` sees every EgressIP its selector matches, and manages those whose `uddi.infoblox.com/policy` annotation names it.
 
 ### Optional APIs Are Detected Once
 
