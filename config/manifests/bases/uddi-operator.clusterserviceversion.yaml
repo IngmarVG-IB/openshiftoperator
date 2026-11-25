@@ -94,6 +94,9 @@ spec:
     DDI](https://www.infoblox.com/products/universal-ddi/), the cloud-delivered DNS, DHCP
     and IPAM platform behind the Infoblox Cloud Services Portal.
 
+    This is an independent community project in alpha. It is not affiliated with, endorsed
+    by or supported by Infoblox Inc. or Red Hat, Inc.
+
     ## Object layer
 
     Universal DDI objects are modelled one-to-one as namespaced custom resources under the

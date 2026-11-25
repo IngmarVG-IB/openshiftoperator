@@ -2,6 +2,8 @@
 
 An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://www.infoblox.com/products/universal-ddi/). The operator models Universal DDI objects (DNS views, zones, records, IP spaces, subnets, ranges, addresses, and DHCP reservations) as namespaced Kubernetes custom resources under the `uddi.infoblox.com` API group, allowing you to manage Infoblox infrastructure declaratively from OpenShift.
 
+> uddi-operator is an independent community project. It is not affiliated with, endorsed by or supported by Infoblox Inc. or Red Hat, Inc. Infoblox and Universal DDI are trademarks of Infoblox Inc.; Red Hat and OpenShift are trademarks of Red Hat, Inc.
+
 ## Project status
 
 **Alpha. Not yet run against a real Universal DDI tenant or a real OpenShift cluster.**
