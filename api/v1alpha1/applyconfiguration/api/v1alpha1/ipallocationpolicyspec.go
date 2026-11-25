@@ -34,7 +34,10 @@ type IPAllocationPolicySpecApplyConfiguration struct {
 	// Targets selects which kinds of objects claim addresses: Service (type
 	// LoadBalancer Services in this namespace) and EgressIP (cluster-scoped
 	// OVN-Kubernetes EgressIPs). Defaults to Service only. Addresses already allocated
-	// for a kind that is removed from this list are left in place.
+	// for a kind that is removed from this list are left in place. EgressIP only takes
+	// effect in a namespace the operator's --cluster-target-namespaces setting allows,
+	// and only for EgressIPs annotated uddi.infoblox.com/policy with this policy's
+	// namespace/name.
 	Targets []apiv1alpha1.TargetKind `json:"targets,omitempty"`
 	// Selector selects the Services in this namespace, and the EgressIPs, this policy
 	// considers. Empty selects every one.

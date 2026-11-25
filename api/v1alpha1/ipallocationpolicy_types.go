@@ -42,13 +42,19 @@ const (
 	// "IPAddressPool"). That target, or the mirroring, is inert.
 	SkipReasonAPIUnavailable = "APIUnavailable"
 	// SkipReasonMetalLBPoolInvalid means a pool the policy uses cannot be mirrored into a
-	// MetalLB IPAddressPool, for example a Subnet whose address is not known yet (entry
-	// "<pool kind>/<pool name>").
+	// MetalLB IPAddressPool, for example a pool CR that is not Ready yet or whose status
+	// carries no address yet (entry "<pool kind>/<pool name>").
 	SkipReasonMetalLBPoolInvalid = "MetalLBPoolInvalid"
 	// SkipReasonMetalLBPoolConflict means the IPAddressPool a pool would be mirrored into
 	// already exists without this policy's labels; it is left alone (entry
 	// "<pool kind>/<pool name>").
 	SkipReasonMetalLBPoolConflict = "MetalLBPoolConflict"
+	// SkipReasonNotPermitted means spec.targets lists EgressIP (entry "EgressIP") or
+	// spec.metallb.mirrorPools is true (entry "IPAddressPool"), but the policy's namespace
+	// is not one the operator's --cluster-target-namespaces setting allows to have
+	// cluster-scoped effects. That target, or the mirroring, is off for the policy, and
+	// what it had already assigned or mirrored is released.
+	SkipReasonNotPermitted = "NotPermitted"
 )
 
 // AssignMode selects how an allocated address is written back onto a Service.
@@ -121,25 +127,20 @@ const (
 )
 
 // DefaultMetalLBNamespace is the namespace mirrored MetalLB IPAddressPools are created in
-// when spec.metallb.namespace is empty.
+// unless the operator's --metallb-namespace setting names another.
 const DefaultMetalLBNamespace = "metallb-system"
 
 // MetalLBMirror configures mirroring of the pools an IPAllocationPolicy uses into MetalLB
 // IPAddressPools, so MetalLB announces the addresses the policy assigns.
 type MetalLBMirror struct {
 	// MirrorPools, when true, mirrors every pool this policy uses into a
-	// metallb.io/v1beta1 IPAddressPool with autoAssign false.
+	// metallb.io/v1beta1 IPAddressPool with autoAssign false, in the namespace the
+	// operator is configured with (metallb-system by default), usable only by Services in
+	// this policy's namespace. A pool is mirrored once Universal DDI confirmed it: from the
+	// pool CR's status, while it is Ready. Only policies in a namespace the operator's
+	// --cluster-target-namespaces setting allows may mirror pools.
 	// +optional
 	MirrorPools bool `json:"mirrorPools,omitempty"`
-
-	// Namespace is where the mirrored IPAddressPools are created. Defaults to
-	// metallb-system.
-	// +kubebuilder:default=metallb-system
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
 }
 
 // IPAllocationPolicySpec selects which Services and EgressIPs get Universal DDI IPAM
@@ -153,7 +154,10 @@ type IPAllocationPolicySpec struct {
 	// Targets selects which kinds of objects claim addresses: Service (type
 	// LoadBalancer Services in this namespace) and EgressIP (cluster-scoped
 	// OVN-Kubernetes EgressIPs). Defaults to Service only. Addresses already allocated
-	// for a kind that is removed from this list are left in place.
+	// for a kind that is removed from this list are left in place. EgressIP only takes
+	// effect in a namespace the operator's --cluster-target-namespaces setting allows,
+	// and only for EgressIPs annotated uddi.infoblox.com/policy with this policy's
+	// namespace/name.
 	// +kubebuilder:default={Service}
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=2
@@ -208,7 +212,8 @@ type SkippedService struct {
 	// Service names what was skipped: the name of a Service; "EgressIP/<name>" for an
 	// EgressIP; "<pool kind>/<pool name>" (for example "Range/lb-pool") for a pool that
 	// cannot be mirrored into MetalLB; or "EgressIP" or "IPAddressPool" alone when the
-	// cluster does not serve that API. At most "AddressBlock/" plus a 253 character name.
+	// cluster does not serve that API or the policy is not permitted to use it. At
+	// most "AddressBlock/" plus a 253 character name.
 	// +kubebuilder:validation:MaxLength=266
 	// +optional
 	Service string `json:"service,omitempty"`
