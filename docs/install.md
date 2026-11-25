@@ -3,7 +3,8 @@
 ## Prerequisites
 
 - OpenShift 4.16 or newer (Kubernetes 1.29 floor; the operator's CRDs and CSV declare
-  `minKubeVersion: 1.29.0`).
+  `minKubeVersion: 1.29.0`). This is the design target and is so far untested on a real
+  cluster.
 - `cluster-admin` (or equivalent) access, to install a CatalogSource, an OperatorGroup, a
   Subscription and the operator's ClusterRoles/RoleBindings.
 - The `oc` or `kubectl` CLI logged in to the target cluster.
@@ -12,6 +13,12 @@
   [uddi-api-notes.md](uddi-api-notes.md)).
 
 ## Option A: install from the file-based catalog (recommended)
+
+> **Note:** no images or catalog have been published yet, and the release workflow has
+> never run. Until the first release, the image references below do not resolve. Build and
+> push your own images first (see [Option B](#option-b-developer-install-straight-from-source-no-olm)
+> for building an operator image from source), and substitute your own registry for
+> `quay.io/ingmarvg-ib`.
 
 This installs the operator through OLM, from the file-based catalog image published by
 [`release.yml`](../.github/workflows/release.yml) to
@@ -90,7 +97,7 @@ spec:
 ```
 
 OLM creates the InstallPlan, deploys the `uddi-operator-controller-manager` Deployment and
-installs the ten `uddi.infoblox.com` CRDs. Confirm with:
+installs the thirteen `uddi.infoblox.com` CRDs. Confirm with:
 
 ```console
 $ oc get csv -n uddi-operator-system
@@ -104,8 +111,8 @@ object-layer resources (see the samples under [`../config/samples`](../config/sa
 ## Option B: developer install straight from source (no OLM)
 
 Useful for iterating on the operator itself, or on a cluster without OLM/OperatorHub. Run
-from the repository root, inside WSL for the reasons in this repo's `DESIGN.md` section 11
-(neither `operator-sdk` nor `kubebuilder`/the Makefile ship for Windows):
+from the repository root, in a Linux or macOS shell (on Windows, use WSL; the Makefile
+assumes a Unix toolchain):
 
 ```console
 $ export KUBECONFIG=/path/to/your/kubeconfig
@@ -122,8 +129,7 @@ $ make docker-build docker-push IMG=quay.io/<your-namespace>/uddi-operator:dev
 $ make deploy IMG=quay.io/<your-namespace>/uddi-operator:dev
 ```
 
-(Image builds require Docker/Buildx and are not available from this repository's WSL
-toolchain — see `DESIGN.md` / the delivery agent's own notes.)
+(Image builds need a container runtime.)
 
 ## Uninstall
 
@@ -161,8 +167,8 @@ The default `config/default` deployment applies the following pod security setti
 - Explicit resource requests (CPU 10m, memory 64Mi) and limits (CPU 500m, memory 256Mi)
 - A temporary `/tmp` volume (emptyDir) for the metrics server's self-signed certificate generation
 
-These settings are compatible with the OpenShift `restricted-v2` Pod Security Standard and
-enforced at admission time on the 4.16 platform.
+These settings are designed to be compatible with the OpenShift `restricted-v2` security
+context constraint. This has not yet been verified on a cluster.
 
 ### High-availability overlay
 
@@ -171,6 +177,7 @@ PodDisruptionBudget and soft pod anti-affinity (the default stays one replica wi
 PDB, since a PDB on a single leader-elected replica only blocks node drains):
 
 ```console
+$ make kustomize                                   # installs bin/kustomize if missing
 $ bin/kustomize build config/ha | oc apply -f -
 ```
 
@@ -189,6 +196,7 @@ To restrict ingress and egress traffic to and from the manager pods, apply the
 `config/network-policy` overlay. It is opt-in and not included in the default:
 
 ```console
+$ make kustomize                                   # installs bin/kustomize if missing
 $ bin/kustomize build config/network-policy | oc apply -f -
 ```
 

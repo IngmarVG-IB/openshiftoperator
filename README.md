@@ -2,9 +2,20 @@
 
 An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://www.infoblox.com/products/universal-ddi/). The operator models Universal DDI objects (DNS views, zones, records, IP spaces, subnets, ranges, addresses, and DHCP reservations) as namespaced Kubernetes custom resources under the `uddi.infoblox.com` API group, allowing you to manage Infoblox infrastructure declaratively from OpenShift.
 
-## Status
+## Project status
 
-Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) are implemented end to end - CRDs, adapters, controllers, field indexes, ownership tags, adoption, drift correction and deletion - on top of the Universal DDI client layer with its in-memory fake and the generic object-layer reconcile loop. Milestone 2 (DNS publishing) is complete: a DNSPublishPolicy publishes Routes, Ingresses and LoadBalancer Services as Records. Milestone 3 (IP allocation) is complete: an IPAllocationPolicy allocates IPs to LoadBalancer Services from Universal DDI pools and writes them into the load balancer annotation. Milestone 4 (host registration) is complete: a HostRegistrationPolicy registers cluster Nodes as DHCP reservations or named IPAM addresses. Milestones 1 to 4 make up v0.1.0. Milestone 6 (object layer hardening) is complete: tag removal, DHCP option codes by name, paging and retries for the Universal DDI API, metrics with alerts and dashboards, pod hardening with HA and network-policy overlays, and the current controller-runtime event and server-side apply APIs. Milestone 7 (integration layer) is complete: DNS publishing from Nodes, the ingress operator's DNSRecords including the router wildcard, and Gateway API HTTPRoutes, with PTR records, external-dns annotation compatibility and zones shared across namespaces; dual-stack Services, OVN EgressIPs and MetalLB pool mirroring for IP allocation; and Metal3 MAC discovery and additional node interfaces for host registration. Everything is proven on envtest; running it against a real tenant and cluster is milestone 5. See ROADMAP.md and PLAN.md for what follows.
+**Alpha. Not yet run against a real Universal DDI tenant or a real OpenShift cluster.**
+
+- The API is `v1alpha1`. CRD schemas may change without notice.
+- Behaviour is exercised only by unit tests and envtest (a Kubernetes test control plane) against an in-memory fake of the Universal DDI API. It has never run against a real Universal DDI tenant or a real OpenShift cluster.
+- A test suite for a real tenant exists (see [docs/testing.md](docs/testing.md)) but has never been run.
+- No images or releases have been published yet.
+- The e2e suite is the operator-sdk scaffold smoke test only: the manager pod runs and the metrics endpoint serves.
+- Use a sandbox tenant only.
+
+Implemented: an object layer of ten kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) and three policy kinds (DNS publishing, IP allocation, host registration). See [ROADMAP.md](ROADMAP.md) for the plan.
+
+Help is through GitHub Issues, on a best-effort basis. For security reports see [SECURITY.md](SECURITY.md).
 
 ## Features
 
@@ -23,9 +34,13 @@ Pre-alpha. Milestone 1 is complete: all ten object-layer kinds (Connection, View
 
 ## How It Works
 
-The operator has two layers. The **object layer** models Universal DDI objects one-to-one as namespaced CRs and provides a generic reconcile loop: every kind uses the same steps to create, adopt, diff, update and delete in Universal DDI. The loop is parameterised by a small adapter interface, so behaviour is consistent across all kinds. The **integration layer** (forthcoming) watches native OpenShift objects (Routes, Ingresses, LoadBalancer Services, Nodes) and expresses the desired Universal DDI state as object-layer CRs—DNS record publishing, IP allocation and host registration all inherit ownership tracking, drift correction and cleanup from the object layer.
+The operator has two layers. The **object layer** models Universal DDI objects one-to-one as namespaced CRs and provides a generic reconcile loop: every kind uses the same steps to create, adopt, diff, update and delete in Universal DDI. The loop is parameterised by a small adapter interface, so behaviour is consistent across all kinds. The **integration layer** watches native OpenShift objects (Routes, Ingresses, LoadBalancer Services, Nodes) and expresses the desired Universal DDI state as object-layer CRs—DNS record publishing, IP allocation and host registration all inherit ownership tracking, drift correction and cleanup from the object layer.
 
 ## Quick Start
+
+Install the operator first; see [docs/install.md](docs/install.md).
+
+> **Warning:** the quick start creates real objects in the Universal DDI tenant that the API key belongs to. Use a sandbox tenant.
 
 Ensure a Secret with an API key exists in your namespace:
 
@@ -108,22 +123,26 @@ See [docs/usage.md](docs/usage.md) for complete task-oriented documentation.
 - **[docs/ip-allocation.md](docs/ip-allocation.md)** — IP Allocation: automatic IP allocation to LoadBalancer Services from Universal DDI pools.
 - **[docs/host-registration.md](docs/host-registration.md)** — Host Registration: automatic registration of cluster Nodes as DHCP or IPAM reservations.
 - **[docs/patterns.md](docs/patterns.md)** — Integration patterns: a bare-metal cluster using all three policies together.
+- **[docs/testing.md](docs/testing.md)** — Test lanes, and how to run the real-tenant integration suite.
 - **[docs/api.md](docs/api.md)** — Full API reference for all kinds and shared types.
 - **[docs/observability.md](docs/observability.md)** — Metrics, alerts, dashboards and runbooks for monitoring the operator.
 - **[DESIGN.md](DESIGN.md)** — Architecture, decisions and implementation notes.
 - **[PLAN.md](PLAN.md)** — Implementation roadmap.
 - **[ROADMAP.md](ROADMAP.md)** — The plan from here to a supported 1.0 (milestones 5 to 10).
 - **[docs/uddi-api-notes.md](docs/uddi-api-notes.md)** — Background on the Universal DDI REST API and Go SDK.
+- **[SECURITY.md](SECURITY.md)** — Supported versions, reporting vulnerabilities, security model.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to build, test and submit changes.
 
 ## Development
 
-Neither operator-sdk nor kubebuilder ships Windows binaries and the generated Makefile assumes a Linux toolchain, so every Go, `make` and `operator-sdk` command runs in WSL. On this machine the toolchain is not on the login-shell PATH, so use:
+Prerequisites:
 
-```sh
-wsl -e bash -lc 'export PATH=/home/ingmar/goroot/go/bin:/home/ingmar/go/bin:$PATH; cd /mnt/c/Users/Ingmar/src/openshiftoperator && <command>'
-```
+- Go, at the version in `go.mod`
+- `make`
+- A Linux or macOS shell (on Windows, use WSL; the Makefile assumes a Unix toolchain)
+- A container runtime, for the image targets (`make docker-build` and friends)
 
-Builds on `/mnt/c` go through the 9p filesystem and are slow; allow several minutes for `make test` and `go mod tidy`.
+`make` downloads the other tools it needs (controller-gen, kustomize, setup-envtest, golangci-lint, operator-sdk) into `bin/`.
 
 | Target | What it does |
 | --- | --- |
@@ -135,7 +154,7 @@ Builds on `/mnt/c` go through the 9p filesystem and are slow; allow several minu
 | `make lint` | golangci-lint |
 | `make run` | runs the manager against the cluster in your current kubeconfig |
 | `make install` / `make uninstall` | applies or removes the CRDs |
-| `make docker-build`, `make bundle-build`, `make catalog-build` | need a container runtime, which this WSL install does not have |
+| `make docker-build`, `make bundle-build`, `make catalog-build` | need a container runtime |
 
 Tests never reach Universal DDI. `internal/uddi.Fake` is an in-memory implementation of the same interfaces the SDK client satisfies, with the same natural-key uniqueness rules, `_filter` and `_tfilter` evaluation and next-available allocation, and the controllers pick it up through the client factory hook on `internal/connection.Resolver`.
 

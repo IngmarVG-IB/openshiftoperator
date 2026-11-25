@@ -605,7 +605,7 @@ Each Node has one primary registration object (one Address or one FixedAddress) 
 
 ### IPSpace Must Contain Node Networks
 
-The IPSpace must have subnets or address blocks that contain the Node's registered address. If the address is outside the space, Universal DDI rejects the registration with an API error, which surfaces as `RegistrationPending` with the error message.
+The IPSpace must have subnets or address blocks that contain the Node's registered address. If the address is outside the space, Universal DDI is expected to reject the registration with an API error (not yet verified against a tenant), which surfaces as `RegistrationPending` with the error message.
 
 ### Changing the Kind Replaces the Object
 

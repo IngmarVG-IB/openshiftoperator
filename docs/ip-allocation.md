@@ -74,7 +74,7 @@ A team that wants addresses from a shared Subnet therefore creates its own Range
 
 ### Load Balancer Support
 
-The operator writes the allocated IP into the Service by patching an annotation (default) or `spec.loadBalancerIP`. Your load balancer implementation must honour the configured key. Tested implementations:
+The operator writes the allocated IP into the Service by patching an annotation (default) or `spec.loadBalancerIP`. Your load balancer implementation must honour the configured key. Annotation keys that these implementations document (not yet tested by this project against the implementations themselves):
 
 | Implementation | Annotation Key | Format | Documentation |
 | --- | --- | --- | --- |

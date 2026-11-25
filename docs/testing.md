@@ -9,18 +9,11 @@ how to fold its findings back into [docs/uddi-api-notes.md](uddi-api-notes.md).
 | Unit | `go test` | Adapters, diff logic, tag merging, natural-key lookups against `internal/uddi.Fake` | No |
 | envtest (default + floor) | controller-runtime envtest, Ginkgo v2 / Gomega | Every controller end to end against the fake client: adoption, conflict, deletion, dependency ordering | No |
 | Integration | `go test -tags integration` | Real Universal DDI API behaviour per kind, answering the open questions in docs/uddi-api-notes.md | **Yes** |
-| e2e | kind, later OpenShift | Operator deployed from the bundle, sample CRs applied, status asserted | No (talks to the fake/a test cluster, not a real tenant) |
+| e2e | kind | Scaffold smoke test only: the manager pod runs and the metrics endpoint serves | No |
 
-All `make` targets require the Linux toolchain (operator-sdk, kubebuilder's controller-gen,
-setup-envtest, etc.), so on Windows run them inside WSL, same as every other `make`
-workflow in this repo (DESIGN.md section 11):
-
-```bash
-wsl -e bash -lc 'export PATH=/home/ingmar/goroot/go/bin:/home/ingmar/go/bin:$PATH; cd /path/to/openshiftoperator && make <target>'
-```
-
-The rest of this document just gives the `make <target>` (or `go test ...`) command; run
-it inside that wrapper.
+All `make` targets assume a Unix toolchain (Go, make, and the tools `make` downloads into
+`bin/`, such as operator-sdk, controller-gen and setup-envtest). On Windows, run them inside
+WSL. The rest of this document gives the `make <target>` (or `go test ...`) command.
 
 ## Unit tests
 
@@ -192,6 +185,8 @@ the same script.
 make test-e2e
 ```
 
-Spins up a local `kind` cluster, builds and loads the manager image, applies sample CRs
-and asserts on status. Talks to a real Kubernetes API server but not to a real Universal
-DDI tenant.
+Spins up a local `kind` cluster, builds the manager image (needs a container runtime) and
+loads it into the cluster, installs the CRDs and deploys the manager. It then checks that
+the controller-manager pod is running and that the metrics endpoint serves metrics. This is
+the operator-sdk scaffold smoke test (`test/e2e/e2e_test.go`); it applies no sample CRs and
+asserts nothing about reconciliation. It does not talk to a Universal DDI tenant.

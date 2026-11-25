@@ -481,7 +481,7 @@ kubectl get connection default -n team-a -o jsonpath='{.status.conditions[?(@.ty
 
 ### Tenant Pools: a Range Inside the Platform Subnet
 
-`team-a` gets its own slice of the node network `10.10.0.0/24` (the `node-network` Subnet in section 2) and of the IPv6 network. Each slice is a Range CR in `team-a`. The Range's `spaceRef` names the platform's IPSpace by id, because the `cluster` IPSpace CR lives in `uddi-system` and a name is only resolved in the Range's own namespace. Read the id once:
+`team-a` gets its own slice of the node network `10.10.0.0/24` (the `node-network` Subnet in section 2) and of the IPv6 network. Each slice is a Range CR in `team-a`. The Range's `spaceRef` names the platform's IPSpace by id, because the `cluster` IPSpace CR lives in `uddi-system` and a name is only resolved in the Range's own namespace. Read the id once. (The ids and messages shown in this section are illustrative output; yours will differ.)
 
 ```bash
 kubectl get ipspace cluster -n uddi-system -o jsonpath='{.status.id}'
@@ -703,7 +703,7 @@ With `compatibility.externalDNS: true`:
 - The policy reads `external-dns.alpha.kubernetes.io/hostname`, `/ttl` and `/target` in addition to the matching `uddi.infoblox.com/` annotations, on every source kind
 - The external-dns `ttl` may be an integer number of seconds or a duration such as `5m`
 - The `uddi.infoblox.com` annotation wins when both are set, annotation by annotation (the values are never merged)
-- Existing external-dns users can migrate without relabelling objects
+- Existing external-dns users should be able to migrate without relabelling objects. This is untested against a live external-dns deployment
 - `recordLifecycle.adoptExisting: true` lets the Records take over DNS records external-dns already created, as long as no other CR manages them
 
 Example: a Route with an existing external-dns annotation will continue to publish without modification:

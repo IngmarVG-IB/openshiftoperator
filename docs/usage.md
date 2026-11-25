@@ -798,7 +798,7 @@ kubectl describe <kind> <name>
 
 ### Monitoring and Alerts
 
-For metrics on API calls, rate limiting, retries, and alerts on Connection readiness, API errors, and pending allocations, see [docs/observability.md](docs/observability.md).
+For metrics on API calls, rate limiting, retries, and alerts on Connection readiness, API errors, and pending allocations, see [docs/observability.md](observability.md).
 
 ### Adopted vs. Created
 
