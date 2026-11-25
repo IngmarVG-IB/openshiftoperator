@@ -37,5 +37,5 @@ Thumbs.db
 *.pem
 kubeconfig*
 
-# Agent worktrees
-.claude/worktrees/
+# Local tool state
+.claude/

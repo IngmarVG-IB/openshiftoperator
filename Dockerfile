@@ -1,10 +1,10 @@
 # Build the manager binary.
 #
 # Builder base: registry.access.redhat.com/ubi9/go-toolset, pinned to the newest 1.26 build
-# (Go 1.26.7, rebuilt 2026-09-23), multi-arch (amd64/arm64/ppc64le/s390x). Looked up
-# 2026-10-04 via:
+# (Go 1.26.10, rebuilt 2026-11-09), multi-arch (amd64/arm64/ppc64le/s390x). Looked up
+# 2026-11-25 via:
 #   https://catalog.redhat.com/api/containers/v1/repositories/registry/registry.access.redhat.com/repository/ubi9/go-toolset/images?page_size=25&sort_by=creation_date%5Bdesc%5D
-FROM registry.access.redhat.com/ubi9/go-toolset:1.26.7-1790174511 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.26.10-1794208260 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 # go.mod names a newer toolchain for developer and CI builds. The image keeps Red Hat's
@@ -36,11 +36,11 @@ COPY internal/ internal/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -a -o manager cmd/main.go
 
-# Runtime base: registry.access.redhat.com/ubi9/ubi-minimal, pinned to the 9.8 build current
-# as of 2026-09-14 (distroless cannot be Red Hat certified; ubi-minimal is the smallest
+# Runtime base: registry.access.redhat.com/ubi9/ubi-minimal, pinned to the 9.9 build current
+# as of 2026-11-25 (distroless cannot be Red Hat certified; ubi-minimal is the smallest
 # certifiable base). Looked up via:
 #   https://catalog.redhat.com/api/containers/v1/repositories/registry/registry.access.redhat.com/repository/ubi9/ubi-minimal/images?page_size=10&sort_by=creation_date%5Bdesc%5D
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8-1789349365
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.9-1795198179
 
 ARG VERSION=0.1.0
 ARG RELEASE=1
@@ -56,16 +56,15 @@ LABEL name="uddi-operator" \
       io.k8s.display-name="Universal DDI Operator" \
       io.openshift.tags="infoblox,dns,ipam,dhcp,ddi,universal-ddi,operator"
 
-WORKDIR /workspace
-COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/manager /manager
 COPY LICENSE /licenses/LICENSE
 
 # OpenShift runs containers as an arbitrary, randomly-assigned UID with the root (0) group;
-# keep the workdir and license directory group-writable/readable so that model works even
+# keep the binary and license directory group-writable/readable so that model works even
 # though this operator does not write to disk at runtime.
 RUN chgrp -R 0 /workspace /licenses && \
     chmod -R g=u /workspace /licenses
 
 USER 65532:65532
 
-ENTRYPOINT ["/workspace/manager"]
+ENTRYPOINT ["/manager"]
