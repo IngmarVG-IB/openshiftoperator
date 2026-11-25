@@ -109,7 +109,7 @@ func main() {
 		"Comma-separated Cloud Services Portal host names a Connection's spec.cspURL may use "+
 			"(exact match, case-insensitive, port ignored). Also settable through ALLOWED_CSP_HOSTS.")
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
