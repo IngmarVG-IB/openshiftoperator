@@ -156,11 +156,13 @@ func makeReadyConnection(namespace string) *uddiv1alpha1.Connection {
 func setConnectionReady(conn *uddiv1alpha1.Connection, status metav1.ConditionStatus, reason, message string) {
 	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(conn), conn)).To(Succeed())
 	meta.SetStatusCondition(&conn.Status.Conditions, metav1.Condition{
-		Type:    uddiv1alpha1.ConditionReady,
-		Status:  status,
-		Reason:  reason,
-		Message: message,
+		Type:               uddiv1alpha1.ConditionReady,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: conn.Generation,
 	})
+	conn.Status.ObservedGeneration = conn.Generation
 	Expect(k8sClient.Status().Update(ctx, conn)).To(Succeed())
 }
 

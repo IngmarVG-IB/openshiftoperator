@@ -98,8 +98,18 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	// ALLOWED_CSP_HOSTS lets OLM users set the allowlist through the Subscription's
+	// config.env; the flag, when given, wins.
+	var allowedCSPHosts string
+	defaultAllowedCSPHosts := connection.DefaultAllowedCSPHost
+	if v := strings.TrimSpace(os.Getenv("ALLOWED_CSP_HOSTS")); v != "" {
+		defaultAllowedCSPHosts = v
+	}
+	flag.StringVar(&allowedCSPHosts, "allowed-csp-hosts", defaultAllowedCSPHosts,
+		"Comma-separated Cloud Services Portal host names a Connection's spec.cspURL may use "+
+			"(exact match, case-insensitive, port ignored). Also settable through ALLOWED_CSP_HOSTS.")
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -244,7 +254,13 @@ func main() {
 	// Shared object-layer runtime: the Connection resolver (which caches one Universal
 	// DDI client per Connection), the event recorder and the cluster id that goes into
 	// the ownership tags.
-	resolver := &connection.Resolver{Client: mgr.GetClient()}
+	// Secrets are read through the uncached API reader, so the manager never caches them.
+	resolver := &connection.Resolver{
+		Client:       mgr.GetClient(),
+		SecretReader: mgr.GetAPIReader(),
+		AllowedHosts: connection.ParseAllowedHosts(allowedCSPHosts),
+	}
+	setupLog.Info("allowed Cloud Services Portal hosts", "hosts", resolver.AllowedHosts)
 
 	var clusterIDs clusterid.Resolver
 	clusterID, err := clusterIDs.Get(context.Background(), mgr.GetAPIReader())

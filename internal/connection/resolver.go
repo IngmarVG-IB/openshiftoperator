@@ -42,6 +42,17 @@ import (
 // DefaultResyncInterval is used when a Connection leaves spec.resyncInterval empty.
 const DefaultResyncInterval = 10 * time.Minute
 
+// MinResyncInterval is the shortest drift-detection period. The CRD rejects anything
+// shorter; ResyncInterval raises a shorter value that got past it to this.
+const MinResyncInterval = 30 * time.Second
+
+// Client-side rate limit applied when spec.rateLimit, or one of its fields, is unset.
+// They match the CRD field defaults.
+const (
+	DefaultRateLimitRPS   = 10
+	DefaultRateLimitBurst = 20
+)
+
 // Errors returned by Resolve. They are sentinel values so callers can map them onto
 // condition reasons without string matching.
 var (
@@ -62,10 +73,18 @@ type ClientFactory func(cfg uddi.Config) (*uddi.Client, error)
 // Resolver turns a ConnectionRef into a Connection CR and a Universal DDI client.
 // It is safe for concurrent use.
 type Resolver struct {
-	// Client reads Connection CRs and Secrets.
+	// Client reads Connection CRs.
 	Client client.Client
+	// SecretReader reads Secrets. Give it an uncached reader (mgr.GetAPIReader()) so the
+	// manager never starts a Secret informer and holds every Secret in memory. Nil means
+	// Client, which is fine for tests that pass a plain API client.
+	SecretReader client.Reader
 	// Factory builds Universal DDI clients. Nil means uddi.NewSDKClient.
 	Factory ClientFactory
+	// AllowedHosts lists the Cloud Services Portal host names a Connection may point at
+	// (exact match, case-insensitive, port ignored). Empty means DefaultAllowedCSPHost
+	// only.
+	AllowedHosts []string
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -132,11 +151,20 @@ func (r *Resolver) Resolve(ctx context.Context, namespace, name string) (*Resolv
 // client on the next reconcile.
 //
 // The API key is read straight into the client config and is never logged, never stored
-// in the cache key and never copied into an error.
+// in the cache key and never copied into an error. The endpoint is checked before the
+// Secret is read (ErrInvalidEndpoint, ErrEndpointNotAllowed), so a Connection pointed at
+// a host outside the allowlist never gets a key to send there.
 func (r *Resolver) ClientFor(ctx context.Context, conn *uddiv1alpha1.Connection) (*uddi.Client, error) {
+	if err := r.checkEndpoint(conn.CSPURL()); err != nil {
+		return nil, err
+	}
+	secrets := r.SecretReader
+	if secrets == nil {
+		secrets = r.Client
+	}
 	secret := &corev1.Secret{}
 	secretName := types.NamespacedName{Namespace: conn.Namespace, Name: conn.Spec.SecretRef.Name}
-	if err := r.Client.Get(ctx, secretName, secret); err != nil {
+	if err := secrets.Get(ctx, secretName, secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("%w: %s", ErrSecretNotFound, secretName)
 		}
@@ -206,29 +234,45 @@ func (r *Resolver) Invalidate(namespace, name string) {
 	}
 }
 
-// IsReady reports whether a Connection carries a Ready=True condition.
+// IsReady reports whether a Connection carries a Ready=True condition computed from its
+// current spec: both status.observedGeneration and the condition's observedGeneration
+// must equal metadata.generation. After a spec edit (a new cspURL, say) the Connection is
+// therefore not Ready until the Connection controller has verified the new spec, and no
+// object reconciler sends requests to an unverified endpoint in the meantime.
 func IsReady(conn *uddiv1alpha1.Connection) bool {
+	if conn.Status.ObservedGeneration != conn.Generation {
+		return false
+	}
 	for _, c := range conn.Status.Conditions {
 		if c.Type == uddiv1alpha1.ConditionReady {
-			return c.Status == "True"
+			return c.Status == "True" && c.ObservedGeneration == conn.Generation
 		}
 	}
 	return false
 }
 
-// ResyncInterval returns the effective drift-detection period for a Connection.
+// ResyncInterval returns the effective drift-detection period for a Connection, never
+// shorter than MinResyncInterval.
 func ResyncInterval(conn *uddiv1alpha1.Connection) time.Duration {
 	if conn == nil || conn.Spec.ResyncInterval == nil || conn.Spec.ResyncInterval.Duration <= 0 {
 		return DefaultResyncInterval
 	}
-	return conn.Spec.ResyncInterval.Duration
+	return max(conn.Spec.ResyncInterval.Duration, MinResyncInterval)
 }
 
+// rateLimit returns the effective client-side limit. An unset spec.rateLimit, or an
+// unset field in it, gets the CRD default rather than disabling the limiter.
 func rateLimit(conn *uddiv1alpha1.Connection) (float64, int) {
-	if conn.Spec.RateLimit == nil {
-		return 0, 0
+	rps, burst := int32(DefaultRateLimitRPS), int32(DefaultRateLimitBurst)
+	if rl := conn.Spec.RateLimit; rl != nil {
+		if rl.RequestsPerSecond > 0 {
+			rps = rl.RequestsPerSecond
+		}
+		if rl.Burst > 0 {
+			burst = rl.Burst
+		}
 	}
-	return float64(conn.Spec.RateLimit.RequestsPerSecond), int(conn.Spec.RateLimit.Burst)
+	return float64(rps), int(burst)
 }
 
 // specHash fingerprints the client-relevant parts of a Connection spec. The Secret

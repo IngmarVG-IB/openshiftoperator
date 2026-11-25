@@ -222,6 +222,10 @@ var _ = Describe("Tag removal through status.appliedTags", func() {
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(conn), conn)).To(Succeed())
 				conn.Spec.DefaultTags = map[string]string{"tier": "gold"}
 				Expect(k8sClient.Update(ctx, conn)).To(Succeed())
+				// The edited Connection is not Ready until it is verified at its new generation.
+				_, err := (&ConnectionReconciler{Client: k8sClient, Connections: testResolver, Recorder: testRecorder}).
+					Reconcile(ctx, requestFor(conn))
+				Expect(err).NotTo(HaveOccurred())
 
 				Expect(reconcileFresh(obj)).To(Succeed())
 

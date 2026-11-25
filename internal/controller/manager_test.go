@@ -135,7 +135,8 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		resolver := &connection.Resolver{
-			Client: mgr.GetClient(),
+			Client:       mgr.GetClient(),
+			SecretReader: mgr.GetAPIReader(),
 			Factory: func(uddi.Config) (*uddi.Client, error) {
 				return mgrFake.Client(), nil
 			},
@@ -314,6 +315,46 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 			WithTimeout(settle).WithPolling(poll).
 			Should(HaveField("Status", metav1.ConditionTrue))
 		Expect(v.Status.ID).To(HavePrefix(uddi.PrefixView + "/"))
+	})
+
+	It("verifies a Connection through the metadata-only Secret watch when its Secret appears later", func() {
+		conn := &uddiv1alpha1.Connection{
+			ObjectMeta: metav1.ObjectMeta{Name: "secret-later", Namespace: mgrNS},
+			Spec: uddiv1alpha1.ConnectionSpec{
+				SecretRef: uddiv1alpha1.SecretKeyRef{Name: "secret-later-key"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, conn)).To(Succeed())
+		Eventually(readyCondition(conn, func() []metav1.Condition { return conn.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Reason", uddiv1alpha1.ReasonSecretNotFound))
+
+		// The Connection's own requeue is 10 minutes away, so only the Secret watch can
+		// bring it to Ready inside settle.
+		Expect(k8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "secret-later-key", Namespace: mgrNS},
+			Data:       map[string][]byte{uddiv1alpha1.DefaultSecretKey: []byte("not-a-real-key")},
+		})).To(Succeed())
+		Eventually(readyCondition(conn, func() []metav1.Condition { return conn.Status.Conditions })).
+			WithTimeout(settle).WithPolling(poll).
+			Should(HaveField("Status", metav1.ConditionTrue))
+	})
+
+	It("re-verifies a Connection promptly after a spec edit", func() {
+		conn := secretAndConnection("edited-connection")
+		Eventually(func() bool {
+			return k8sClient.Get(ctx, client.ObjectKeyFromObject(conn), conn) == nil && connection.IsReady(conn)
+		}).WithTimeout(settle).WithPolling(poll).Should(BeTrue())
+
+		patch := client.MergeFrom(conn.DeepCopy())
+		conn.Spec.DefaultTags = map[string]string{"edited": "yes"}
+		Expect(k8sClient.Patch(ctx, conn, patch)).To(Succeed())
+		gen := conn.Generation
+
+		Eventually(func() bool {
+			return k8sClient.Get(ctx, client.ObjectKeyFromObject(conn), conn) == nil &&
+				conn.Status.ObservedGeneration == gen && connection.IsReady(conn)
+		}).WithTimeout(settle).WithPolling(poll).Should(BeTrue())
 	})
 
 	It("publishes a Record for an Ingress created after the policy, purely through the watch", func() {

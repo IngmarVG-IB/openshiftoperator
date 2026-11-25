@@ -26,7 +26,9 @@ import (
 //
 // ConnectionSpec defines credentials and client settings for one Universal DDI tenant.
 type ConnectionSpecApplyConfiguration struct {
-	// CSPURL is the Cloud Services Portal endpoint.
+	// CSPURL is the Cloud Services Portal endpoint: https://, a host name, an optional
+	// port and at most a trailing slash. Userinfo, paths, queries and fragments are
+	// rejected, and the host must also be on the operator's --allowed-csp-hosts list.
 	CSPURL *string `json:"cspURL,omitempty"`
 	// SecretRef points at the Secret holding the API key.
 	SecretRef *SecretKeyRefApplyConfiguration `json:"secretRef,omitempty"`
@@ -36,8 +38,10 @@ type ConnectionSpecApplyConfiguration struct {
 	// below the operator's ownership tags and above nothing else.
 	DefaultTags map[string]string `json:"defaultTags,omitempty"`
 	// ResyncInterval is the drift-detection period for objects using this Connection.
+	// The minimum is 30s.
 	ResyncInterval *v1.Duration `json:"resyncInterval,omitempty"`
-	// RateLimit configures the client-side limiter.
+	// RateLimit configures the client-side limiter. When unset, the field defaults apply
+	// (10 requests per second, burst 20).
 	RateLimit *RateLimitApplyConfiguration `json:"rateLimit,omitempty"`
 }
 

@@ -61,6 +61,7 @@ func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, err
 //	retryTransport        retries 429, 502, 503 and 504 for GET, PATCH and DELETE
 //	rateLimitedTransport  waits for a token; omitted when rps is not positive
 //	metricsTransport      records the request counter and the duration histogram
+//	bodyLimitTransport    fails a read past maxResponseBytes of response body
 //	base transport        the network
 //
 // The order matters. Retrying outside the limiter makes every attempt, retries
@@ -82,7 +83,10 @@ func newHTTPClient(base *http.Client, rps float64, burst int, connLabel string) 
 	if base != nil {
 		*out = *base
 	}
-	var rt http.RoundTripper = &metricsTransport{base: out.Transport, connection: connLabel}
+	var rt http.RoundTripper = &metricsTransport{
+		base:       &bodyLimitTransport{base: out.Transport, limit: maxResponseBytes},
+		connection: connLabel,
+	}
 	if rps > 0 {
 		if burst <= 0 {
 			burst = 1

@@ -62,9 +62,12 @@ type RateLimit struct {
 
 // ConnectionSpec defines credentials and client settings for one Universal DDI tenant.
 type ConnectionSpec struct {
-	// CSPURL is the Cloud Services Portal endpoint.
+	// CSPURL is the Cloud Services Portal endpoint: https://, a host name, an optional
+	// port and at most a trailing slash. Userinfo, paths, queries and fragments are
+	// rejected, and the host must also be on the operator's --allowed-csp-hosts list.
 	// +kubebuilder:default="https://csp.infoblox.com"
 	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?/?$`
 	// +optional
 	CSPURL string `json:"cspURL,omitempty"`
 
@@ -83,11 +86,14 @@ type ConnectionSpec struct {
 	DefaultTags map[string]string `json:"defaultTags,omitempty"`
 
 	// ResyncInterval is the drift-detection period for objects using this Connection.
+	// The minimum is 30s.
 	// +kubebuilder:default="10m"
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('30s')",message="resyncInterval must be at least 30s"
 	// +optional
 	ResyncInterval *metav1.Duration `json:"resyncInterval,omitempty"`
 
-	// RateLimit configures the client-side limiter.
+	// RateLimit configures the client-side limiter. When unset, the field defaults apply
+	// (10 requests per second, burst 20).
 	// +optional
 	RateLimit *RateLimit `json:"rateLimit,omitempty"`
 }
