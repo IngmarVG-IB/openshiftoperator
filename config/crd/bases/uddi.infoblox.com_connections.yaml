@@ -64,8 +64,12 @@ spec:
                 type: string
               cspURL:
                 default: https://csp.infoblox.com
-                description: CSPURL is the Cloud Services Portal endpoint.
+                description: |-
+                  CSPURL is the Cloud Services Portal endpoint: https://, a host name, an optional
+                  port and at most a trailing slash. Userinfo, paths, queries and fragments are
+                  rejected, and the host must also be on the operator's --allowed-csp-hosts list.
                 maxLength: 2048
+                pattern: ^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?/?$
                 type: string
               defaultTags:
                 additionalProperties:
@@ -75,7 +79,9 @@ spec:
                   below the operator's ownership tags and above nothing else.
                 type: object
               rateLimit:
-                description: RateLimit configures the client-side limiter.
+                description: |-
+                  RateLimit configures the client-side limiter. When unset, the field defaults apply
+                  (10 requests per second, burst 20).
                 properties:
                   burst:
                     default: 20
@@ -94,9 +100,13 @@ spec:
                 type: object
               resyncInterval:
                 default: 10m
-                description: ResyncInterval is the drift-detection period for objects
-                  using this Connection.
+                description: |-
+                  ResyncInterval is the drift-detection period for objects using this Connection.
+                  The minimum is 30s.
                 type: string
+                x-kubernetes-validations:
+                - message: resyncInterval must be at least 30s
+                  rule: duration(self) >= duration('30s')
               secretRef:
                 description: SecretRef points at the Secret holding the API key.
                 properties:

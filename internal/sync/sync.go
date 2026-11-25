@@ -519,5 +519,7 @@ func isTerminalConnectionError(err error) bool {
 		errors.Is(err, connection.ErrConnectionNotReady) ||
 		errors.Is(err, connection.ErrSecretNotFound) ||
 		errors.Is(err, connection.ErrSecretKeyMissing) ||
+		errors.Is(err, connection.ErrInvalidEndpoint) ||
+		errors.Is(err, connection.ErrEndpointNotAllowed) ||
 		errors.Is(err, uddi.ErrNoAPIKey)
 }

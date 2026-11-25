@@ -64,6 +64,11 @@ const (
 	ReasonSecretNotFound = "SecretNotFound"
 	// ReasonSecretKeyMissing means the Secret has no usable data under the configured key.
 	ReasonSecretKeyMissing = "SecretKeyMissing"
+	// ReasonInvalidEndpoint means spec.cspURL is not an https://host[:port] URL.
+	ReasonInvalidEndpoint = "InvalidEndpoint"
+	// ReasonEndpointNotAllowed means the spec.cspURL host is not on the operator's
+	// --allowed-csp-hosts list.
+	ReasonEndpointNotAllowed = "EndpointNotAllowed"
 )
 
 // ConnectionRef names a Connection in the same namespace as the referring CR.

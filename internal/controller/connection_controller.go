@@ -86,6 +86,10 @@ func (r *ConnectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			reason = uddiv1alpha1.ReasonSecretNotFound
 		case errors.Is(err, connection.ErrSecretKeyMissing), errors.Is(err, uddi.ErrNoAPIKey):
 			reason = uddiv1alpha1.ReasonSecretKeyMissing
+		case errors.Is(err, connection.ErrInvalidEndpoint):
+			reason = uddiv1alpha1.ReasonInvalidEndpoint
+		case errors.Is(err, connection.ErrEndpointNotAllowed):
+			reason = uddiv1alpha1.ReasonEndpointNotAllowed
 		}
 		log.Info("Connection is not usable", "reason", reason)
 		r.setReady(conn, metav1.ConditionFalse, reason, err.Error())
@@ -131,6 +135,11 @@ func (r *ConnectionReconciler) patchStatus(ctx context.Context, before, conn *ud
 
 // SetupWithManager registers the controller and a watch that re-verifies a Connection
 // as soon as its Secret changes, so a rotated key is picked up immediately.
+//
+// The Secret watch is metadata-only: the manager caches PartialObjectMetadata for
+// Secrets, never their data, and the Resolver reads the one referenced Secret through an
+// uncached reader. Rotating the key changes the Secret's resourceVersion, so the metadata
+// watch still fires, and the Resolver keys its client cache on that resourceVersion.
 func (r *ConnectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &uddiv1alpha1.Connection{}, IndexConnectionSecret,
@@ -142,7 +151,7 @@ func (r *ConnectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&uddiv1alpha1.Connection{}).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
+		WatchesMetadata(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
 			func(ctx context.Context, obj client.Object) []reconcile.Request {
 				list := &uddiv1alpha1.ConnectionList{}
 				if err := r.List(ctx, list,
