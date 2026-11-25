@@ -131,7 +131,7 @@ vet-integration: ## Vet the integration test suite (requires the integration bui
 test-integration: ## Run the real-tenant integration suite; needs UDDI_API_KEY (see docs/testing.md).
 	go test -tags integration ./test/integration/... -v -count=1 -timeout 20m
 
-# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
+# To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true

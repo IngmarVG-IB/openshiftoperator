@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Pinned on purpose: the API client is upgraded by hand together with the code that
+      # wraps it, and cel-go v0.32.0 renamed the module path, so it cannot be bumped in place.
+      - dependency-name: github.com/infobloxopen/universal-ddi-go-client
+      - dependency-name: github.com/google/cel-go
+        versions: [">= 0.32.0"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
