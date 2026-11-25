@@ -20,7 +20,6 @@ cover-floor.out
 # Docs and design artifacts.
 docs/
 DESIGN.md
-PLAN.md
 README.md
 
 # OLM bundle / catalog outputs are not part of the manager image build context.
