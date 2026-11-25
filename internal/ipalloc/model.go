@@ -157,6 +157,7 @@ const (
 	AnnotationAddress      = "address"       // Service: specific IPs instead of next-available, one per family
 	AnnotationHostname     = "hostname"      // Service: the name registered on the Addresses
 	AnnotationCount        = "count"         // EgressIP: the number of addresses, 1 to 16 (default 1)
+	AnnotationPolicy       = "policy"        // EgressIP: "<namespace>/<name>" of the one policy that may manage it
 )
 
 // EgressIP count bounds for the count annotation.

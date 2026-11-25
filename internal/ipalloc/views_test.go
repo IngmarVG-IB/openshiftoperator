@@ -235,6 +235,36 @@ func TestViewEgressIP(t *testing.T) {
 	}
 }
 
+func TestEgressIPBoundTo(t *testing.T) {
+	cases := []struct {
+		name   string
+		ann    map[string]string
+		prefix string
+		want   bool
+	}{
+		{"matching policy", map[string]string{"uddi.infoblox.com/policy": "team-a/egress"}, "", true},
+		{"surrounding space", map[string]string{"uddi.infoblox.com/policy": " team-a/egress "}, "", true},
+		{"no policy annotation", map[string]string{"uddi.infoblox.com/allocate": "true"}, "", false},
+		{"another policy's namespace", map[string]string{"uddi.infoblox.com/policy": "team-b/egress"}, "", false},
+		{"another policy's name", map[string]string{"uddi.infoblox.com/policy": "team-a/other"}, "", false},
+		{"name only", map[string]string{"uddi.infoblox.com/policy": "egress"}, "", false},
+		{"custom prefix", map[string]string{"example.com/policy": "team-a/egress", "uddi.infoblox.com/policy": "team-b/x"}, "example.com", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EgressIPBoundTo(egressIPObject(tc.ann, nil, nil), tc.prefix, "team-a", "egress"); got != tc.want {
+				t.Errorf("EgressIPBoundTo() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if EgressIPBoundTo(nil, "", "team-a", "egress") {
+		t.Error("a nil EgressIP is bound to no policy")
+	}
+	if EgressIPBoundTo(egressIPObject(map[string]string{"uddi.infoblox.com/policy": "/"}, nil, nil), "", "", "") {
+		t.Error("an empty policy reference matches nothing")
+	}
+}
+
 func TestEgressIPsPatch(t *testing.T) {
 	if got, want := string(EgressIPsPatch([]string{"10.0.0.5", "10.0.0.6"})), `{"spec":{"egressIPs":["10.0.0.5","10.0.0.6"]}}`; got != want {
 		t.Errorf("EgressIPsPatch() = %s, want %s", got, want)

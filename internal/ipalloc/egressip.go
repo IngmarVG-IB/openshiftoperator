@@ -37,7 +37,8 @@ import (
 // pool every slot draws from instead of allocateFrom). The slots are family-agnostic.
 // The current assignment is spec.egressIPs and the labels are kept for spec.selector.
 // Annotations are validated in the order allocate, allocate-from, count, then
-// spec.egressIPs; the first invalid one is reported in Invalid.
+// spec.egressIPs; the first invalid one is reported in Invalid. It does not check the
+// policy annotation: the caller keeps only the EgressIPs EgressIPBoundTo the policy.
 func ViewEgressIP(obj *unstructured.Unstructured, prefix string) Claim {
 	if prefix == "" {
 		prefix = DefaultAnnotationPrefix
@@ -84,6 +85,21 @@ func ViewEgressIP(obj *unstructured.Unstructured, prefix string) Claim {
 	c.CurrentAssignment = current
 	c.Slots = make([]SlotRequest, count)
 	return c
+}
+
+// EgressIPBoundTo reports whether the EgressIP names the policy policyNamespace/policy in
+// its policy annotation at prefix (DefaultAnnotationPrefix when prefix is empty), as
+// "<namespace>/<name>". EgressIPs are cluster-scoped, so this annotation, set by whoever
+// may edit the EgressIP, is what ties one to the single policy allowed to read it as a
+// claim and patch its spec.egressIPs; every other policy ignores it.
+func EgressIPBoundTo(obj *unstructured.Unstructured, prefix, policyNamespace, policy string) bool {
+	if obj == nil || policyNamespace == "" || policy == "" {
+		return false
+	}
+	if prefix == "" {
+		prefix = DefaultAnnotationPrefix
+	}
+	return strings.TrimSpace(obj.GetAnnotations()[prefix+"/"+AnnotationPolicy]) == policyNamespace+"/"+policy
 }
 
 // egressIPsPatch is the JSON merge-patch document EgressIPsPatch produces. EgressIPs is
