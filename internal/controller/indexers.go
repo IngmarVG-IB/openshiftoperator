@@ -58,7 +58,7 @@ func RegisterConnectionIndex(ctx context.Context, mgr ctrl.Manager, obj client.O
 // object-layer CRs they reference. extract returns those names; refs that point
 // straight at a Universal DDI id contribute nothing.
 //
-// Wave 2 kinds call this with their own extractor (AuthZone -> viewRef, Record ->
+// Each object-layer kind calls this with its own extractor (AuthZone -> viewRef, Record ->
 // zoneRef, the IPAM kinds -> spaceRef and parentRef, and so on).
 func RegisterDependencyIndex(ctx context.Context, mgr ctrl.Manager, obj client.Object, extract func(client.Object) []string) error {
 	return mgr.GetFieldIndexer().IndexField(ctx, obj, IndexDependencyRefs, func(o client.Object) []string {

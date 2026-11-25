@@ -15,7 +15,7 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 - The e2e suite is the operator-sdk scaffold smoke test only: the manager pod runs and the metrics endpoint serves.
 - Use a sandbox tenant only.
 
-Implemented: an object layer of ten kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) and three policy kinds (DNS publishing, IP allocation, host registration). See [ROADMAP.md](ROADMAP.md) for the plan.
+Implemented: an object layer of ten kinds (Connection, View, AuthZone, Record, IPSpace, AddressBlock, Subnet, Range, Address, FixedAddress) and three policy kinds (DNS publishing, IP allocation, host registration). See [docs/limitations.md](docs/limitations.md) for known limitations and [ROADMAP.md](ROADMAP.md) for the plan.
 
 Help is through GitHub Issues, on a best-effort basis. For security reports see [SECURITY.md](SECURITY.md).
 
@@ -129,7 +129,7 @@ See [docs/usage.md](docs/usage.md) for complete task-oriented documentation.
 - **[docs/api.md](docs/api.md)** — Full API reference for all kinds and shared types.
 - **[docs/observability.md](docs/observability.md)** — Metrics, alerts, dashboards and runbooks for monitoring the operator.
 - **[DESIGN.md](DESIGN.md)** — Architecture, decisions and implementation notes.
-- **[PLAN.md](PLAN.md)** — Implementation roadmap.
+- **[docs/limitations.md](docs/limitations.md)** — Known limitations and unverified assumptions.
 - **[ROADMAP.md](ROADMAP.md)** — The plan from here to a supported 1.0 (milestones 5 to 10).
 - **[docs/uddi-api-notes.md](docs/uddi-api-notes.md)** — Background on the Universal DDI REST API and Go SDK.
 - **[SECURITY.md](SECURITY.md)** — Supported versions, reporting vulnerabilities, security model.

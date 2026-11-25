@@ -1,8 +1,9 @@
 # uddi-operator roadmap
 
-Written 2026-09-15, after milestones 1 to 3 shipped and milestone 4 went into
-implementation. [PLAN.md](PLAN.md) tracks the milestones that are built; this document
-plans everything from here to a supported 1.0 and names what stays out of scope.
+Milestones 1 to 4, 6 and 7 are implemented. Milestone 5, proving the operator on a real
+tenant and a real cluster, has not started and comes next; milestones 8 to 10 follow. This
+document plans everything from here to a supported 1.0 and names what stays out of scope.
+Open caveats in what is built are listed in [docs/limitations.md](docs/limitations.md).
 [DESIGN.md](DESIGN.md) remains the architecture reference; every item below that changes
 behaviour gets a design section there before it is built.
 
@@ -10,12 +11,15 @@ behaviour gets a design section there before it is built.
 
 | Milestone | State | What it gave us |
 | --- | --- | --- |
-| 1 Object layer | shipped | ten kinds, generic reconcile loop, ownership tags, adoption, deletion policies, OLM bundle, CI |
-| 2 DNS publishing | shipped | DNSPublishPolicy for Routes, Ingresses, LoadBalancer Services |
-| 3 IP allocation | shipped | IPAllocationPolicy with MetalLB, Cilium and kube-vip assignment |
-| 4 Host registration | building | HostRegistrationPolicy with annotation and NMState MAC discovery |
+| 1 Object layer | implemented | ten kinds, generic reconcile loop, ownership tags, adoption, deletion policies, OLM bundle, CI |
+| 2 DNS publishing | implemented | DNSPublishPolicy for Routes, Ingresses, LoadBalancer Services |
+| 3 IP allocation | implemented | IPAllocationPolicy with MetalLB, Cilium and kube-vip assignment |
+| 4 Host registration | implemented | HostRegistrationPolicy with annotation and NMState MAC discovery |
+| 5 Prove it on real infrastructure | not started, next | |
+| 6 Harden the object layer | implemented | tag removal, metrics and alerts, retries and pagination, deployment hardening |
+| 7 Complete the integration layer | implemented | DNSRecord, Node and HTTPRoute sources, dual-stack, EgressIP, MetalLB mirroring, Metal3 MACs |
 
-Everything so far is proven against an in-memory fake of Universal DDI and against envtest
+Everything implemented so far is proven against an in-memory fake of Universal DDI and against envtest
 on Kubernetes 1.29 and 1.36. Nothing has yet touched a real tenant or a real cluster. That
 gap is the first thing the rest of the plan closes, because every later decision (API
 stability, distribution, scale) depends on what the real API does.
@@ -35,9 +39,9 @@ Version 1.0 is reached when all of the following hold:
 5. A documented support matrix, a signed multi-arch image with an SBOM, and a release
    process that a maintainer can run in under an hour.
 
-Versions along the way: `v0.1.0` at the end of milestone 4, `v0.2.0` after milestones 5
-and 6, `v0.3.0` after milestone 7, `v0.9.0` when `v1beta1` lands (milestone 8), `v1.0.0`
-when milestone 9 completes.
+Nothing has been released yet. Versions along the way: `v0.1.0`, the first release, once
+milestone 5 has proven milestones 1 to 4, 6 and 7 on real infrastructure; `v0.9.0` when
+`v1beta1` lands (milestone 8); `v1.0.0` when milestone 9 completes.
 
 ## Milestone 5: prove it on real infrastructure
 
@@ -52,11 +56,11 @@ Goal: replace assumptions with evidence before hardening or distributing anythin
    semantics after delete, `_tfilter` edge cases, next-available concurrency), change the
    fake first, watch which envtest specs go red, then fix the adapters. The fake is the
    contract every controller test relies on, so it has to tell the truth.
-3. **Image and kind e2e.** Enable Docker Desktop's WSL integration, build the image,
+3. **Image and kind e2e.** With a container runtime available, build the image,
    run the scaffolded e2e on kind from the bundle, and add the operator-sdk scorecard
    basic suite. Make the `test-e2e` workflow green on pull requests.
-4. **First OpenShift install.** Push image, bundle and catalog to `quay.io/ingmarvg-ib`,
-   install through a CatalogSource on the available 4.16+ cluster, and run a scripted
+4. **First OpenShift install.** Push image, bundle and catalog to a container registry,
+   install through a CatalogSource on an OpenShift 4.16+ cluster, and run a scripted
    smoke test: adopt a zone, publish a Route, allocate an IP for a MetalLB Service,
    register a worker node. Record the exact steps as `docs/smoke-test.md` so the same run
    repeats on every release.
@@ -68,8 +72,9 @@ cluster, open questions 1, 6, 7 and 8 closed in DESIGN.md, tag `v0.1.0`.
 
 ## Milestone 6: harden the object layer
 
-Goal: remove the known limitations and the technical debt listed in PLAN.md before the
-API is frozen.
+Goal: remove the known limitations and the technical debt before the API is frozen.
+Status: implemented, apart from the items that need a real cluster or a tagged SDK
+(unified nameservers, verifying `restricted-v2`).
 
 - **Tag removal.** Record the tag keys the operator applied in `status.appliedTags` and
   delete keys that vanish from `spec.tags` or the Connection defaults, while still leaving
@@ -94,12 +99,14 @@ API is frozen.
   PodDisruptionBudget, and a sample NetworkPolicy that allows only the API server, the
   metrics scraper and `csp.infoblox.com`.
 
-Exit criteria: PLAN.md "Known limitations" reduced to the CEL 1.29 constraint, metrics and
-alerts documented, tag `v0.2.0`.
+Exit criteria: [docs/limitations.md](docs/limitations.md) reduced to the CEL 1.29
+constraint, metrics and alerts documented.
 
 ## Milestone 7: complete the integration layer
 
 Goal: cover the cases real clusters hit that the first cut of each policy left out.
+Status: implemented and proven on envtest only; the real-cluster scenarios wait for
+milestone 5.
 
 - **DNS publishing.** The default router wildcard via the ingress operator's `DNSRecord`
   CRs (open question 5); dual-stack sources producing A and AAAA together; per-policy
@@ -119,8 +126,7 @@ Goal: cover the cases real clusters hit that the first cut of each policy left o
   `uddi.infoblox.com/hostname` annotation ties DNS, IPAM and host registration together,
   with a worked example of a bare-metal cluster using all three.
 
-Exit criteria: each policy has a real-cluster scenario in `docs/smoke-test.md`, tag
-`v0.3.0`.
+Exit criteria: each policy has a real-cluster scenario in `docs/smoke-test.md`.
 
 ## Milestone 8: API maturity
 
@@ -146,6 +152,8 @@ Exit criteria: `v1beta1` storage version, upgrade test in CI, tag `v0.9.0`.
 ## Milestone 9: distribution
 
 Goal: an operator anyone can install from OperatorHub with confidence in its provenance.
+The operator is not listed on OperatorHub and is not Red Hat certified today; both are
+goals of this milestone.
 
 - **Release engineering.** `release.yml` proven end to end on a tag; semantic versions
   with a generated changelog; multi-arch image signed with cosign and shipped with an
@@ -162,7 +170,8 @@ Goal: an operator anyone can install from OperatorHub with confidence in its pro
   support matrix (OpenShift and Kubernetes versions, Universal DDI API version,
   load balancer implementations), and the smoke-test runbook.
 
-Exit criteria: listed on OperatorHub, certification submitted or granted, tag `v1.0.0`.
+Exit criteria: listed on OperatorHub, certification submitted (granted if the process
+completes in time), tag `v1.0.0`.
 
 ## Milestone 10: operate at scale
 
@@ -201,28 +210,25 @@ Deferred until there is a concrete request:
 Out of scope, as DESIGN.md section 15 states: NIOS WAPI, DNS view ACLs, DNSSEC, DHCP HA
 groups, anycast, a standalone UI.
 
-## Sequencing, effort and risk
+## Sequencing and risk
 
-| Milestone | Needs | Effort in agent waves | Main risk |
-| --- | --- | --- | --- |
-| 5 prove it | tenant key, cluster, Docker in WSL | 2 waves plus manual cluster work | undocumented API behaviour forcing adapter changes |
-| 6 harden | 5 | 3 waves | SDK master churn before a tag ships unified nameservers |
-| 7 complete | 5 | 3 waves | Gateway API and Metal3 availability on the target releases |
-| 8 API maturity | 6, 7 | 2 waves plus review | a rename that forces a conversion webhook |
-| 9 distribution | 8 | 2 waves plus certification lead time | certification turnaround measured in weeks |
-| 10 scale | 5 | 2 waves plus a large test tenant | API rate limits at scale |
+| Milestone | Needs | Main risk |
+| --- | --- | --- |
+| 5 prove it | sandbox tenant key, an OpenShift 4.16+ cluster, a container runtime | undocumented API behaviour forcing adapter changes |
+| 6 harden | 5 for the cluster-dependent items | SDK master churn before a tag ships unified nameservers |
+| 7 complete | 5 for real-cluster verification | Gateway API and Metal3 availability on the target releases |
+| 8 API maturity | 6, 7 | a rename that forces a conversion webhook |
+| 9 distribution | 8 | certification turnaround measured in weeks |
+| 10 scale | 5 | API rate limits at scale, and a large test tenant |
 
-Milestones 6 and 7 can run in parallel after 5; milestone 10's scale runs can start once 5
-has a working cluster. The delivery pattern stays the one that worked for milestones 2 to
-4: a design section and a shared contract file first, Sonnet agents on disjoint packages
-in manually created worktrees, a Haiku pass for docs, then one controller agent and a
-review. Every milestone ends with both envtest lanes, lint and the bundle validators green
-on main and a signed tag.
+Milestone 10's scale runs can start once milestone 5 has a working cluster. Every
+milestone ends with both envtest lanes, lint and the bundle validators green on main and,
+from `v0.1.0` on, a signed tag.
 
 ## Immediate next steps
 
-1. Finish milestone 4 (controller wave in progress), tag `v0.1.0`.
-2. Enable Docker Desktop's WSL integration and run the real-tenant integration suite;
-   both need the user, not an agent.
-3. Start milestone 5 step 4 on the real cluster the same week, because its findings
-   decide the size of milestone 6.
+1. Run the real-tenant integration suite against a sandbox tenant and record the results
+   in `docs/uddi-api-notes.md`.
+2. Install on a real OpenShift 4.16+ cluster the same week, because its findings decide
+   the size of the remaining hardening work.
+3. Tag `v0.1.0` once milestone 5's exit criteria are met.
