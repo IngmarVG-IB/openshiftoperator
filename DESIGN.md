@@ -147,6 +147,19 @@ resourceVersion, so key rotation is picked up on the next reconcile. Object CRs 
 `default` in their namespace. The Secret is never logged; API errors are redacted before
 they reach conditions or events.
 
+Endpoint rules: the API key is sent as a bearer token to `cspURL`, and the SDK builds
+request URLs by appending the API path to it, so `cspURL` is restricted to `https://`, a
+host name, an optional port and at most a trailing slash (CRD pattern, repeated in Go by
+`connection.ValidateCSPURL`). Its host must also be on the operator's allowlist
+(`--allowed-csp-hosts` / `ALLOWED_CSP_HOSTS`, default `csp.infoblox.com`; an empty list
+means that default, never "anything"). Both checks run before the Secret is read and
+fail as `Ready=False/InvalidEndpoint` or `EndpointNotAllowed`, naming at most the host.
+Object reconcilers treat a Connection as Ready only when the Ready condition and
+`status.observedGeneration` match `metadata.generation`, so a spec edit stops all traffic
+until the new spec is verified. Response bodies are capped at 32 MiB, `resyncInterval` has
+a 30s minimum (CRD rule, and clamped in Go), and an omitted `rateLimit` means the field
+defaults (10/s, burst 20), not no limit.
+
 ### 4.3 DNS kinds
 
 **View**
@@ -911,8 +924,11 @@ with a hard cap so a misbehaving cursor cannot loop forever.
 
 - Runs as non-root with an arbitrary UID, read-only root filesystem, no capabilities;
   compatible with the `restricted-v2` SCC.
-- RBAC: full access to `uddi.infoblox.com` kinds; read on Secrets (only the referenced
-  ones are fetched); read on Routes, Ingresses, Services, Nodes; read on
+- RBAC: full access to `uddi.infoblox.com` kinds; get/list/watch on Secrets in every
+  watched namespace. RBAC cannot narrow this to the referenced Secrets, so the operator
+  limits what it holds instead: the Connection controller's Secret watch is metadata-only
+  (only `PartialObjectMetadata` is cached, never Secret data), and the referenced Secret
+  is read on demand through the uncached API reader. Read on Routes, Ingresses, Services, Nodes; read on
   `clusterversions.config.openshift.io` and `ingresses.config.openshift.io`; patch on
   Services for IP assignment (milestone 3). Explicit minimal verbs, no wildcards.
 - API keys live only in Secrets; the operator never writes them to status, events, logs or

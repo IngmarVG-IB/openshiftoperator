@@ -102,14 +102,16 @@ A Connection holds the credentials and client settings for one Universal DDI ten
 
 | Field | Type | Required | Default | Immutable | Description |
 | --- | --- | --- | --- | --- | --- |
-| `cspURL` | string | No | https://csp.infoblox.com | No | Cloud Services Portal endpoint. Max 2048 characters. |
+| `cspURL` | string | No | https://csp.infoblox.com | No | Cloud Services Portal endpoint. Must be `https://`, a host name, an optional port and at most one trailing slash; userinfo, paths, queries and fragments are rejected. The host must also be on the operator's `--allowed-csp-hosts` list (see below). Max 2048 characters. |
 | `secretRef.name` | string | Yes | — | No | Name of the Secret holding the API key. Max 253 characters. |
 | `secretRef.key` | string | No | apiKey | No | Data key in the Secret. Max 253 characters. |
 | `clientName` | string | No | uddi-operator | No | Client name reported to the API and shown in audit logs. Max 128 characters. |
 | `defaultTags` | map[string]string | No | — | No | Tags merged into every object created through this Connection (below ownership tags, above CR-level tags). |
-| `resyncInterval` | *metav1.Duration | No | 10m | No | Drift-detection period for objects using this Connection. |
-| `rateLimit.requestsPerSecond` | int32 | No | 10 | No | Sustained rate for client-side token bucket. Min 1, max 1000. |
-| `rateLimit.burst` | int32 | No | 20 | No | Token bucket size. Min 1, max 1000. |
+| `resyncInterval` | *metav1.Duration | No | 10m | No | Drift-detection period for objects using this Connection. Min 30s. |
+| `rateLimit.requestsPerSecond` | int32 | No | 10 | No | Sustained rate for client-side token bucket. Min 1, max 1000. Also applies when `rateLimit` is omitted. |
+| `rateLimit.burst` | int32 | No | 20 | No | Token bucket size. Min 1, max 1000. Also applies when `rateLimit` is omitted. |
+
+**Allowed endpoints.** The operator only sends an API key to a host on its allowlist, set with the `--allowed-csp-hosts` flag or the `ALLOWED_CSP_HOSTS` environment variable (comma-separated host names, exact match, case-insensitive, port ignored; the flag wins). The default is `csp.infoblox.com`, and an empty list also means `csp.infoblox.com` only. Under OLM, set it in the Subscription's `spec.config.env`. A Connection whose host is not listed reports `Ready=False/EndpointNotAllowed` and its Secret is never read.
 
 ### Connection Status
 
@@ -125,7 +127,11 @@ A Connection holds the credentials and client settings for one Universal DDI ten
 - `True/Verified`: The API key passed the verification call.
 - `False/SecretNotFound`: The referenced Secret does not exist.
 - `False/SecretKeyMissing`: The Secret has no data under the configured key.
+- `False/InvalidEndpoint`: `cspURL` is not `https://host[:port]` (for example port 0).
+- `False/EndpointNotAllowed`: The `cspURL` host is not on the operator's `--allowed-csp-hosts` list.
 - `False/APIError`: The verification call failed.
+
+Object-layer CRs treat a Connection as Ready only when its `Ready` condition is `True` and `status.observedGeneration` equals `metadata.generation`. After a spec edit they report `ConnectionNotReady` until the Connection controller has verified the new spec.
 
 ### Connection Example
 

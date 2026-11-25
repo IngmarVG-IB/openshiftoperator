@@ -40,6 +40,18 @@ spec:
     burst: 20
 ```
 
+`cspURL` must be `https://` plus a host name and optional port, with nothing after it except an optional trailing slash. The operator only talks to hosts on its `--allowed-csp-hosts` list (environment variable `ALLOWED_CSP_HOSTS`; the flag wins), which defaults to `csp.infoblox.com`. To use another Cloud Services Portal host, add it there, for an OLM install through the Subscription:
+
+```yaml
+spec:
+  config:
+    env:
+    - name: ALLOWED_CSP_HOSTS
+      value: csp.infoblox.com,<other-csp-host>
+```
+
+A Connection pointing elsewhere reports `Ready=False` with reason `EndpointNotAllowed`, and its Secret is not read. `resyncInterval` must be at least `30s`. Without `rateLimit` the client is limited to 10 requests per second with a burst of 20.
+
 Apply it:
 
 ```bash
