@@ -27,7 +27,7 @@ import (
 )
 
 // TestFixedAddress exercises the FixedAddress (DHCP reservation) lifecycle for a mac
-// match type: create under a fresh IPSpace, read back, the natural-key filter
+// match type: create inside a Subnet of a fresh IPSpace, read back, the natural-key filter
 // fixedaddressAdapter.Find builds (address and ip_space), the run's tfilter, a comment
 // patch and delete.
 func TestFixedAddress(t *testing.T) {
@@ -44,6 +44,7 @@ func TestFixedAddress(t *testing.T) {
 	const address = "10.64.0.5"
 	const matchType = "mac"
 	const matchValue = "aa:bb:cc:00:00:01"
+	mustParentSubnet(ctx, t, spaceID, "10.64.0.0")
 	created, err := client.DHCP.CreateFixedAddress(ctx, ipam.FixedAddress{
 		Address:    address,
 		MatchType:  matchType,

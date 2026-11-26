@@ -27,7 +27,7 @@ import (
 )
 
 // TestAddress exercises the Address lifecycle for an explicit (non next-available)
-// address: create under a fresh IPSpace, read back, the natural-key filter
+// address: create inside a Subnet of a fresh IPSpace, read back, the natural-key filter
 // addressAdapter.Find builds (address and space), the run's tfilter, a comment patch and
 // delete. Next-available allocation is covered separately in nextavailable_test.go.
 func TestAddress(t *testing.T) {
@@ -42,6 +42,7 @@ func TestAddress(t *testing.T) {
 	registerDelete(t, "ip space", spaceID, client.IPAM.DeleteIPSpace)
 
 	const address = "10.63.0.5"
+	mustParentSubnet(ctx, t, spaceID, "10.63.0.0")
 	created, err := client.IPAM.CreateAddress(ctx, ipam.Address{
 		Address: address,
 		Space:   &spaceID,

@@ -26,7 +26,7 @@ import (
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
 
-// TestRange exercises the Range lifecycle: create under a fresh IPSpace, read back, the
+// TestRange exercises the Range lifecycle: create inside a Subnet of a fresh IPSpace, read back, the
 // natural-key filter rangeAdapter.Find builds (start, end and space), the run's tfilter,
 // a comment patch and delete.
 func TestRange(t *testing.T) {
@@ -42,6 +42,7 @@ func TestRange(t *testing.T) {
 
 	const start = "10.62.0.10"
 	const end = "10.62.0.20"
+	mustParentSubnet(ctx, t, spaceID, "10.62.0.0")
 	created, err := client.IPAM.CreateRange(ctx, ipam.Range{
 		Start: start,
 		End:   end,
