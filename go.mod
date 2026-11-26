@@ -7,7 +7,7 @@ toolchain go1.26.11
 require (
 	github.com/infobloxopen/universal-ddi-go-client v0.4.0
 	github.com/onsi/ginkgo/v2 v2.27.4
-	github.com/onsi/gomega v1.39.0
+	github.com/onsi/gomega v1.44.0
 	github.com/openshift/api v0.0.0-20260914154154-9edb1b2245e2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
