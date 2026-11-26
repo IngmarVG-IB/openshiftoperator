@@ -62,8 +62,8 @@ COPY LICENSE /licenses/LICENSE
 # OpenShift runs containers as an arbitrary, randomly-assigned UID with the root (0) group;
 # keep the binary and license directory group-writable/readable so that model works even
 # though this operator does not write to disk at runtime.
-RUN chgrp -R 0 /workspace /licenses && \
-    chmod -R g=u /workspace /licenses
+RUN chgrp -R 0 /manager /licenses && \
+    chmod -R g=u /manager /licenses
 
 USER 65532:65532
 
