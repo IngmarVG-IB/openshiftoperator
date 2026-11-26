@@ -5,9 +5,9 @@ metadata:
     alm-examples: '[]'
     capabilities: Basic Install
     categories: Networking
-    containerImage: quay.io/ingmarorg/uddi-operator:v1.0.0
+    containerImage: quay.io/ingmarorg/uddi-operator:v1.0.1
     createdAt: "2026-09-14T00:00:00Z"
-    olm.skipRange: <1.0.0
+    olm.skipRange: <1.0.1
     repository: https://github.com/IngmarVG-IB/openshiftoperator
     support: https://github.com/IngmarVG-IB/openshiftoperator/issues
   name: uddi-operator.v0.0.0
