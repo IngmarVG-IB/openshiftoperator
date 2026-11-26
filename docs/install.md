@@ -14,15 +14,15 @@
 
 ## Option A: install from the file-based catalog (recommended)
 
-> **Note:** no images or catalog have been published yet, and the release workflow has
-> never run. Until the first release, the image references below do not resolve. Build and
-> push your own images first (see [Option B](#option-b-developer-install-straight-from-source-no-olm)
-> for building an operator image from source), and substitute your own registry for
-> `quay.io/ingmarvg-ib`.
+> **Note:** `v1.0.0` is the first release, and these images have not been exercised on a
+> real cluster yet. If an image reference below does not resolve, build and push your own
+> images (see [Option B](#option-b-developer-install-straight-from-source-no-olm) for
+> building an operator image from source) and substitute your own registry for
+> `quay.io/ingmarorg`.
 
 This installs the operator through OLM, from the file-based catalog image published by
 [`release.yml`](../.github/workflows/release.yml) to
-`quay.io/ingmarvg-ib/uddi-operator-catalog`.
+`quay.io/ingmarorg/uddi-operator-catalog`.
 
 ### 1. Add the CatalogSource
 
@@ -37,7 +37,7 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: quay.io/ingmarvg-ib/uddi-operator-catalog:v0.1.0   # pin to the release you want
+  image: quay.io/ingmarorg/uddi-operator-catalog:v1.0.0   # pin to the release you want
   displayName: Universal DDI Operator Catalog
   publisher: uddi-operator authors
   updateStrategy:
@@ -93,7 +93,7 @@ spec:
   source: uddi-operator-catalog
   sourceNamespace: openshift-marketplace
   installPlanApproval: Automatic
-  startingCSV: uddi-operator.v0.1.0
+  startingCSV: uddi-operator.v1.0.0
 ```
 
 OLM creates the InstallPlan, deploys the `uddi-operator-controller-manager` Deployment and
@@ -117,7 +117,7 @@ assumes a Unix toolchain):
 ```console
 $ export KUBECONFIG=/path/to/your/kubeconfig
 $ make install                                     # applies the CRDs only
-$ make deploy IMG=quay.io/ingmarvg-ib/uddi-operator:v0.1.0
+$ make deploy IMG=quay.io/ingmarorg/uddi-operator:v1.0.0
 ```
 
 `make deploy` renders `config/default` with `kustomize`, sets the manager image to `IMG`,
@@ -137,7 +137,7 @@ $ make deploy IMG=quay.io/<your-namespace>/uddi-operator:dev
 
 ```console
 $ oc delete subscription uddi-operator -n uddi-operator-system
-$ oc delete csv uddi-operator.v0.1.0 -n uddi-operator-system
+$ oc delete csv uddi-operator.v1.0.0 -n uddi-operator-system
 $ oc delete catalogsource uddi-operator-catalog -n openshift-marketplace
 ```
 
@@ -223,18 +223,18 @@ that the security settings are already applied and refer to this section.
 ## Configuring the release workflow's quay.io credentials
 
 [`release.yml`](../.github/workflows/release.yml) pushes the manager image, the OLM bundle
-image and the file-based catalog image to `quay.io/ingmarvg-ib` on every `v*` tag. It
+image and the file-based catalog image to `quay.io/ingmarorg` on every `v*` tag. It
 authenticates with `docker/login-action` using two repository secrets:
 
-1. In quay.io, create (or reuse) a robot account under the `ingmarvg-ib` organization with
+1. In quay.io, create (or reuse) a robot account under the `ingmarorg` organization with
    write access to the `uddi-operator`, `uddi-operator-bundle` and `uddi-operator-catalog`
    repositories (quay.io lets a single robot account be granted write access to multiple
    repositories, or to the whole organization).
 2. In the GitHub repository, go to **Settings > Secrets and variables > Actions** and add:
-   - `QUAY_USERNAME` - the robot account name, e.g. `ingmarvg-ib+uddi_operator_ci`.
+   - `QUAY_USERNAME` - the robot account name, e.g. `ingmarorg+uddi_operator_ci`.
    - `QUAY_PASSWORD` - the robot account's token (from quay.io's robot account "Credentials"
      tab; treat it like a password, not a personal login password).
-3. Push a tag matching `v*` (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to trigger the
+3. Push a tag matching `v*` (e.g. `git tag v1.0.0 && git push origin v1.0.0`) to trigger the
    workflow.
 
 No other secrets are required: `ci.yml`'s `bundle` and `image` jobs never push, so they run

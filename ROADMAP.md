@@ -39,9 +39,10 @@ Version 1.0 is reached when all of the following hold:
 5. A documented support matrix, a signed multi-arch image with an SBOM, and a release
    process that a maintainer can run in under an hour.
 
-Nothing has been released yet. Versions along the way: `v0.1.0`, the first release, once
-milestone 5 has proven milestones 1 to 4, 6 and 7 on real infrastructure; `v0.9.0` when
-`v1beta1` lands (milestone 8); `v1.0.0` when milestone 9 completes.
+`v1.0.0` is the first public release. It is cut from the alpha code base, before
+milestone 5: the number marks the first release, not a stable API or a supported
+product. Later milestones ship as minor releases, and `v1beta1` (milestone 8) is the
+point where the API is meant to stop changing.
 
 ## Milestone 5: prove it on real infrastructure
 
@@ -68,7 +69,7 @@ Goal: replace assumptions with evidence before hardening or distributing anythin
    to the Kubernetes minor of the oldest supported OpenShift.
 
 Exit criteria: integration and e2e workflows green on demand, smoke test passed on a real
-cluster, open questions 1, 6, 7 and 8 closed in DESIGN.md, tag `v0.1.0`.
+cluster, open questions 1, 6, 7 and 8 closed in DESIGN.md.
 
 ## Milestone 6: harden the object layer
 
@@ -147,7 +148,7 @@ Goal: a `v1beta1` API the project can promise not to break.
 - **Compatibility policy.** A short written promise: what changes are allowed in
   `v1beta1`, how deprecations are announced, how long `v1alpha1` stays served.
 
-Exit criteria: `v1beta1` storage version, upgrade test in CI, tag `v0.9.0`.
+Exit criteria: `v1beta1` storage version, upgrade test in CI.
 
 ## Milestone 9: distribution
 
@@ -165,13 +166,13 @@ goals of this milestone.
 - **Red Hat certification.** A Connect project, `preflight` checks on the image and the
   operator bundle, the certification pipeline; the Dockerfile already carries the labels
   and licenses directory. Budget several weeks of lead time and start it as soon as
-  `v0.9.0` exists.
+  `v1beta1` is served.
 - **Documentation site.** The `docs/` tree published as a site with versioned pages, a
   support matrix (OpenShift and Kubernetes versions, Universal DDI API version,
   load balancer implementations), and the smoke-test runbook.
 
 Exit criteria: listed on OperatorHub, certification submitted (granted if the process
-completes in time), tag `v1.0.0`.
+completes in time).
 
 ## Milestone 10: operate at scale
 
@@ -222,8 +223,8 @@ groups, anycast, a standalone UI.
 | 10 scale | 5 | API rate limits at scale, and a large test tenant |
 
 Milestone 10's scale runs can start once milestone 5 has a working cluster. Every
-milestone ends with both envtest lanes, lint and the bundle validators green on main and,
-from `v0.1.0` on, a signed tag.
+milestone ends with both envtest lanes, lint and the bundle validators green on main and a
+signed release tag.
 
 ## Immediate next steps
 
@@ -231,4 +232,4 @@ from `v0.1.0` on, a signed tag.
    in `docs/uddi-api-notes.md`.
 2. Install on a real OpenShift 4.16+ cluster the same week, because its findings decide
    the size of the remaining hardening work.
-3. Tag `v0.1.0` once milestone 5's exit criteria are met.
+3. Cut the next minor release once milestone 5's exit criteria are met.

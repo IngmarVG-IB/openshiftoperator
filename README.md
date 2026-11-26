@@ -11,7 +11,7 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 - The API is `v1alpha1`. CRD schemas may change without notice.
 - Behaviour is exercised only by unit tests and envtest (a Kubernetes test control plane) against an in-memory fake of the Universal DDI API. It has never run against a real Universal DDI tenant or a real OpenShift cluster.
 - A test suite for a real tenant exists (see [docs/testing.md](docs/testing.md)) but has never been run.
-- No images or releases have been published yet.
+- `v1.0.0` is the first release. The version number marks the first public release, not maturity: the project is alpha.
 - The e2e suite is the operator-sdk scaffold smoke test only: the manager pod runs and the metrics endpoint serves.
 - Use a sandbox tenant only.
 

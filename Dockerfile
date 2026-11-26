@@ -42,7 +42,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
 #   https://catalog.redhat.com/api/containers/v1/repositories/registry/registry.access.redhat.com/repository/ubi9/ubi-minimal/images?page_size=10&sort_by=creation_date%5Bdesc%5D
 FROM registry.access.redhat.com/ubi9/ubi-minimal:9.9-1795198179
 
-ARG VERSION=0.1.0
+ARG VERSION=1.0.0
 ARG RELEASE=1
 
 # Red Hat / OperatorHub container certification labels.

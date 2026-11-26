@@ -2,7 +2,7 @@
 
 uddi-operator is alpha (`v1alpha1`). It has been exercised only by unit tests and by envtest
 against an in-memory fake of the Universal DDI API; it has never run against a real tenant
-or a real OpenShift cluster, and nothing has been released. The list below covers
+or a real OpenShift cluster. The list below covers
 behaviour that is deliberate or not yet implemented, plus assumptions that real
 infrastructure has yet to confirm. The plan for closing them is in [ROADMAP.md](../ROADMAP.md).
 

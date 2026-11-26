@@ -1004,7 +1004,7 @@ Makefile assumes a Unix toolchain, so Windows users should run `make` workflows 
 - File-based catalog built with `opm render` / `opm generate dockerfile` for cluster
   installs during development, via CatalogSource plus Subscription.
 - Images: `quay.io/<org>/uddi-operator`, `.../uddi-operator-bundle`,
-  `.../uddi-operator-catalog`, under the `ingmarvg-ib` organisation (`quay.io/ingmarvg-ib`).
+  `.../uddi-operator-catalog`, under the `ingmarorg` organisation (`quay.io/ingmarorg`).
 - Dockerfile: `ubi9/go-toolset` builder stage, `ubi9/ubi-minimal` runtime, non-root with
   GID 0 write permissions, certification labels (`name`, `maintainer`, `vendor`, `version`,
   `release`, `summary`, `description`) and a `/licenses` directory from day one; multi-arch

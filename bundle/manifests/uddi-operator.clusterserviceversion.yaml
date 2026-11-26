@@ -457,14 +457,14 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Networking
-    containerImage: quay.io/ingmarvg-ib/uddi-operator:v0.1.0
-    createdAt: "2026-11-26T00:02:14Z"
-    olm.skipRange: <0.1.0
+    containerImage: quay.io/ingmarorg/uddi-operator:v1.0.0
+    createdAt: "2026-11-26T00:14:40Z"
+    olm.skipRange: <1.0.0
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/IngmarVG-IB/openshiftoperator
     support: https://github.com/IngmarVG-IB/openshiftoperator/issues
-  name: uddi-operator.v0.1.0
+  name: uddi-operator.v1.0.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -792,7 +792,7 @@ spec:
                 - --health-probe-bind-address=:8081
                 command:
                 - /manager
-                image: quay.io/ingmarvg-ib/uddi-operator:v0.1.0
+                image: quay.io/ingmarorg/uddi-operator:v1.0.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -892,4 +892,4 @@ spec:
   minKubeVersion: 1.29.0
   provider:
     name: uddi-operator authors
-  version: 0.1.0
+  version: 1.0.0

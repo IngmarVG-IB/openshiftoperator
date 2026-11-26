@@ -3,7 +3,7 @@
 ## Supported versions
 
 This project is alpha (`v1alpha1`). Only the latest release and the `main` branch are
-supported. No releases have been published yet.
+supported.
 
 ## Reporting a vulnerability
 

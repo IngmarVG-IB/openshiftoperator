@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_TAG_BASE: quay.io/ingmarvg-ib/uddi-operator
+  IMAGE_TAG_BASE: quay.io/ingmarorg/uddi-operator
 
 jobs:
   release:
