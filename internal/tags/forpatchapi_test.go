@@ -78,3 +78,44 @@ func TestForPatchAPIWantWinsOverRemove(t *testing.T) {
 		t.Fatalf("ForPatchAPI = %#v, %v; want env kept and no change", got, changed)
 	}
 }
+
+// A tenant stores a tag key it has defined in its own spelling, whatever case the
+// operator sent, and rejects a map that carries both spellings.
+func TestForPatchAPIMatchesKeysWithoutRegardToCase(t *testing.T) {
+	current := map[string]interface{}{KeyUID: "uid-1", "PURPOSE": "test", "Team": "old"}
+	d := Desired{Want: map[string]string{KeyUID: "uid-1", "purpose": "test"}}
+
+	got, changed := ForPatchAPI(current, d)
+	if changed {
+		t.Errorf("a tag that differs only in the case of its key must not count as drift")
+	}
+	if _, both := got["PURPOSE"]; both {
+		t.Errorf("patch carries both spellings of one key: %v", got)
+	}
+	if got["purpose"] != "test" {
+		t.Errorf("patch = %v, want purpose=test", got)
+	}
+
+	d = Desired{Want: map[string]string{KeyUID: "uid-1", "purpose": "changed"}, Remove: []string{"team"}}
+	got, changed = ForPatchAPI(current, d)
+	want := map[string]interface{}{KeyUID: "uid-1", "purpose": "changed"}
+	if !changed || !reflect.DeepEqual(got, want) {
+		t.Errorf("ForPatchAPI = %v, changed %v; want %v, changed true", got, changed, want)
+	}
+}
+
+func TestForPatchMatchesKeysWithoutRegardToCase(t *testing.T) {
+	current := map[string]string{KeyUID: "uid-1", "PURPOSE": "test", "Team": "old"}
+
+	got, changed := ForPatch(current, Desired{Want: map[string]string{KeyUID: "uid-1", "purpose": "test"}})
+	want := map[string]string{KeyUID: "uid-1", "purpose": "test", "Team": "old"}
+	if changed || !reflect.DeepEqual(got, want) {
+		t.Errorf("ForPatch = %v, changed %v; want %v, changed false", got, changed, want)
+	}
+
+	got, changed = ForPatch(current, Desired{Want: map[string]string{KeyUID: "uid-1"}, Remove: []string{"purpose", "team"}})
+	want = map[string]string{KeyUID: "uid-1"}
+	if !changed || !reflect.DeepEqual(got, want) {
+		t.Errorf("ForPatch = %v, changed %v; want %v, changed true", got, changed, want)
+	}
+}

@@ -21,6 +21,7 @@ package tags
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/IngmarVG-IB/openshiftoperator/internal/uddi"
 )
@@ -139,7 +140,8 @@ func NewDesired(want map[string]string, previouslyApplied []string) Desired {
 // sets every Want key. Keys present on the object that the operator never wrote are
 // kept, because the CRD does not claim exclusive ownership of the object's tags; only
 // keys the operator applied before and no longer wants are removed. A Remove key that is
-// already absent from current is not a change.
+// already absent from current is not a change. Keys are matched without regard to case,
+// see storedKey.
 //
 // The result is meant to be sent as the whole tags field of a PATCH, which relies on
 // Universal DDI replacing the tag map rather than merging into it (DESIGN.md section 6).
@@ -148,13 +150,27 @@ func ForPatch(current map[string]string, d Desired) (map[string]string, bool) {
 	for k, v := range current {
 		out[k] = v
 	}
+	changed := false
 	for _, k := range d.Remove {
-		delete(out, k)
+		if _, wanted := d.Want[k]; wanted {
+			continue
+		}
+		if ck, ok := storedKey(out, k); ok {
+			delete(out, ck)
+			changed = true
+		}
 	}
 	for k, v := range d.Want {
+		ck, ok := storedKey(current, k)
+		if !ok || current[ck] != v {
+			changed = true
+		}
+		if ok && ck != k {
+			delete(out, ck)
+		}
 		out[k] = v
 	}
-	return out, !sameTags(current, out)
+	return out, changed
 }
 
 // ForPatchAPI is ForPatch over the raw tag map the SDK models carry. Adapters use it so
@@ -171,34 +187,42 @@ func ForPatchAPI(current map[string]interface{}, d Desired) (map[string]interfac
 		if _, wanted := d.Want[k]; wanted {
 			continue
 		}
-		if _, ok := out[k]; ok {
-			delete(out, k)
+		if ck, ok := storedKey(out, k); ok {
+			delete(out, ck)
 			changed = true
 		}
 	}
 	for k, v := range d.Want {
 		// Comparing an interface value with a string never panics: a non-string value of
 		// any type, comparable or not, is simply unequal.
-		if cur, ok := current[k]; !ok || cur != v {
+		ck, ok := storedKey(current, k)
+		if !ok || current[ck] != v {
 			changed = true
+		}
+		if ok && ck != k {
+			delete(out, ck)
 		}
 		out[k] = v
 	}
 	return out, changed
 }
 
-// sameTags reports whether two tag maps hold the same keys and values. A nil map and an
-// empty map are the same.
-func sameTags(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
+// storedKey finds the key under which Universal DDI holds the tag the operator knows as
+// key. A tenant normalises tag keys without regard to case and stores a key it has
+// defined in its own spelling (a tag sent as "purpose" comes back as "PURPOSE"), then
+// rejects a tag map that carries both spellings ("duplicate key after normalization").
+// An exact match wins; otherwise the first key in sorted order that differs only in case.
+func storedKey[V any](m map[string]V, key string) (string, bool) {
+	if _, ok := m[key]; ok {
+		return key, true
 	}
-	for k, v := range a {
-		if bv, ok := b[k]; !ok || bv != v {
-			return false
+	found, ok := "", false
+	for k := range m {
+		if strings.EqualFold(k, key) && (!ok || k < found) {
+			found, ok = k, true
 		}
 	}
-	return true
+	return found, ok
 }
 
 // OwnedBy reports whether the tags carry this operator's uid tag for the given CR UID.
