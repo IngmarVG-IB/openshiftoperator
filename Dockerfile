@@ -4,7 +4,7 @@
 # (Go 1.26.10, rebuilt 2026-11-09), multi-arch (amd64/arm64/ppc64le/s390x). Looked up
 # 2026-11-25 via:
 #   https://catalog.redhat.com/api/containers/v1/repositories/registry/registry.access.redhat.com/repository/ubi9/go-toolset/images?page_size=25&sort_by=creation_date%5Bdesc%5D
-FROM registry.access.redhat.com/ubi9/go-toolset:1.26.10-1794208260 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1795320529 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 # go.mod names a newer toolchain for developer and CI builds. The image keeps Red Hat's
