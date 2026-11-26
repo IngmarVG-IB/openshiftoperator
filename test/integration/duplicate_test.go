@@ -107,7 +107,7 @@ func TestDuplicateRecord(t *testing.T) {
 	zoneID := strv(zone.Id)
 	registerDelete(t, "auth zone", zoneID, client.DNSConfig.DeleteAuthZone)
 
-	first, err := client.DNSData.CreateRecord(ctx, recordFor(zoneID))
+	first, err := createRecordWhenZoneReady(ctx, t, recordFor(zoneID))
 	if err != nil {
 		t.Fatalf("CreateRecord (first): %v", err)
 	}

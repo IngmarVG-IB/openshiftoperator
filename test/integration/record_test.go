@@ -59,7 +59,7 @@ func TestRecord(t *testing.T) {
 	const recordType = "A"
 	const address = "10.255.0.10"
 
-	created, err := client.DNSData.CreateRecord(ctx, dnsdata.Record{
+	created, err := createRecordWhenZoneReady(ctx, t, dnsdata.Record{
 		Type:       ptr(recordType),
 		Zone:       &zoneID,
 		NameInZone: ptr(nameInZone),
@@ -97,38 +97,48 @@ func TestRecord(t *testing.T) {
 		t.Fatalf("ListRecords by tfilter: created record %s not among %d results", id, len(byTag))
 	}
 
-	// recordAdapter.Diff (internal/controller/record_adapter.go) only sets patch.Rdata
-	// when the desired rdata actually differs from current, so a comment-only change
-	// patches with Rdata left at its zero value (nil). Unlike every other kind's
-	// identity field (View/IPSpace's Name, Address/FixedAddress's Address,
-	// FixedAddress's MatchType/MatchValue, Range's Start/End -- all of which the
-	// respective adapters carry forward on every patch, and all of which this suite's
-	// own patch tests do the same for below), dnsdata.Record.Rdata has no omitempty
-	// guard in the generated MarshalJSON (unlike every *string field on Record), so this
-	// patch body genuinely sends "rdata": null. Send the same shape recordAdapter would
-	// and see what a real tenant does with it.
+	// dnsdata.Record.Rdata has no omitempty guard in the generated MarshalJSON (unlike
+	// every *string field on Record), so a patch that leaves it nil sends "rdata": null.
+	// Probe what a real tenant does with that body; the outcome is a finding, not a
+	// failure, because recordAdapter.Diff (internal/controller/record_adapter.go) always
+	// carries the desired rdata forward.
 	const comment = "patched by uddi-operator integration test"
-	updated, err := client.DNSData.UpdateRecord(ctx, id, dnsdata.Record{Comment: ptr(comment)})
+	if _, err := client.DNSData.UpdateRecord(ctx, id, dnsdata.Record{Comment: ptr(comment)}); err != nil {
+		t.Logf("VERDICT: a Record PATCH body with rdata omitted (sent as \"rdata\": null by the "+
+			"generated client) is rejected: %v -- every Record patch must carry rdata", err)
+	} else {
+		probed, err := client.DNSData.GetRecord(ctx, id)
+		if err != nil {
+			t.Fatalf("GetRecord after rdata-less patch: %v", err)
+		}
+		if probed.Rdata["address"] == address {
+			t.Log("VERDICT: a Record PATCH body with rdata omitted (sent as \"rdata\": null) " +
+				"leaves the existing rdata untouched")
+		} else {
+			t.Logf("VERDICT: a Record PATCH body with rdata omitted (sent as \"rdata\": null) "+
+				"changed rdata from %v to %v -- every Record patch must carry rdata",
+				address, probed.Rdata["address"])
+		}
+	}
+
+	// The shape recordAdapter.Diff sends: the comment change with rdata carried forward.
+	updated, err := client.DNSData.UpdateRecord(ctx, id, dnsdata.Record{
+		Comment: ptr(comment),
+		Rdata:   map[string]interface{}{"address": address},
+	})
 	if err != nil {
 		t.Fatalf("UpdateRecord: %v", err)
 	}
 	if strv(updated.Comment) != comment {
 		t.Fatalf("UpdateRecord: comment = %q, want %q", strv(updated.Comment), comment)
 	}
-
 	afterPatch, err := client.DNSData.GetRecord(ctx, id)
 	if err != nil {
 		t.Fatalf("GetRecord after patch: %v", err)
 	}
-	if afterPatch.Rdata["address"] == address {
-		t.Log("VERDICT: a Record PATCH body with rdata omitted (sent as \"rdata\": null by " +
-			"the generated client, since dnsdata.Record.Rdata has no omitempty guard) leaves " +
-			"the existing rdata untouched")
-	} else {
-		t.Logf("VERDICT: a Record PATCH body with rdata omitted (sent as \"rdata\": null) "+
-			"changed rdata from %v to %v -- record_adapter.go's Diff must always carry rdata "+
-			"forward like it does zone/name_in_zone/type, or every comment-only patch will "+
-			"corrupt the record", address, afterPatch.Rdata["address"])
+	if afterPatch.Rdata["address"] != address {
+		t.Fatalf("UpdateRecord with rdata carried forward: rdata address = %v, want %v",
+			afterPatch.Rdata["address"], address)
 	}
 
 	if err := client.DNSData.DeleteRecord(ctx, id); err != nil {
