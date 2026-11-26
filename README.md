@@ -9,9 +9,9 @@ An OpenShift operator that shims OpenShift to [Infoblox Universal DDI](https://w
 **Alpha. Not yet run against a real Universal DDI tenant or a real OpenShift cluster.**
 
 - The API is `v1alpha1`. CRD schemas may change without notice.
-- Behaviour is exercised only by unit tests and envtest (a Kubernetes test control plane) against an in-memory fake of the Universal DDI API. It has never run against a real Universal DDI tenant or a real OpenShift cluster.
-- A test suite for a real tenant exists (see [docs/testing.md](docs/testing.md)) but has never been run.
-- `v1.0.0` is the first release. The version number marks the first public release, not maturity: the project is alpha.
+- Behaviour is exercised only by unit tests and envtest (a Kubernetes test control plane) against an in-memory fake of the Universal DDI API. Beyond that it has had one manual run: `v1.0.0` installed through OLM on OpenShift 4.22 (ROSA) against a real Universal DDI tenant, covering the nine object kinds and a Route-driven DNSPublishPolicy. Everything else is unproven on real infrastructure.
+- A test suite for a real tenant exists (see [docs/testing.md](docs/testing.md)). It passes against a real tenant when run by hand; it is not part of CI.
+- `v1.0.0` was the first release; `v1.0.1` fixes a tag-handling bug that the first real-tenant run exposed. The version number marks the first public release, not maturity: the project is alpha.
 - The e2e suite is the operator-sdk scaffold smoke test only: the manager pod runs and the metrics endpoint serves.
 - Use a sandbox tenant only.
 

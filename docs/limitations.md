@@ -1,16 +1,15 @@
 # Known limitations
 
 uddi-operator is alpha (`v1alpha1`). It has been exercised only by unit tests and by envtest
-against an in-memory fake of the Universal DDI API; it has never run against a real tenant
-or a real OpenShift cluster. The list below covers
+against an in-memory fake of the Universal DDI API, plus one manual run of the object
+layer and a Route-driven DNSPublishPolicy on OpenShift 4.22 against a real tenant. The list below covers
 behaviour that is deliberate or not yet implemented, plus assumptions that real
 infrastructure has yet to confirm. The plan for closing them is in [ROADMAP.md](../ROADMAP.md).
 
 - **Tag removal assumes a PATCH of `tags` replaces the whole map.** The operator records the
   keys it wrote in `status.appliedTags` and removes keys that disappear from `spec.tags` or
   the Connection defaults, leaving foreign tags alone. The fake replaces the tag map on
-  update, and the real-tenant integration test that checks whether Universal DDI replaces or
-  merges it has not been run, so removal is unconfirmed against a real tenant. An empty
+  update, and the real-tenant integration test confirms that Universal DDI replaces it too. An empty
   `appliedTags` (an object synced before the field was recorded) removes nothing.
 - **Deleting a CR whose Connection CR is already gone orphans the Universal DDI object.**
   The finalizer is removed so the CR can go away, a `ConnectionMissing` Warning event
@@ -41,7 +40,7 @@ infrastructure has yet to confirm. The plan for closing them is in [ROADMAP.md](
   PATCH and DELETE with backoff, but the API has no idempotency key, so a failed create is
   left to the next reconcile.
 - **The integration and e2e coverage is thin.** The real-tenant suite in `test/integration`
-  has never run, and the e2e suite in `test/e2e` is the operator-sdk scaffold smoke test: it
+  is run by hand, not in CI, and the e2e suite in `test/e2e` is the operator-sdk scaffold smoke test: it
   checks that the manager pod runs and the metrics endpoint serves, not any Universal DDI
   behaviour.
 - **The newer sources are proven on envtest only.** Real-cluster scenarios for the

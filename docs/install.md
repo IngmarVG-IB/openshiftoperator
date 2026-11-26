@@ -3,8 +3,8 @@
 ## Prerequisites
 
 - OpenShift 4.16 or newer (Kubernetes 1.29 floor; the operator's CRDs and CSV declare
-  `minKubeVersion: 1.29.0`). This is the design target and is so far untested on a real
-  cluster.
+  `minKubeVersion: 1.29.0`). 4.16 is the design floor; the only version tried on a real
+  cluster so far is 4.22.
 - `cluster-admin` (or equivalent) access, to install a CatalogSource, an OperatorGroup, a
   Subscription and the operator's ClusterRoles/RoleBindings.
 - The `oc` or `kubectl` CLI logged in to the target cluster.
@@ -14,11 +14,10 @@
 
 ## Option A: install from the file-based catalog (recommended)
 
-> **Note:** `v1.0.0` is the first release, and these images have not been exercised on a
-> real cluster yet. If an image reference below does not resolve, build and push your own
-> images (see [Option B](#option-b-developer-install-straight-from-source-no-olm) for
-> building an operator image from source) and substitute your own registry for
-> `quay.io/ingmarorg`.
+> **Note:** this path was exercised once, with `v1.0.0` on OpenShift 4.22 (ROSA with
+> hosted control planes). If an image reference below does not resolve, build and push
+> your own images (see [Option B](#option-b-developer-install-straight-from-source-no-olm))
+> and substitute your own registry for `quay.io/ingmarorg`.
 
 This installs the operator through OLM, from the file-based catalog image published by
 [`release.yml`](../.github/workflows/release.yml) to
@@ -37,7 +36,7 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: quay.io/ingmarorg/uddi-operator-catalog:v1.0.0   # pin to the release you want
+  image: quay.io/ingmarorg/uddi-operator-catalog:v1.0.1   # pin to the release you want
   displayName: Universal DDI Operator Catalog
   publisher: uddi-operator authors
   updateStrategy:
@@ -93,7 +92,7 @@ spec:
   source: uddi-operator-catalog
   sourceNamespace: openshift-marketplace
   installPlanApproval: Automatic
-  startingCSV: uddi-operator.v1.0.0
+  startingCSV: uddi-operator.v1.0.1
 ```
 
 OLM creates the InstallPlan, deploys the `uddi-operator-controller-manager` Deployment and
@@ -117,7 +116,7 @@ assumes a Unix toolchain):
 ```console
 $ export KUBECONFIG=/path/to/your/kubeconfig
 $ make install                                     # applies the CRDs only
-$ make deploy IMG=quay.io/ingmarorg/uddi-operator:v1.0.0
+$ make deploy IMG=quay.io/ingmarorg/uddi-operator:v1.0.1
 ```
 
 `make deploy` renders `config/default` with `kustomize`, sets the manager image to `IMG`,
@@ -137,7 +136,7 @@ $ make deploy IMG=quay.io/<your-namespace>/uddi-operator:dev
 
 ```console
 $ oc delete subscription uddi-operator -n uddi-operator-system
-$ oc delete csv uddi-operator.v1.0.0 -n uddi-operator-system
+$ oc delete csv uddi-operator.v1.0.1 -n uddi-operator-system
 $ oc delete catalogsource uddi-operator-catalog -n openshift-marketplace
 ```
 
@@ -168,7 +167,7 @@ The default `config/default` deployment applies the following pod security setti
 - A temporary `/tmp` volume (emptyDir) for the metrics server's self-signed certificate generation
 
 These settings are designed to be compatible with the OpenShift `restricted-v2` security
-context constraint. This has not yet been verified on a cluster.
+context constraint, and the `v1.0.0` pod was admitted under it on OpenShift 4.22.
 
 ### High-availability overlay
 
