@@ -285,8 +285,7 @@ metadata:
               "name": "default"
             },
             "metallb": {
-              "mirrorPools": true,
-              "namespace": "metallb-system"
+              "mirrorPools": true
             },
             "requireAnnotation": true,
             "selector": {
@@ -459,7 +458,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: quay.io/ingmarvg-ib/uddi-operator:v0.1.0
-    createdAt: "2026-10-05T05:49:13Z"
+    createdAt: "2026-11-26T00:02:14Z"
     olm.skipRange: <0.1.0
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -548,6 +547,9 @@ spec:
     The Universal DDI Operator shims OpenShift to [Infoblox Universal
     DDI](https://www.infoblox.com/products/universal-ddi/), the cloud-delivered DNS, DHCP
     and IPAM platform behind the Infoblox Cloud Services Portal.
+
+    This is an independent community project in alpha. It is not affiliated with, endorsed
+    by or supported by Infoblox Inc. or Red Hat, Inc.
 
     ## Object layer
 

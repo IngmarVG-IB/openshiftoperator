@@ -260,17 +260,12 @@ spec:
                   mirrorPools:
                     description: |-
                       MirrorPools, when true, mirrors every pool this policy uses into a
-                      metallb.io/v1beta1 IPAddressPool with autoAssign false.
+                      metallb.io/v1beta1 IPAddressPool with autoAssign false, in the namespace the
+                      operator is configured with (metallb-system by default), usable only by Services in
+                      this policy's namespace. A pool is mirrored once Universal DDI confirmed it: from the
+                      pool CR's status, while it is Ready. Only policies in a namespace the operator's
+                      --cluster-target-namespaces setting allows may mirror pools.
                     type: boolean
-                  namespace:
-                    default: metallb-system
-                    description: |-
-                      Namespace is where the mirrored IPAddressPools are created. Defaults to
-                      metallb-system.
-                    maxLength: 63
-                    minLength: 1
-                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                    type: string
                 type: object
               requireAnnotation:
                 default: true
@@ -340,7 +335,10 @@ spec:
                   Targets selects which kinds of objects claim addresses: Service (type
                   LoadBalancer Services in this namespace) and EgressIP (cluster-scoped
                   OVN-Kubernetes EgressIPs). Defaults to Service only. Addresses already allocated
-                  for a kind that is removed from this list are left in place.
+                  for a kind that is removed from this list are left in place. EgressIP only takes
+                  effect in a namespace the operator's --cluster-target-namespaces setting allows,
+                  and only for EgressIPs annotated uddi.infoblox.com/policy with this policy's
+                  namespace/name.
                 items:
                   description: TargetKind names a kind of object an IPAllocationPolicy
                     allocates addresses for.
@@ -460,7 +458,8 @@ spec:
                         Service names what was skipped: the name of a Service; "EgressIP/<name>" for an
                         EgressIP; "<pool kind>/<pool name>" (for example "Range/lb-pool") for a pool that
                         cannot be mirrored into MetalLB; or "EgressIP" or "IPAddressPool" alone when the
-                        cluster does not serve that API. At most "AddressBlock/" plus a 253 character name.
+                        cluster does not serve that API or the policy is not permitted to use it. At
+                        most "AddressBlock/" plus a 253 character name.
                       maxLength: 266
                       type: string
                   type: object
