@@ -81,6 +81,20 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	// IPAllocationPolicy's cluster-scoped effects. Each flag defaults to its environment
+	// variable, so OLM installs can set it through the Subscription config; the flag wins.
+	var clusterTargetNamespaces, metalLBNamespace string
+	metalLBNamespaceDefault := os.Getenv(controller.MetalLBNamespaceEnvVar)
+	if metalLBNamespaceDefault == "" {
+		metalLBNamespaceDefault = uddiv1alpha1.DefaultMetalLBNamespace
+	}
+	flag.StringVar(&clusterTargetNamespaces, "cluster-target-namespaces",
+		os.Getenv(controller.ClusterTargetNamespacesEnvVar),
+		"Comma-separated namespaces whose IPAllocationPolicies may target EgressIPs and mirror pools into MetalLB. "+
+			"Empty permits none. Defaults to $"+controller.ClusterTargetNamespacesEnvVar+".")
+	flag.StringVar(&metalLBNamespace, "metallb-namespace", metalLBNamespaceDefault,
+		"The namespace IPAllocationPolicy creates mirrored MetalLB IPAddressPools in. "+
+			"Defaults to $"+controller.MetalLBNamespaceEnvVar+", else "+uddiv1alpha1.DefaultMetalLBNamespace+".")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -419,11 +433,20 @@ func main() {
 		setupLog.Info("metallb.io/v1beta1 IPAddressPool is not served; IPAllocationPolicy pool mirroring is inert")
 	}
 
+	clusterTargets, err := controller.ParseNamespaceSet(clusterTargetNamespaces)
+	if err != nil {
+		setupLog.Error(err, "invalid --cluster-target-namespaces")
+		os.Exit(1)
+	}
+	setupLog.Info("IPAllocationPolicy cluster-scoped effects",
+		"clusterTargetNamespaces", clusterTargetNamespaces, "metallbNamespace", metalLBNamespace)
 	if err := (&controller.IPAllocationPolicyReconciler{
-		Client:            mgr.GetClient(),
-		Runtime:           runtimeCtx,
-		EgressIPAvailable: egressIPAvailable,
-		MetalLBAvailable:  metalLBAvailable,
+		Client:                  mgr.GetClient(),
+		Runtime:                 runtimeCtx,
+		EgressIPAvailable:       egressIPAvailable,
+		MetalLBAvailable:        metalLBAvailable,
+		ClusterTargetNamespaces: clusterTargets,
+		MetalLBNamespace:        metalLBNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IPAllocationPolicy")
 		os.Exit(1)

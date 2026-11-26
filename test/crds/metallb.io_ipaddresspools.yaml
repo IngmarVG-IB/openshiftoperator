@@ -3,8 +3,10 @@
 # internal/metallb's envtest suite and the IPAllocationPolicy mirroring envtest. It mirrors
 # the field names, types and defaults documented at https://metallb.io/apis/ (spec.addresses
 # required, spec.autoAssign defaulting to true, spec.avoidBuggyIPs defaulting to false) so
-# server-side defaulting behaves like a real cluster; spec.serviceAllocation and status are
-# left open because this operator neither reads nor writes them.
+# server-side defaulting behaves like a real cluster. spec.serviceAllocation is typed as
+# upstream's ServiceAllocation (priority, namespaces, namespaceSelectors, serviceSelectors;
+# github.com/metallb/metallb api/v1beta1/ipaddresspool_types.go) because the operator
+# writes serviceAllocation.namespaces; the selectors and status are left open.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -42,7 +44,23 @@ spec:
                   default: false
                 serviceAllocation:
                   type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    priority:
+                      type: integer
+                    namespaces:
+                      type: array
+                      items:
+                        type: string
+                    namespaceSelectors:
+                      type: array
+                      items:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    serviceSelectors:
+                      type: array
+                      items:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
               required:
                 - addresses
             status:

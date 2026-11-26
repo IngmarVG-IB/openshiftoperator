@@ -4,7 +4,9 @@
 # metallb.io/loadBalancerIPs annotation. A dual-stack Service gets one address per IP
 # family: its IPv6 address comes from the "lb-pool-v6" Range, and the annotation carries
 # both addresses comma-separated. The pools are mirrored into MetalLB IPAddressPools
-# (autoAssign false) so MetalLB announces the assigned addresses.
+# (autoAssign false, usable by this namespace's Services only) in the operator's MetalLB
+# namespace so MetalLB announces the assigned addresses; that needs this namespace in the
+# operator's --cluster-target-namespaces.
 apiVersion: uddi.infoblox.com/v1alpha1
 kind: IPAllocationPolicy
 metadata:
@@ -32,7 +34,6 @@ spec:
     annotation: metallb.io/loadBalancerIPs
   metallb:
     mirrorPools: true
-    namespace: metallb-system
   tags:
     team: platform
   addressLifecycle:

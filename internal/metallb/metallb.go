@@ -145,9 +145,10 @@ func PoolName(policyNamespace, policy, poolKind, poolName string) string {
 
 // Desired builds the IPAddressPool that mirrors src for the policy into mirrorNamespace:
 // the name from PoolName, the three labels Selector matches, spec.addresses holding the
-// CIDR or the "start-end" range and spec.autoAssign false so MetalLB never hands these
+// CIDR or the "start-end" range, spec.autoAssign false so MetalLB never hands these
 // addresses out on its own (they are allocated by Universal DDI; MetalLB only has to
-// announce them). It rejects inputs MetalLB would reject: an unparsable CIDR or address, a
+// announce them) and spec.serviceAllocation.namespaces holding only the policy namespace,
+// so no Service of another namespace can request an address from the pool. It rejects inputs MetalLB would reject: an unparsable CIDR or address, a
 // range whose start is after its end or whose ends are of different families, and a
 // source that sets both or neither of CIDR and Start/End. A CIDR is written in its
 // canonical network form ("10.20.0.7/24" becomes "10.20.0.0/24"), which is how MetalLB
@@ -199,6 +200,9 @@ func Desired(policyNamespace, policy, mirrorNamespace string, src Source) (*unst
 		return nil, err
 	}
 	if err := unstructured.SetNestedField(pool.Object, false, "spec", "autoAssign"); err != nil {
+		return nil, err
+	}
+	if err := unstructured.SetNestedSlice(pool.Object, []interface{}{policyNamespace}, "spec", "serviceAllocation", "namespaces"); err != nil {
 		return nil, err
 	}
 	return pool, nil
@@ -304,9 +308,10 @@ func Stale(policyNamespace, policy string, existing []unstructured.Unstructured,
 }
 
 // Equal reports whether a and b agree on every field this package manages: the three
-// labels Desired sets, spec.addresses and spec.autoAssign. Labels and spec fields that
-// someone else owns (other labels, a serviceAllocation, the avoidBuggyIPs MetalLB defaults
-// in, the status) do not count, so the controller can skip the update when the live pool
+// labels Desired sets, spec.addresses, spec.autoAssign and
+// spec.serviceAllocation.namespaces. Labels and spec fields that someone else owns (other
+// labels, the rest of serviceAllocation, the avoidBuggyIPs MetalLB defaults in, the
+// status) do not count, so the controller can skip the update when the live pool
 // already matches Desired. It follows that an update must keep those fields, by patching
 // or applying only the managed ones, rather than replace the whole object.
 func Equal(a, b *unstructured.Unstructured) bool {
@@ -322,10 +327,12 @@ func Equal(a, b *unstructured.Unstructured) bool {
 		}
 	}
 
-	aAddresses, aFound, aErr := unstructured.NestedStringSlice(a.Object, "spec", "addresses")
-	bAddresses, bFound, bErr := unstructured.NestedStringSlice(b.Object, "spec", "addresses")
-	if aErr != nil || bErr != nil || aFound != bFound || !slices.Equal(aAddresses, bAddresses) {
-		return false
+	for _, path := range [][]string{{"spec", "addresses"}, {"spec", "serviceAllocation", "namespaces"}} {
+		aList, aFound, aErr := unstructured.NestedStringSlice(a.Object, path...)
+		bList, bFound, bErr := unstructured.NestedStringSlice(b.Object, path...)
+		if aErr != nil || bErr != nil || aFound != bFound || !slices.Equal(aList, bList) {
+			return false
+		}
 	}
 
 	// An absent autoAssign means MetalLB's default (true), which is not the same as false.

@@ -19,10 +19,12 @@ package controller
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	uddiv1alpha1 "github.com/IngmarVG-IB/openshiftoperator/api/v1alpha1"
 	"github.com/IngmarVG-IB/openshiftoperator/internal/ipalloc"
+	"github.com/IngmarVG-IB/openshiftoperator/internal/metallb"
 )
 
 func TestKeepAllocatedFieldsPinsWhatTheLiveAddressAllocated(t *testing.T) {
@@ -65,23 +67,66 @@ func TestKeepAllocatedFieldsPinsWhatTheLiveAddressAllocated(t *testing.T) {
 	}
 }
 
-func TestPoolCIDRPrefersStatusAndFallsBackToSpec(t *testing.T) {
+func TestStatusCIDRNeedsBothStatusFields(t *testing.T) {
 	for _, tc := range []struct {
-		statusAddr string
-		statusCIDR int32
-		specAddr   string
-		specCIDR   int32
-		want       string
+		address string
+		cidr    int32
+		want    string
 	}{
-		{"10.1.0.0", 24, "10.2.0.0", 16, "10.1.0.0/24"},
-		{"", 0, "10.2.0.0", 16, "10.2.0.0/16"},
-		{"10.1.0.0", 0, "10.2.0.0", 16, "10.2.0.0/16"},
-		{"", 0, "", 24, ""},
-		{"2001:db8::", 64, "", 0, "2001:db8::/64"},
+		{"10.1.0.0", 24, "10.1.0.0/24"},
+		{"", 0, ""},
+		{"10.1.0.0", 0, ""},
+		{"", 24, ""},
+		{"2001:db8::", 64, "2001:db8::/64"},
 	} {
-		if got := poolCIDR(tc.statusAddr, tc.statusCIDR, tc.specAddr, tc.specCIDR); got != tc.want {
-			t.Errorf("poolCIDR(%q, %d, %q, %d) = %q, want %q", tc.statusAddr, tc.statusCIDR, tc.specAddr, tc.specCIDR, got, tc.want)
+		if got := statusCIDR(tc.address, tc.cidr); got != tc.want {
+			t.Errorf("statusCIDR(%q, %d) = %q, want %q", tc.address, tc.cidr, got, tc.want)
 		}
+	}
+}
+
+func TestUnconfirmedMirrorRequiresReadyAndAStatusAddress(t *testing.T) {
+	ready := ipalloc.PoolState{Ready: true}
+	for _, tc := range []struct {
+		name  string
+		state ipalloc.PoolState
+		src   metallb.Source
+		want  string // a substring of the reason, or empty when the pool can be mirrored
+	}{
+		{"ready subnet", ready, metallb.Source{PoolKind: "Subnet", PoolName: "s", CIDR: "10.0.0.0/24"}, ""},
+		{"ready range", ready, metallb.Source{PoolKind: "Range", PoolName: "r", Start: "10.0.0.1", End: "10.0.0.9"}, ""},
+		{"not ready", ipalloc.PoolState{}, metallb.Source{PoolKind: "Subnet", PoolName: "s", CIDR: "10.0.0.0/24"}, "Subnet/s is not Ready"},
+		{"ready without a status address", ready, metallb.Source{PoolKind: "AddressBlock", PoolName: "b"}, "AddressBlock/b has no address in its status"},
+		{"ready range with half a status", ready, metallb.Source{PoolKind: "Range", PoolName: "r", Start: "10.0.0.1"}, "Range/r has no address"},
+	} {
+		got := unconfirmedMirror(tc.state, tc.src)
+		if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+			t.Errorf("%s: unconfirmedMirror = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestParseNamespaceSet(t *testing.T) {
+	set, err := ParseNamespaceSet(" team-a, ,team-b,team-a ")
+	if err != nil {
+		t.Fatalf("ParseNamespaceSet: %v", err)
+	}
+	if !reflect.DeepEqual(set, NamespaceSet{"team-a": {}, "team-b": {}}) {
+		t.Errorf("set = %v", set)
+	}
+	if !set.Has("team-b") || set.Has("team-c") || set.Has("") {
+		t.Errorf("Has is wrong for %v", set)
+	}
+	empty, err := ParseNamespaceSet("")
+	if err != nil || len(empty) != 0 || empty.Has("default") {
+		t.Errorf("empty = %v, %v; it must permit nothing", empty, err)
+	}
+	var unset NamespaceSet
+	if unset.Has("default") {
+		t.Error("a nil NamespaceSet must permit nothing")
+	}
+	if _, err := ParseNamespaceSet("team-a,Team_B"); err == nil {
+		t.Error("an invalid namespace name must be rejected")
 	}
 }
 

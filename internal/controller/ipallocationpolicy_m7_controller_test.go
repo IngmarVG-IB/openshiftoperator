@@ -40,7 +40,8 @@ import (
 // test/crds are installed.
 var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 	const (
-		allocate = "uddi.infoblox.com/allocate"
+		allocate         = "uddi.infoblox.com/allocate"
+		policyAnnotation = "uddi.infoblox.com/policy"
 		// selectLabel keeps a policy to the Services and EgressIPs of its own spec:
 		// EgressIPs are cluster-scoped and outlive the namespace a spec creates.
 		selectLabel = "ipalloc-m7-test"
@@ -58,8 +59,11 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		testFake.Reset()
 		drainEvents()
 		ns = newNamespace()
+		// The spec's namespace is permitted cluster-scoped effects unless a spec says
+		// otherwise; the specs that mirror set MetalLBNamespace through mirrorInto.
 		reconciler = &IPAllocationPolicyReconciler{
 			Client: k8sClient, Runtime: testRuntime, EgressIPAvailable: true, MetalLBAvailable: true,
+			ClusterTargetNamespaces: NamespaceSet{ns: {}},
 		}
 		addrRec = &AddressReconciler{Client: k8sClient, Runtime: testRuntime}
 		spaceRec = &IPSpaceReconciler{Client: k8sClient, Runtime: testRuntime}
@@ -178,10 +182,19 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		p.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{selectLabel: ns}}
 	}
 
+	// mirrorInto turns mirroring on and points the operator's MetalLB namespace at
+	// namespace, so each spec mirrors into a namespace of its own.
 	mirrorInto := func(namespace string) func(*uddiv1alpha1.IPAllocationPolicy) {
 		return func(p *uddiv1alpha1.IPAllocationPolicy) {
-			p.Spec.MetalLB = &uddiv1alpha1.MetalLBMirror{MirrorPools: true, Namespace: namespace}
+			reconciler.MetalLBNamespace = namespace
+			p.Spec.MetalLB = &uddiv1alpha1.MetalLBMirror{MirrorPools: true}
 		}
+	}
+
+	// optedInFor is the annotations of an EgressIP that opts in and names the policy of the
+	// spec's namespace allowed to manage it.
+	optedInFor := func(policy string) map[string]string {
+		return map[string]string{allocate: "true", policyAnnotation: ns + "/" + policy}
 	}
 
 	// updatePolicy re-reads the policy, applies change and writes it back.
@@ -257,6 +270,12 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		addrs, _, err := unstructured.NestedStringSlice(pool.Object, "spec", "addresses")
 		Expect(err).NotTo(HaveOccurred())
 		return addrs
+	}
+
+	serviceAllocationNamespaces := func(pool *unstructured.Unstructured) []string {
+		namespaces, _, err := unstructured.NestedStringSlice(pool.Object, "spec", "serviceAllocation", "namespaces")
+		Expect(err).NotTo(HaveOccurred())
+		return namespaces
 	}
 
 	eipRef := func(eip *unstructured.Unstructured) ipalloc.TargetRef {
@@ -387,7 +406,9 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		policy := newPolicy("eip", rangeRef(rg), selectOwn, func(p *uddiv1alpha1.IPAllocationPolicy) {
 			p.Spec.Targets = []uddiv1alpha1.TargetKind{uddiv1alpha1.TargetKindEgressIP}
 		})
-		eip := newEgressIP("egress-"+ns, map[string]string{allocate: "true", "uddi.infoblox.com/count": "2"})
+		ann := optedInFor(policy.Name)
+		ann["uddi.infoblox.com/count"] = "2"
+		eip := newEgressIP("egress-"+ns, ann)
 
 		reconcilePolicy(policy)
 		Expect(policy.Status.Allocated).To(Equal(int32(1)))
@@ -447,7 +468,7 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		policy := newPolicy("eipm", rangeRef(rg), selectOwn, func(p *uddiv1alpha1.IPAllocationPolicy) {
 			p.Spec.Targets = []uddiv1alpha1.TargetKind{uddiv1alpha1.TargetKindService, uddiv1alpha1.TargetKindEgressIP}
 		})
-		eip := newEgressIP("egress-manual-"+ns, map[string]string{allocate: "true"})
+		eip := newEgressIP("egress-manual-"+ns, optedInFor(policy.Name))
 		Expect(unstructured.SetNestedStringSlice(eip.Object, []string{"192.0.2.77"}, "spec", "egressIPs")).To(Succeed())
 		Expect(k8sClient.Update(ctx, eip)).To(Succeed())
 
@@ -513,6 +534,8 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(found).To(BeTrue())
 		Expect(autoAssign).To(BeFalse())
+		// Only Services in the policy's namespace may draw from the pool.
+		Expect(serviceAllocationNamespaces(pool)).To(Equal([]string{ns}))
 		Expect(pool.GetLabels()).To(HaveKeyWithValue(metallb.LabelPolicy, policy.Name))
 		Expect(pool.GetLabels()).To(HaveKeyWithValue(metallb.LabelPolicyNamespace, ns))
 		Expect(appliedBy(pool, MetalLBFieldManager)).To(BeTrue())
@@ -548,7 +571,7 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(policy), policy))).To(BeTrue())
 	})
 
-	It("moves its mirrored pools when spec.metallb.namespace changes", func() {
+	It("moves its mirrored pools when the operator's MetalLB namespace changes", func() {
 		firstNS, secondNS := newNamespace(), newNamespace()
 		space := readySpace("move-mirror-space")
 		rg := readyRange("move-mirror-pool", "10.0.77.10", "10.0.77.20", space)
@@ -559,7 +582,7 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		_, err := getPool(firstNS, poolName)
 		Expect(err).NotTo(HaveOccurred())
 
-		updatePolicy(policy, func(p *uddiv1alpha1.IPAllocationPolicy) { p.Spec.MetalLB.Namespace = secondNS })
+		reconciler.MetalLBNamespace = secondNS
 		reconcilePolicy(policy)
 		_, err = getPool(secondNS, poolName)
 		Expect(err).NotTo(HaveOccurred())
@@ -604,7 +627,7 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		space := readySpace("inert-space")
 		rg := readyRange("inert-pool", "10.0.79.10", "10.0.79.20", space)
 		svc := newLBService("web", map[string]string{allocate: "true"})
-		eip := newEgressIP("inert-"+ns, map[string]string{allocate: "true"})
+		eip := newEgressIP("inert-"+ns, optedInFor("inert"))
 		policy := newPolicy("inert", rangeRef(rg), selectOwn, mirrorInto(mirrorNS), func(p *uddiv1alpha1.IPAllocationPolicy) {
 			p.Spec.Targets = []uddiv1alpha1.TargetKind{uddiv1alpha1.TargetKindService, uddiv1alpha1.TargetKindEgressIP}
 		})
@@ -633,11 +656,203 @@ var _ = Describe("IPAllocationPolicy controller, milestone 7", func() {
 		Expect(reasons).To(HaveKeyWithValue("IPAddressPool", uddiv1alpha1.SkipReasonAPIUnavailable))
 
 		// A new EgressIP gets nothing while the API is reported missing.
-		other := newEgressIP("inert-other-"+ns, map[string]string{allocate: "true"})
+		other := newEgressIP("inert-other-"+ns, optedInFor(policy.Name))
 		reconcilePolicy(policy)
 		Expect(addressGone(ipalloc.SlotAddressName(policy.Name, eipRef(other), 0))).To(BeTrue())
 
 		Expect(k8sClient.Delete(ctx, policy)).To(Succeed())
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(policy), policy))).To(BeTrue())
+	})
+
+	// The specs below cover the limits on cluster-scoped effects: the
+	// --cluster-target-namespaces gate, status-only mirror sources, the serviceAllocation
+	// scoping of mirrored pools and the EgressIP policy annotation.
+
+	skipMessage := func(p *uddiv1alpha1.IPAllocationPolicy, name string) string {
+		for _, sk := range p.Status.Skipped {
+			if sk.Service == name {
+				return sk.Message
+			}
+		}
+		return ""
+	}
+
+	poolsIn := func(namespace string) []unstructured.Unstructured {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(metallb.ListGVK)
+		Expect(k8sClient.List(ctx, list, client.InNamespace(namespace))).To(Succeed())
+		return list.Items
+	}
+
+	bothTargets := func(p *uddiv1alpha1.IPAllocationPolicy) {
+		p.Spec.Targets = []uddiv1alpha1.TargetKind{uddiv1alpha1.TargetKindService, uddiv1alpha1.TargetKindEgressIP}
+	}
+
+	It("gives a policy outside --cluster-target-namespaces no EgressIP and no mirrored pool, and keeps serving its Services", func() {
+		reconciler.ClusterTargetNamespaces = NamespaceSet{"another-namespace": {}}
+		mirrorNS := newNamespace()
+		space := readySpace("np-space")
+		rg := readyRange("np-pool", "10.0.80.10", "10.0.80.20", space)
+		svc := newLBService("web", map[string]string{allocate: "true"})
+		eip := newEgressIP("np-"+ns, optedInFor("np"))
+		policy := newPolicy("np", rangeRef(rg), selectOwn, mirrorInto(mirrorNS), bothTargets)
+
+		reconcilePolicy(policy)
+		reasons := skipReasons(policy)
+		Expect(reasons).To(HaveKeyWithValue("EgressIP", uddiv1alpha1.SkipReasonNotPermitted))
+		Expect(reasons).To(HaveKeyWithValue("IPAddressPool", uddiv1alpha1.SkipReasonNotPermitted))
+		Expect(skipMessage(policy, "IPAddressPool")).To(ContainSubstring("--cluster-target-namespaces"))
+		Expect(skipMessage(policy, "EgressIP")).To(ContainSubstring("--cluster-target-namespaces"))
+		Expect(collectEvents()).To(ContainElement(ContainSubstring(uddiv1alpha1.SkipReasonNotPermitted)))
+
+		Expect(poolsIn(mirrorNS)).To(BeEmpty())
+		Expect(policy.Finalizers).NotTo(ContainElement(MetalLBPoolsFinalizer))
+		Expect(addressGone(ipalloc.SlotAddressName(policy.Name, eipRef(eip), 0))).To(BeTrue())
+		Expect(egressIPsOf(eip)).To(BeEmpty())
+		Expect(getAddress(ipalloc.AddressName(policy.Name, svc.Name)).DeletionTimestamp).To(BeNil())
+	})
+
+	It("releases its EgressIP assignments and mirrored pools once its namespace is no longer permitted", func() {
+		mirrorNS := newNamespace()
+		space := readySpace("wd-space")
+		rg := readyRange("wd-pool", "10.0.81.10", "10.0.81.20", space)
+		policy := newPolicy("wd", rangeRef(rg), selectOwn, mirrorInto(mirrorNS), func(p *uddiv1alpha1.IPAllocationPolicy) {
+			p.Spec.Targets = []uddiv1alpha1.TargetKind{uddiv1alpha1.TargetKindEgressIP}
+		})
+		eip := newEgressIP("wd-"+ns, optedInFor(policy.Name))
+		slot := ipalloc.SlotAddressName(policy.Name, eipRef(eip), 0)
+		poolName := metallb.PoolName(ns, policy.Name, string(ipalloc.PoolRange), rg.Name)
+
+		reconcilePolicy(policy)
+		allocated := allocateAddress(slot)
+		reconcilePolicy(policy)
+		Expect(egressIPsOf(eip)).To(Equal([]string{allocated.Status.Address}))
+		_, err := getPool(mirrorNS, poolName)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(policy.Finalizers).To(ContainElement(MetalLBPoolsFinalizer))
+
+		// The administrator withdraws the namespace from --cluster-target-namespaces.
+		reconciler.ClusterTargetNamespaces = NamespaceSet{}
+		reconcilePolicy(policy)
+		Expect(egressIPsOf(eip)).To(BeEmpty())
+		finishRelease(slot)
+		_, err = getPool(mirrorNS, poolName)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		Expect(policy.Finalizers).NotTo(ContainElement(MetalLBPoolsFinalizer))
+		reasons := skipReasons(policy)
+		Expect(reasons).To(HaveKeyWithValue("EgressIP", uddiv1alpha1.SkipReasonNotPermitted))
+		Expect(reasons).To(HaveKeyWithValue("IPAddressPool", uddiv1alpha1.SkipReasonNotPermitted))
+
+		// Nothing is left that would hold up deleting the policy.
+		Expect(k8sClient.Delete(ctx, policy)).To(Succeed())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(policy), policy))).To(BeTrue())
+	})
+
+	It("never mirrors a Subnet from its spec, whether or not it is Ready", func() {
+		mirrorNS := newNamespace()
+		space := readySpace("so-space")
+		sub := &uddiv1alpha1.Subnet{
+			ObjectMeta: metav1.ObjectMeta{Name: "spec-only", Namespace: ns},
+			Spec:       uddiv1alpha1.SubnetSpec{SpaceRef: uddiv1alpha1.ObjectRef{Name: space.Name}, Address: "10.0.82.0", CIDR: 24},
+		}
+		Expect(k8sClient.Create(ctx, sub)).To(Succeed())
+		policy := newPolicy("so", uddiv1alpha1.AllocateFrom{SubnetRef: &uddiv1alpha1.ObjectRef{Name: sub.Name}}, mirrorInto(mirrorNS))
+		entry := string(ipalloc.PoolSubnet) + "/" + sub.Name
+
+		reconcilePolicy(policy)
+		Expect(skipReasons(policy)).To(HaveKeyWithValue(entry, uddiv1alpha1.SkipReasonMetalLBPoolInvalid))
+		Expect(skipMessage(policy, entry)).To(ContainSubstring("not Ready"))
+		Expect(poolsIn(mirrorNS)).To(BeEmpty())
+
+		// Ready, but with no address in its status: the spec address still is not used.
+		sub.Status.ID = "ipam/subnet/so"
+		Expect(k8sClient.Status().Update(ctx, sub)).To(Succeed())
+		reconcilePolicy(policy)
+		Expect(skipReasons(policy)).To(HaveKeyWithValue(entry, uddiv1alpha1.SkipReasonMetalLBPoolInvalid))
+		Expect(skipMessage(policy, entry)).To(ContainSubstring("no address in its status"))
+		Expect(poolsIn(mirrorNS)).To(BeEmpty())
+
+		// Once Universal DDI reported the network, the mirror carries that network.
+		sub.Status.Address, sub.Status.CIDR = "10.0.82.0", 24
+		Expect(k8sClient.Status().Update(ctx, sub)).To(Succeed())
+		reconcilePolicy(policy)
+		pool, err := getPool(mirrorNS, metallb.PoolName(ns, policy.Name, string(ipalloc.PoolSubnet), sub.Name))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(poolAddresses(pool)).To(Equal([]string{"10.0.82.0/24"}))
+	})
+
+	It("never mirrors a Range from its spec, and keeps an existing mirror while the Range is not Ready", func() {
+		mirrorNS := newNamespace()
+		space := readySpace("rs-space")
+		specOnly := &uddiv1alpha1.Range{
+			ObjectMeta: metav1.ObjectMeta{Name: "spec-range", Namespace: ns},
+			Spec:       uddiv1alpha1.RangeSpec{SpaceRef: uddiv1alpha1.ObjectRef{Name: space.Name}, Start: "10.0.83.10", End: "10.0.83.20"},
+		}
+		Expect(k8sClient.Create(ctx, specOnly)).To(Succeed())
+		policy := newPolicy("rs", rangeRef(specOnly), mirrorInto(mirrorNS))
+		entry := string(ipalloc.PoolRange) + "/" + specOnly.Name
+
+		reconcilePolicy(policy)
+		Expect(skipReasons(policy)).To(HaveKeyWithValue(entry, uddiv1alpha1.SkipReasonMetalLBPoolInvalid))
+		Expect(poolsIn(mirrorNS)).To(BeEmpty())
+
+		specOnly.Status.ID = "ipam/range/rs"
+		Expect(k8sClient.Status().Update(ctx, specOnly)).To(Succeed())
+		reconcilePolicy(policy)
+		Expect(skipMessage(policy, entry)).To(ContainSubstring("no address in its status"))
+		Expect(poolsIn(mirrorNS)).To(BeEmpty())
+
+		// A Range Universal DDI confirmed is mirrored from its status; when it stops being
+		// Ready the announced range is kept rather than withdrawn or rebuilt.
+		rg := readyRange("confirmed-range", "10.0.84.10", "10.0.84.20", space)
+		updatePolicy(policy, func(p *uddiv1alpha1.IPAllocationPolicy) { p.Spec.AllocateFrom = rangeRef(rg) })
+		reconcilePolicy(policy)
+		poolName := metallb.PoolName(ns, policy.Name, string(ipalloc.PoolRange), rg.Name)
+		pool, err := getPool(mirrorNS, poolName)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(poolAddresses(pool)).To(Equal([]string{"10.0.84.10-10.0.84.20"}))
+
+		rg.Status.ID = ""
+		Expect(k8sClient.Status().Update(ctx, rg)).To(Succeed())
+		reconcilePolicy(policy)
+		Expect(skipReasons(policy)).To(HaveKeyWithValue(string(ipalloc.PoolRange)+"/"+rg.Name, uddiv1alpha1.SkipReasonMetalLBPoolInvalid))
+		kept, err := getPool(mirrorNS, poolName)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(poolAddresses(kept)).To(Equal([]string{"10.0.84.10-10.0.84.20"}))
+		Expect(kept.GetResourceVersion()).To(Equal(pool.GetResourceVersion()))
+	})
+
+	It("manages only the EgressIPs whose policy annotation names it", func() {
+		otherNS := newNamespace()
+		space := readySpace("bound-space")
+		rg := readyRange("bound-pool", "10.0.85.10", "10.0.85.20", space)
+		policy := newPolicy("bound", rangeRef(rg), selectOwn, func(p *uddiv1alpha1.IPAllocationPolicy) {
+			p.Spec.Targets = []uddiv1alpha1.TargetKind{uddiv1alpha1.TargetKindEgressIP}
+		})
+		foreign := newEgressIP("foreign-"+ns, map[string]string{allocate: "true", policyAnnotation: otherNS + "/" + policy.Name})
+		unbound := newEgressIP("unbound-"+ns, map[string]string{allocate: "true"})
+		otherName := newEgressIP("other-name-"+ns, optedInFor("not-"+policy.Name))
+
+		reconcilePolicy(policy)
+		Expect(policyAddresses(policy)).To(BeEmpty())
+		Expect(policy.Status.Skipped).To(BeEmpty())
+		for _, eip := range []*unstructured.Unstructured{foreign, unbound, otherName} {
+			Expect(egressIPsOf(eip)).To(BeEmpty())
+		}
+
+		mine := newEgressIP("mine-"+ns, optedInFor(policy.Name))
+		slot := ipalloc.SlotAddressName(policy.Name, eipRef(mine), 0)
+		reconcilePolicy(policy)
+		allocated := allocateAddress(slot)
+		reconcilePolicy(policy)
+		Expect(egressIPsOf(mine)).To(Equal([]string{allocated.Status.Address}))
+		Expect(policyAddresses(policy)).To(HaveLen(1))
+
+		// Pointed at another policy, the EgressIP is no longer this policy's: its Address is
+		// released, but its spec.egressIPs is not this policy's to patch any more.
+		annotateEgressIP(mine, map[string]string{policyAnnotation: otherNS + "/" + policy.Name})
+		reconcilePolicy(policy)
+		finishRelease(slot)
+		Expect(egressIPsOf(mine)).To(Equal([]string{allocated.Status.Address}))
 	})
 })

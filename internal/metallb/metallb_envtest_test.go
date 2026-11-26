@@ -235,6 +235,10 @@ func (e *poolEnv) checkReadBack(t *testing.T, want *unstructured.Unstructured) {
 	if !OwnedBy(got, "apps", "lb") {
 		t.Errorf("live pool is not OwnedBy its policy; labels = %v", got.GetLabels())
 	}
+	namespaces, _, _ := unstructured.NestedStringSlice(got.Object, "spec", "serviceAllocation", "namespaces")
+	if !reflect.DeepEqual(namespaces, []string{"apps"}) {
+		t.Errorf("live spec.serviceAllocation.namespaces = %v, want [apps]", namespaces)
+	}
 }
 
 func (e *poolEnv) checkChangedCIDR(t *testing.T, subnet *unstructured.Unstructured) {
@@ -289,6 +293,23 @@ func (e *poolEnv) checkServerSideApply(t *testing.T) {
 	}
 	if priority, found, _ := unstructured.NestedInt64(got.Object, "spec", "serviceAllocation", "priority"); !found || priority != 5 {
 		t.Errorf("applying Desired dropped spec.serviceAllocation.priority (found=%v, value=%d)", found, priority)
+	}
+
+	// Somebody widens the pool to another namespace; the next apply narrows it again.
+	widened := got.DeepCopy()
+	if err := unstructured.SetNestedStringSlice(widened.Object, []string{"apps", "other"}, "spec", "serviceAllocation", "namespaces"); err != nil {
+		t.Fatalf("SetNestedStringSlice: %v", err)
+	}
+	if err := e.client.Patch(context.Background(), widened, client.MergeFrom(got), client.FieldOwner("someone-else")); err != nil {
+		t.Fatalf("widen the pool: %v", err)
+	}
+	if Equal(second, e.get(t, first.GetName())) {
+		t.Fatalf("Equal(second, live) = true for a pool widened to another namespace")
+	}
+	e.apply(t, second)
+	got = e.get(t, first.GetName())
+	if namespaces, _, _ := unstructured.NestedStringSlice(got.Object, "spec", "serviceAllocation", "namespaces"); !reflect.DeepEqual(namespaces, []string{"apps"}) {
+		t.Errorf("applying Desired left spec.serviceAllocation.namespaces = %v, want [apps]", namespaces)
 	}
 }
 

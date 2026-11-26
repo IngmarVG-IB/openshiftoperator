@@ -170,6 +170,7 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&IPAllocationPolicyReconciler{
 			Client: mgr.GetClient(), Runtime: rt, EgressIPAvailable: true, MetalLBAvailable: true,
+			ClusterTargetNamespaces: NamespaceSet{mgrNS: {}},
 		}).SetupWithManager(mgr)).To(Succeed())
 		Expect((&HostRegistrationPolicyReconciler{Client: mgr.GetClient(), Runtime: rt, NMStateAvailable: true, Metal3Available: true}).SetupWithManager(mgr)).To(Succeed())
 
@@ -511,7 +512,10 @@ var _ = Describe("Every controller under a real manager", Ordered, func() {
 		eip := egressip.New()
 		eip.SetName("watch-egress-" + mgrNS)
 		eip.SetLabels(map[string]string{"egress-watch-test": mgrNS})
-		eip.SetAnnotations(map[string]string{"uddi.infoblox.com/allocate": "true"})
+		eip.SetAnnotations(map[string]string{
+			"uddi.infoblox.com/allocate": "true",
+			"uddi.infoblox.com/policy":   mgrNS + "/" + policy.Name,
+		})
 		Expect(unstructured.SetNestedField(eip.Object, map[string]interface{}{
 			"egressIPs":         []interface{}{},
 			"namespaceSelector": map[string]interface{}{},

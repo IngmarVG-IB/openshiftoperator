@@ -352,6 +352,11 @@ func TestDesired(t *testing.T) {
 			if err != nil || !found || autoAssign {
 				t.Errorf("spec.autoAssign = %v (found=%v, err=%v), want false", autoAssign, found, err)
 			}
+			// Only Services in the policy's own namespace may be allocated from the pool.
+			namespaces, found, err := unstructured.NestedStringSlice(got.Object, "spec", "serviceAllocation", "namespaces")
+			if err != nil || !found || !reflect.DeepEqual(namespaces, []string{"apps"}) {
+				t.Errorf("spec.serviceAllocation.namespaces = %v (found=%v, err=%v), want [apps]", namespaces, found, err)
+			}
 			if !OwnedBy(got, "apps", "lb") || !Selector("apps", "lb").Matches(labels.Set(got.GetLabels())) {
 				t.Errorf("Desired's pool is not matched by Selector/OwnedBy of its own policy")
 			}
@@ -592,8 +597,18 @@ func TestEqual(t *testing.T) {
 			live.SetUID("abc")
 			live.SetAnnotations(map[string]string{"x": "y"})
 			mustSet(t, live, false, "spec", "avoidBuggyIPs")
-			mustSet(t, live, map[string]interface{}{"priority": int64(1)}, "spec", "serviceAllocation")
+			mustSet(t, live, int64(1), "spec", "serviceAllocation", "priority")
+			mustSet(t, live, []interface{}{map[string]interface{}{}}, "spec", "serviceAllocation", "serviceSelectors")
 		}, true},
+		{"serviceAllocation.namespaces widened", func(t *testing.T, live *unstructured.Unstructured) {
+			mustSet(t, live, []interface{}{"apps", "other"}, "spec", "serviceAllocation", "namespaces")
+		}, false},
+		{"serviceAllocation.namespaces of another namespace", func(t *testing.T, live *unstructured.Unstructured) {
+			mustSet(t, live, []interface{}{"other"}, "spec", "serviceAllocation", "namespaces")
+		}, false},
+		{"serviceAllocation absent", func(t *testing.T, live *unstructured.Unstructured) {
+			unstructured.RemoveNestedField(live.Object, "spec", "serviceAllocation")
+		}, false},
 		{"different cidr", func(t *testing.T, live *unstructured.Unstructured) {
 			mustSet(t, live, []interface{}{"10.30.0.0/24"}, "spec", "addresses")
 		}, false},

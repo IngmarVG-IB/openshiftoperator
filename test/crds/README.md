@@ -152,8 +152,12 @@ file by path) and by the IPAllocationPolicy controller specs for pool mirroring.
 `spec.addresses` (a list of strings) and gives `spec.autoAssign` its upstream default of
 `true` and `spec.avoidBuggyIPs` its default of `false`, so server-side defaulting behaves as on
 a real cluster; the mirroring code sets `autoAssign: false` explicitly and the tests check that
-it survives. `spec.serviceAllocation` and `status` are left open because the operator neither
-reads nor writes them. The field names follow https://metallb.io/apis/.
+it survives. `spec.serviceAllocation` is typed like upstream's `ServiceAllocation` (`priority`,
+`namespaces` as a list of namespace names, `namespaceSelectors`, `serviceSelectors`, checked
+against `api/v1beta1/ipaddresspool_types.go` in github.com/metallb/metallb), because the
+operator writes `serviceAllocation.namespaces`; the two selector lists hold open objects, and
+`status` is left open because the operator never reads it. The field names follow
+https://metallb.io/apis/.
 
 ### metal3.io_baremetalhosts.yaml
 

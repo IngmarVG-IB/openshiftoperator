@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -78,6 +79,72 @@ type IPAllocationPolicyReconciler struct {
 	// spec.metallb.mirrorPools is inert and reported in status.skipped, and the policy never
 	// keeps MetalLBPoolsFinalizer, so deleting it never waits.
 	MetalLBAvailable bool
+	// ClusterTargetNamespaces are the namespaces whose policies may have cluster-scoped
+	// effects: target EgressIPs and mirror pools into MetalLB (--cluster-target-namespaces).
+	// Empty permits none. A policy elsewhere that asks for either reports NotPermitted in
+	// status.skipped, and what it had assigned or mirrored before is released.
+	ClusterTargetNamespaces NamespaceSet
+	// MetalLBNamespace is where mirrored IPAddressPools are created (--metallb-namespace);
+	// empty means uddiv1alpha1.DefaultMetalLBNamespace.
+	MetalLBNamespace string
+}
+
+// NamespaceSet is a set of namespace names.
+type NamespaceSet map[string]struct{}
+
+// Has reports whether the set holds namespace.
+func (s NamespaceSet) Has(namespace string) bool {
+	_, ok := s[namespace]
+	return ok
+}
+
+// ParseNamespaceSet parses a comma-separated list of namespace names, ignoring blanks and
+// space around each name. It rejects a name that is not a valid namespace name.
+func ParseNamespaceSet(raw string) (NamespaceSet, error) {
+	set := NamespaceSet{}
+	for _, part := range strings.Split(raw, ",") {
+		ns := strings.TrimSpace(part)
+		if ns == "" {
+			continue
+		}
+		if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
+			return nil, fmt.Errorf("%q is not a valid namespace name: %s", ns, strings.Join(errs, "; "))
+		}
+		set[ns] = struct{}{}
+	}
+	return set, nil
+}
+
+// clusterTargetsPermitted reports whether the policy's namespace may have cluster-scoped
+// effects (ClusterTargetNamespaces).
+func (r *IPAllocationPolicyReconciler) clusterTargetsPermitted(policy *uddiv1alpha1.IPAllocationPolicy) bool {
+	return r.ClusterTargetNamespaces.Has(policy.Namespace)
+}
+
+// notPermittedSkip is the NotPermitted status.skipped entry for what (an entry name and a
+// description of the effect) in a namespace ClusterTargetNamespaces does not hold.
+func notPermittedSkip(name, what, namespace string) policySkip {
+	return policySkip{
+		Name:   name,
+		Reason: uddiv1alpha1.SkipReasonNotPermitted,
+		Message: fmt.Sprintf("namespace %s is not listed in the operator's --cluster-target-namespaces (%s); %s is off for this policy",
+			namespace, ClusterTargetNamespacesEnvVar, what),
+	}
+}
+
+// ClusterTargetNamespacesEnvVar and MetalLBNamespaceEnvVar name the environment variables
+// that set --cluster-target-namespaces and --metallb-namespace when the flag is not given.
+const (
+	ClusterTargetNamespacesEnvVar = "CLUSTER_TARGET_NAMESPACES"
+	MetalLBNamespaceEnvVar        = "METALLB_NAMESPACE"
+)
+
+// metalLBNamespace is MetalLBNamespace with its default applied.
+func (r *IPAllocationPolicyReconciler) metalLBNamespace() string {
+	if r.MetalLBNamespace == "" {
+		return uddiv1alpha1.DefaultMetalLBNamespace
+	}
+	return r.MetalLBNamespace
 }
 
 // +kubebuilder:rbac:groups=uddi.infoblox.com,resources=ipallocationpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -118,8 +185,10 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// Step 1: claims, from the Services in the policy namespace and, when the policy lists
-	// the EgressIP target and the cluster serves it, the EgressIPs cluster-wide; both
-	// matched against spec.selector.
+	// the EgressIP target, the cluster serves it and the policy's namespace is permitted
+	// cluster-scoped effects, the EgressIPs cluster-wide that name this policy in their
+	// policy annotation; both matched against spec.selector. A policy that is not
+	// permitted lists no EgressIP, so the planner releases what it allocated for them.
 	sel, err := serviceSelectorFor(policy)
 	if err != nil {
 		// A malformed selector cannot be fixed by retrying.
@@ -142,25 +211,31 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 	eipByName := map[string]*unstructured.Unstructured{}
 	var apiSkips []policySkip
 	if ipalloc.TargetEnabled(policy, ipalloc.TargetEgressIP) {
-		if r.EgressIPAvailable {
-			eipList := egressip.NewList()
-			if err := r.List(ctx, eipList, client.MatchingLabelsSelector{Selector: sel}); err != nil {
-				return ctrl.Result{}, err
-			}
-			for i := range eipList.Items {
-				eip := &eipList.Items[i]
-				// Patches and event references need the kind, which list items need not carry.
-				eip.SetGroupVersionKind(egressip.GVK)
-				eipByName[eip.GetName()] = eip
-				claims = append(claims, ipalloc.ViewEgressIP(eip, ""))
-			}
-		} else {
+		switch {
+		case !r.EgressIPAvailable:
 			apiSkips = append(apiSkips, policySkip{
 				Name:   egressip.GVK.Kind,
 				Reason: uddiv1alpha1.SkipReasonAPIUnavailable,
 				Message: fmt.Sprintf("the cluster does not serve %s %s; the EgressIP target is inert",
 					egressip.GVK.GroupVersion(), egressip.GVK.Kind),
 			})
+		case !r.clusterTargetsPermitted(policy):
+			apiSkips = append(apiSkips, notPermittedSkip(egressip.GVK.Kind, "the EgressIP target", policy.Namespace))
+		default:
+			eipList := egressip.NewList()
+			if err := r.List(ctx, eipList, client.MatchingLabelsSelector{Selector: sel}); err != nil {
+				return ctrl.Result{}, err
+			}
+			for i := range eipList.Items {
+				eip := &eipList.Items[i]
+				if !ipalloc.EgressIPBoundTo(eip, "", policy.Namespace, policy.Name) {
+					continue
+				}
+				// Patches and event references need the kind, which list items need not carry.
+				eip.SetGroupVersionKind(egressip.GVK)
+				eipByName[eip.GetName()] = eip
+				claims = append(claims, ipalloc.ViewEgressIP(eip, ""))
+			}
 		}
 	}
 
@@ -260,7 +335,7 @@ func (r *IPAllocationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Step 7: release. First clear the assignment of every target released as a whole,
 	// if it still holds only its own addresses, then delete the Addresses.
 	for _, un := range plan.Unassign {
-		if err := r.unassign(ctx, policy.Namespace, via, un); err != nil {
+		if err := r.unassign(ctx, policy, via, un); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -438,13 +513,18 @@ func withoutEgressIPReleases(plan *ipalloc.Plan) {
 // unassign clears the assignment field of a target whose whole claim is released, but
 // only while it still holds nothing but the claim's addresses (Unassign.Applies): a
 // Service's annotation or spec.loadBalancerIP, or an EgressIP's spec.egressIPs. A target
-// that is gone has nothing left to clear, and a malformed spec.egressIPs is not this
-// policy's to clear.
-func (r *IPAllocationPolicyReconciler) unassign(ctx context.Context, namespace string, via ipalloc.AssignVia, un ipalloc.Unassign) error {
+// that is gone has nothing left to clear, and a malformed spec.egressIPs, or an EgressIP
+// that does not name this policy in its policy annotation, is not this policy's to clear.
+func (r *IPAllocationPolicyReconciler) unassign(
+	ctx context.Context,
+	policy *uddiv1alpha1.IPAllocationPolicy,
+	via ipalloc.AssignVia,
+	un ipalloc.Unassign,
+) error {
 	switch un.Target.Kind {
 	case ipalloc.TargetService:
 		var svc corev1.Service
-		err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: un.Target.Name}, &svc)
+		err := r.Get(ctx, client.ObjectKey{Namespace: policy.Namespace, Name: un.Target.Name}, &svc)
 		switch {
 		case apierrors.IsNotFound(err):
 			return nil
@@ -462,6 +542,8 @@ func (r *IPAllocationPolicyReconciler) unassign(ctx context.Context, namespace s
 			return nil
 		case err != nil:
 			return err
+		case !ipalloc.EgressIPBoundTo(eip, "", policy.Namespace, policy.Name):
+			return nil
 		}
 		current, _, err := egressip.EgressIPs(eip)
 		if err != nil || !un.Applies(current) {
@@ -479,16 +561,24 @@ type resolvedPool struct {
 	state ipalloc.PoolState
 	// mirror is nil when the pool CR does not exist.
 	mirror *metallb.Source
+	// unconfirmed, when not empty, says why mirror cannot be built yet: the pool CR is not
+	// Ready or its status carries no address. mirror is then not used.
+	unconfirmed string
 }
 
 // resolvePool reads the Subnet, Range or AddressBlock CR a PoolRef names in namespace and
 // builds the ipalloc.PoolState the planner needs, family included, plus the
 // metallb.Source of its mirror. A missing CR is Ready: false with a zero SpaceRef, per
 // DESIGN.md section 4.7 step 3, and has no mirror source.
+//
+// The mirror source comes from the pool CR's status alone, which only the operator writes
+// from what Universal DDI reported; the spec is written by whoever may edit the CR, so it
+// never decides which addresses MetalLB announces.
 func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespace string, ref ipalloc.PoolRef) (resolvedPool, error) {
 	key := client.ObjectKey{Namespace: namespace, Name: ref.Name}
 	missing := resolvedPool{state: ipalloc.PoolState{Ref: ref}}
 	src := &metallb.Source{PoolKind: string(ref.Kind), PoolName: ref.Name}
+	var state ipalloc.PoolState
 	switch ref.Kind {
 	case ipalloc.PoolSubnet:
 		var s uddiv1alpha1.Subnet
@@ -498,8 +588,8 @@ func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespac
 			}
 			return resolvedPool{}, err
 		}
-		src.CIDR = poolCIDR(s.Status.Address, s.Status.CIDR, s.Spec.Address, s.Spec.CIDR)
-		return resolvedPool{state: ipalloc.SubnetPoolState(&s), mirror: src}, nil
+		state = ipalloc.SubnetPoolState(&s)
+		src.CIDR = statusCIDR(s.Status.Address, s.Status.CIDR)
 	case ipalloc.PoolRange:
 		var rg uddiv1alpha1.Range
 		if err := r.Get(ctx, key, &rg); err != nil {
@@ -508,11 +598,10 @@ func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespac
 			}
 			return resolvedPool{}, err
 		}
-		src.Start, src.End = rg.Spec.Start, rg.Spec.End
-		if src.Start == "" || src.End == "" {
+		state = ipalloc.RangePoolState(&rg)
+		if rg.Status.Start != "" && rg.Status.End != "" {
 			src.Start, src.End = rg.Status.Start, rg.Status.End
 		}
-		return resolvedPool{state: ipalloc.RangePoolState(&rg), mirror: src}, nil
 	case ipalloc.PoolAddressBlock:
 		var b uddiv1alpha1.AddressBlock
 		if err := r.Get(ctx, key, &b); err != nil {
@@ -521,22 +610,34 @@ func (r *IPAllocationPolicyReconciler) resolvePool(ctx context.Context, namespac
 			}
 			return resolvedPool{}, err
 		}
-		src.CIDR = poolCIDR(b.Status.Address, b.Status.CIDR, b.Spec.Address, b.Spec.CIDR)
-		return resolvedPool{state: ipalloc.AddressBlockPoolState(&b), mirror: src}, nil
+		state = ipalloc.AddressBlockPoolState(&b)
+		src.CIDR = statusCIDR(b.Status.Address, b.Status.CIDR)
 	default:
 		return missing, nil
 	}
+	return resolvedPool{state: state, mirror: src, unconfirmed: unconfirmedMirror(state, *src)}, nil
 }
 
-// poolCIDR renders a Subnet's or AddressBlock's network as "<address>/<prefix length>":
-// from status once Universal DDI reported it, otherwise from spec; empty while neither
-// carries an address (a Subnet still waiting for its next-available allocation).
-func poolCIDR(statusAddress string, statusCIDR int32, specAddress string, specCIDR int32) string {
+// statusCIDR renders a Subnet's or AddressBlock's status network as
+// "<address>/<prefix length>"; empty until Universal DDI reported both (a Subnet still
+// waiting for its next-available allocation).
+func statusCIDR(address string, cidr int32) string {
+	if address == "" || cidr <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s/%d", address, cidr)
+}
+
+// unconfirmedMirror returns why a pool CR's mirror cannot be built from src yet: the pool
+// is not Ready (the same notion the planner uses, a status.id from Universal DDI), or its
+// status carries no address. It is empty when src can be mirrored.
+func unconfirmedMirror(state ipalloc.PoolState, src metallb.Source) string {
+	entry := src.PoolKind + "/" + src.PoolName
 	switch {
-	case statusAddress != "" && statusCIDR > 0:
-		return fmt.Sprintf("%s/%d", statusAddress, statusCIDR)
-	case specAddress != "":
-		return fmt.Sprintf("%s/%d", specAddress, specCIDR)
+	case !state.Ready:
+		return fmt.Sprintf("%s is not Ready in Universal DDI yet (no status.id); it is mirrored once it is", entry)
+	case src.CIDR == "" && (src.Start == "" || src.End == ""):
+		return fmt.Sprintf("%s has no address in its status yet; only addresses Universal DDI reported are mirrored", entry)
 	default:
 		return ""
 	}
@@ -544,12 +645,15 @@ func poolCIDR(statusAddress string, statusCIDR int32, specAddress string, specCI
 
 // mirrorPools implements DESIGN.md section 4.7 "MetalLB pool mirroring" for one reconcile
 // and returns the pools it could not mirror as skips. While spec.metallb.mirrorPools is
-// true and the cluster serves MetalLB, the policy keeps MetalLBPoolsFinalizer and every
-// pool in refs is mirrored into an IPAddressPool in spec.metallb.namespace by server-side
-// apply, skipping writes the live pool already matches and leaving alone a pool of the
-// same name that the policy did not create. Then the policy's mirrored pools that are no
-// longer wanted are pruned. A pool still in refs keeps an existing mirror even while it
-// cannot be rebuilt, so a transient problem never withdraws an announced range.
+// true, the cluster serves MetalLB and the policy's namespace is permitted cluster-scoped
+// effects, the policy keeps MetalLBPoolsFinalizer and every pool in refs that is Ready
+// and has its address in status is mirrored into an IPAddressPool in the operator's
+// MetalLB namespace by server-side apply, skipping writes the live pool already matches
+// and leaving alone a pool of the same name that the policy did not create. Then the
+// policy's mirrored pools that are no longer wanted are pruned. A pool still in refs keeps
+// an existing mirror even while it cannot be rebuilt (not Ready, for instance), so a
+// transient problem never withdraws an announced range. A policy that is not permitted
+// has its mirrored pools deleted, as if mirroring were off.
 func (r *IPAllocationPolicyReconciler) mirrorPools(
 	ctx context.Context,
 	policy *uddiv1alpha1.IPAllocationPolicy,
@@ -570,24 +674,33 @@ func (r *IPAllocationPolicyReconciler) mirrorPools(
 				metallb.GVK.GroupVersion(), metallb.GVK.Kind),
 		}}, nil
 	}
+	if !r.clusterTargetsPermitted(policy) {
+		skip := notPermittedSkip(metallb.GVK.Kind, "spec.metallb.mirrorPools", policy.Namespace)
+		return []policySkip{skip}, r.unmirrorPools(ctx, policy)
+	}
 	if err := r.setMetalLBFinalizer(ctx, policy, true); err != nil {
 		return nil, err
 	}
 
-	mirrorNS := policy.Spec.MetalLB.Namespace
-	if mirrorNS == "" {
-		mirrorNS = uddiv1alpha1.DefaultMetalLBNamespace
-	}
+	mirrorNS := r.metalLBNamespace()
 	keep := make(map[string]bool, len(refs))
 	var skips []policySkip
 	for _, ref := range refs {
 		keep[metallb.PoolName(policy.Namespace, policy.Name, string(ref.Kind), ref.Name)] = true
-		src := pools[ref].mirror
-		if src == nil {
+		rp := pools[ref]
+		if rp.mirror == nil {
 			// The pool CR does not exist; PoolNotReady reports it where it matters.
 			continue
 		}
-		skip, err := r.mirrorPool(ctx, policy, mirrorNS, ref, *src)
+		if rp.unconfirmed != "" {
+			skips = append(skips, policySkip{
+				Name:    string(ref.Kind) + "/" + ref.Name,
+				Reason:  uddiv1alpha1.SkipReasonMetalLBPoolInvalid,
+				Message: rp.unconfirmed,
+			})
+			continue
+		}
+		skip, err := r.mirrorPool(ctx, policy, mirrorNS, ref, *rp.mirror)
 		if err != nil {
 			return nil, err
 		}
@@ -637,7 +750,7 @@ func (r *IPAllocationPolicyReconciler) mirrorPool(
 
 // pruneMirroredPools deletes the policy's mirrored pools that are no longer wanted: those
 // in mirrorNS that metallb.Stale returns for keep, and every one in another namespace,
-// left behind when spec.metallb.namespace changed. An empty mirrorNS with a nil keep
+// left behind when the operator's MetalLB namespace changed. An empty mirrorNS with a nil keep
 // deletes them all. Pools are listed cluster-wide with metallb.Selector, so a pool
 // somebody else created is never touched.
 func (r *IPAllocationPolicyReconciler) pruneMirroredPools(
@@ -678,7 +791,8 @@ func (r *IPAllocationPolicyReconciler) pruneMirroredPools(
 }
 
 // unmirrorPools deletes every pool the policy mirrored and removes MetalLBPoolsFinalizer,
-// when mirroring is turned off or the policy is deleted. A policy without the finalizer
+// when mirroring is turned off, the policy is no longer permitted to mirror or the policy
+// is deleted. A policy without the finalizer
 // has nothing mirrored. When the cluster does not serve MetalLB there is nothing to list,
 // so only the finalizer goes and deletion never hangs.
 func (r *IPAllocationPolicyReconciler) unmirrorPools(ctx context.Context, policy *uddiv1alpha1.IPAllocationPolicy) error {
@@ -880,6 +994,10 @@ func enqueueForAddressPolicy() handler.MapFunc {
 // drift repair and pruning run on every reconcile.
 func (r *IPAllocationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
+
+	if errs := validation.IsDNS1123Label(r.metalLBNamespace()); len(errs) > 0 {
+		return fmt.Errorf("MetalLB namespace %q is not a valid namespace name: %s", r.metalLBNamespace(), strings.Join(errs, "; "))
+	}
 
 	if err := RegisterDependencyIndex(ctx, mgr, &uddiv1alpha1.IPAllocationPolicy{}, func(o client.Object) []string {
 		p := o.(*uddiv1alpha1.IPAllocationPolicy)

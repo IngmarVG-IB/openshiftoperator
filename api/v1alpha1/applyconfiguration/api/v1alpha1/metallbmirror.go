@@ -24,11 +24,12 @@ package v1alpha1
 // IPAddressPools, so MetalLB announces the addresses the policy assigns.
 type MetalLBMirrorApplyConfiguration struct {
 	// MirrorPools, when true, mirrors every pool this policy uses into a
-	// metallb.io/v1beta1 IPAddressPool with autoAssign false.
+	// metallb.io/v1beta1 IPAddressPool with autoAssign false, in the namespace the
+	// operator is configured with (metallb-system by default), usable only by Services in
+	// this policy's namespace. A pool is mirrored once Universal DDI confirmed it: from the
+	// pool CR's status, while it is Ready. Only policies in a namespace the operator's
+	// --cluster-target-namespaces setting allows may mirror pools.
 	MirrorPools *bool `json:"mirrorPools,omitempty"`
-	// Namespace is where the mirrored IPAddressPools are created. Defaults to
-	// metallb-system.
-	Namespace *string `json:"namespace,omitempty"`
 }
 
 // MetalLBMirrorApplyConfiguration constructs a declarative configuration of the MetalLBMirror type for use with
@@ -42,13 +43,5 @@ func MetalLBMirror() *MetalLBMirrorApplyConfiguration {
 // If called multiple times, the MirrorPools field is set to the value of the last call.
 func (b *MetalLBMirrorApplyConfiguration) WithMirrorPools(value bool) *MetalLBMirrorApplyConfiguration {
 	b.MirrorPools = &value
-	return b
-}
-
-// WithNamespace sets the Namespace field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Namespace field is set to the value of the last call.
-func (b *MetalLBMirrorApplyConfiguration) WithNamespace(value string) *MetalLBMirrorApplyConfiguration {
-	b.Namespace = &value
 	return b
 }

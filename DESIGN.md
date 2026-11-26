@@ -596,8 +596,17 @@ spec:
   allocateFromIPv6: { rangeRef: { name: lb-pool-v6 } }   # pool for IPv6 slots
   metallb:
     mirrorPools: true                     # mirror every pool this policy uses into MetalLB
-    namespace: metallb-system
 ```
+
+- **Cluster-scoped effects are gated.** EgressIPs are cluster-scoped and mirrored pools live
+  in MetalLB's namespace, so either lets a policy reach beyond its own namespace. Only
+  policies in the namespaces the operator setting `--cluster-target-namespaces`
+  (`CLUSTER_TARGET_NAMESPACES` when the flag is not given) lists may use the `EgressIP`
+  target or `metallb.mirrorPools`; the default, empty, permits none. Elsewhere that target
+  or the mirroring is off and reported as a `NotPermitted` skip and a Warning event, while
+  the Service target keeps working. A policy whose namespace loses the permission lists no
+  EgressIP, so the planner releases its EgressIP Addresses through the usual Unassign and
+  Release path, and its mirrored pools are deleted as when mirroring is turned off.
 
 - **Pool family.** Each pool's IP family comes from its CR: a Subnet or AddressBlock from
   `status.address` (or `spec.address`), a Range from `spec.start`. IPv4 slots use
@@ -616,7 +625,9 @@ spec:
   `ManuallyAssigned`.
 - **EgressIP target** (`k8s.ovn.org/v1 EgressIP`, cluster-scoped, read as unstructured
   data). An EgressIP takes part only with the annotation `uddi.infoblox.com/allocate:
-  "true"`, whatever `requireAnnotation` says, and when it matches `selector`.
+  "true"`, whatever `requireAnnotation` says, when it matches `selector`, and only for the
+  policy its annotation `uddi.infoblox.com/policy: <namespace>/<name>` names: every other
+  policy ignores it and never writes its `spec.egressIPs`, not even to clear it.
   `uddi.infoblox.com/count` (1 to 16, default 1) sets the number of slots, and
   `allocate-from` overrides the pool. Slots are named `<policy>-egressip-<name>-<i>` and
   owned by the EgressIP. When every slot is Ready, `spec.egressIPs` is set to the slot
@@ -629,14 +640,22 @@ spec:
   without them is read as slot 0 of the Service named by `uddi.infoblox.com/service`.
 - **MetalLB pool mirroring.** MetalLB only announces an address that lies in one of its
   `IPAddressPool`s, so with `metallb.mirrorPools` every pool the policy uses is mirrored
-  into `metallb.io/v1beta1 IPAddressPool` objects in `metallb.namespace`, named
-  `uddi-<policy namespace>-<policy>-<pool kind>-<pool name>` (hash-truncated over 253
-  characters), with `spec.addresses` the Subnet or AddressBlock CIDR or the Range
-  `start-end`, and `spec.autoAssign: false` so MetalLB never hands these addresses out on
-  its own. They carry `uddi.infoblox.com/policy` and `uddi.infoblox.com/policy-namespace`
+  into `metallb.io/v1beta1 IPAddressPool` objects in the operator's MetalLB namespace
+  (`--metallb-namespace` or `METALLB_NAMESPACE`, default `metallb-system`; a policy cannot
+  choose it), named `uddi-<policy namespace>-<policy>-<pool kind>-<pool name>`
+  (hash-truncated over 253 characters), with `spec.addresses` the Subnet or AddressBlock
+  CIDR or the Range `start-end`, `spec.autoAssign: false` so MetalLB never hands these
+  addresses out on its own, and `spec.serviceAllocation.namespaces: [<policy namespace>]`
+  so only the policy's own Services can draw from them. The addresses come from the pool
+  CR's `status` only, which the operator writes from what Universal DDI reported, and only
+  while the CR is Ready (`status.id`, as the planner's `PoolState`); the tenant-written
+  `spec` never decides what MetalLB announces. A pool that is not Ready or has no status
+  address yet is a `MetalLBPoolInvalid` skip, and a pool already mirrored keeps its mirror
+  unchanged meanwhile. They carry `uddi.infoblox.com/policy` and `uddi.infoblox.com/policy-namespace`
   labels. A pool in another namespace cannot be owned by the policy, so the policy gets the
   finalizer `uddi.infoblox.com/metallb-pools` while mirroring is on, and the finalizer
-  deletes the mirrored pools when the policy is deleted or mirroring is turned off. Stale
+  deletes the mirrored pools when the policy is deleted, mirroring is turned off or the
+  policy's namespace is no longer permitted. Stale
   mirrored pools of the policy are pruned on every reconcile.
 
 EgressIP and MetalLB are detected with discovery at startup; a missing API makes that
@@ -645,12 +664,14 @@ target or the mirroring inert and is reported in status as a skip or a log line.
 `status.skipped` names a Service by its bare name, an EgressIP as `EgressIP/<name>` and a
 pool as `<Kind>/<name>`. Pool mirroring adds the reasons `MetalLBPoolInvalid` (the pool CR
 cannot be expressed as an IPAddressPool) and `MetalLBPoolConflict` (an IPAddressPool of
-that name exists and is not this policy's), and a missing API adds an `APIUnavailable`
-entry named `EgressIP` or `IPAddressPool`; none of these change Ready. When a slot's
+that name exists and is not this policy's), a missing API adds an `APIUnavailable` entry
+named `EgressIP` or `IPAddressPool`, and a namespace outside `--cluster-target-namespaces`
+adds a `NotPermitted` entry of the same names; none of these change Ready. When a slot's
 Address already exists, its `address`, `nextAvailableFrom` and `spaceRef` are kept from the
 live object, so changing `allocateFrom` or the `address` annotation only affects new slots.
-Mirrored pools are pruned across namespaces by label, so changing `metallb.namespace`
-moves them, and they are not watched: every reconcile repairs drift.
+Mirrored pools are pruned across namespaces by label, so restarting the operator with
+another `--metallb-namespace` moves them, and they are not watched: every reconcile
+repairs drift.
 
 **HostRegistrationPolicy** (milestone 4)
 
