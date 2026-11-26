@@ -974,16 +974,16 @@ Versions as of 2026-09-14, except where marked updated:
 
 | Component | Version | Note |
 | --- | --- | --- |
-| Go | 1.26.x | latest stable is 1.27.1; 1.26 satisfies every dependency below |
+| Go | 1.27.x | latest stable is 1.27.4; 1.27 satisfies every dependency below |
 | operator-sdk | v1.42.3 | scaffolds a kubebuilder 4.6-era go/v4 layout with controller-runtime v0.21.0, k8s.io v0.33.x |
 | kubebuilder | v4.16.0 (library and CLI) | current scaffold is on controller-runtime v0.24.1, k8s.io v0.36.x |
-| controller-runtime | v0.24.1 target | v0.25.0 exists (k8s v0.37) but kubebuilder has not adopted it yet |
+| controller-runtime | v0.25.3 | built against k8s v0.37 |
 | github.com/openshift/api | pseudo-version from master | untagged module; `go get github.com/openshift/api@master` |
 | opm | v1.74.0 | file-based catalog tooling |
 | envtest | 1.29.x lane plus latest | 1.29 lane enforces the 4.16 floor |
-| Go toolchain | go1.26.11 (go.mod `toolchain`) | patch level clears the standard library vulnerabilities govulncheck reported; the image keeps Red Hat's bundled go-toolset |
+| Go toolchain | go1.27.4 (go.mod `toolchain`) | go1.27.3 reports GO-2026-6859 (net/http) in govulncheck, fixed in 1.27.4; the image keeps Red Hat's bundled go-toolset (1.27.3 at the time of writing) |
 | controller-gen | v0.20.1 (updated 2026-10-04) | v0.18 generates unusable apply configurations for this layout; v0.21 and later break on the `Range` kind |
-| golangci-lint | v2.14.0 (updated 2026-10-04) | v2.1.0's prebuilt binary is built with Go 1.24 and refuses a Go 1.26 module |
+| golangci-lint | v2.15.0 (updated 2026-11-25) | prebuilt binary must be built with Go >= the module's `go` directive |
 
 Decision: scaffold with operator-sdk v1.42.3 to get the OLM `bundle`, `bundle-build`,
 `catalog-build` and scorecard targets, then bump controller-runtime to v0.24.1 (and the
