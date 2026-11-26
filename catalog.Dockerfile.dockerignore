@@ -1,0 +1,4 @@
+# Build context for the generated catalog.Dockerfile: only the catalog directory.
+# The top-level .dockerignore excludes catalog/ to keep the manager image context small.
+*
+!catalog/

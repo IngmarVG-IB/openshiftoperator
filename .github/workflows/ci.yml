@@ -125,6 +125,11 @@ jobs:
         run: |
           git diff --exit-code -I '^ *createdAt: ' -- bundle/ config/manifests/
 
+      - name: Build the bundle image (no push)
+        # The release workflow builds this image; building it here catches a broken
+        # bundle.Dockerfile or build context before a tag is pushed.
+        run: make bundle-build
+
   rules:
     name: Prometheus rules
     runs-on: ubuntu-latest

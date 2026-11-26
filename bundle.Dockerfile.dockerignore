@@ -1,0 +1,4 @@
+# Build context for bundle.Dockerfile: only the bundle directory.
+# The top-level .dockerignore excludes bundle/ to keep the manager image context small.
+*
+!bundle/
